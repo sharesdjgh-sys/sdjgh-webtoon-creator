@@ -15,7 +15,7 @@ import { downloadEpisode, downloadAllEpisodes } from "@/lib/download";
 import ArtDirectionEditor from "@/components/visual/ArtDirectionEditor";
 import StoryboardEditor from "@/components/visual/StoryboardEditor";
 import { BlobImage } from "@/components/visual/StoredImage";
-import { requestSceneImage, requestStoryboardLayout, sceneHash } from "@/lib/visualClient";
+import { requestSceneImage, requestStoryboardLayout, requestStoryboardSketch, sceneHash, storyboardSketchHash } from "@/lib/visualClient";
 import { deleteMediaAsset, deleteMediaByOwner, saveMediaAsset } from "@/lib/mediaStorage";
 import { composeScenePng, storyboardDimensions } from "@/lib/storyboardSvg";
 
@@ -72,6 +72,7 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
   const [isDirty, setIsDirty] = useState(false);
   const [noIdeaChat, setNoIdeaChat] = useState(false);
   const [layoutGeneratingIds, setLayoutGeneratingIds] = useState<Set<string>>(new Set());
+  const [sketchGeneratingIds, setSketchGeneratingIds] = useState<Set<string>>(new Set());
   const [sceneGeneratingIds, setSceneGeneratingIds] = useState<Set<string>>(new Set());
   const [sceneCandidates, setSceneCandidates] = useState<Record<string, { blob: Blob; previewBlob: Blob; sourceHash: string }>>({});
   const [visualError, setVisualError] = useState("");
@@ -327,13 +328,43 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
     try {
       const currentProject = { ...project, episodes };
       const storyboard = await requestStoryboardLayout(currentProject, episode, cut);
-      replaceCut(cutIdx, (current) => ({ ...current, storyboard }));
+      const draftCut = { ...cut, storyboard };
+      const sketch = await requestStoryboardSketch(currentProject, episode, draftCut);
+      const asset = await saveMediaAsset({ projectId: id, ownerId: cut.id, ownerType: "storyboard", mimeType: sketch.blob.type || "image/jpeg", blob: sketch.blob });
+      await deleteMediaAsset(cut.storyboardImageAssetId);
+      replaceCut(cutIdx, (current) => ({
+        ...current,
+        storyboard,
+        storyboardImageAssetId: asset.id,
+        storyboardImageSourceHash: sketch.sourceHash,
+      }));
+      setVisualError("캐릭터 시트와 장면 연출을 반영한 러프 콘티를 생성했습니다.");
       return true;
     } catch (error) {
-      setVisualError(error instanceof Error ? error.message : "SVG 콘티 생성에 실패했습니다.");
+      setVisualError(error instanceof Error ? error.message : "러프 콘티 생성에 실패했습니다.");
       return false;
     } finally {
       setLoadingId(setLayoutGeneratingIds, cut.id, false);
+    }
+  };
+
+  const regenerateStoryboardSketch = async (cutIdx: number) => {
+    if (!project) return;
+    const episode = episodes[activeEp];
+    const cut = episode?.cuts[cutIdx];
+    if (!episode || !cut?.storyboard) return;
+    setVisualError("");
+    setLoadingId(setSketchGeneratingIds, cut.id, true);
+    try {
+      const sketch = await requestStoryboardSketch({ ...project, episodes }, episode, cut);
+      const asset = await saveMediaAsset({ projectId: id, ownerId: cut.id, ownerType: "storyboard", mimeType: sketch.blob.type || "image/jpeg", blob: sketch.blob });
+      await deleteMediaAsset(cut.storyboardImageAssetId);
+      replaceCut(cutIdx, (current) => ({ ...current, storyboardImageAssetId: asset.id, storyboardImageSourceHash: sketch.sourceHash }));
+      setVisualError("현재 배치와 연출을 반영해 러프 콘티를 다시 그렸습니다.");
+    } catch (error) {
+      setVisualError(error instanceof Error ? error.message : "러프 콘티를 다시 그리지 못했습니다.");
+    } finally {
+      setLoadingId(setSketchGeneratingIds, cut.id, false);
     }
   };
 
@@ -381,9 +412,9 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
   };
 
   const generateMissingLayouts = async () => {
-    const targets = (episodes[activeEp]?.cuts ?? []).map((cut, index) => ({ cut, index })).filter(({ cut }) => !cut.storyboard);
+    const targets = (episodes[activeEp]?.cuts ?? []).map((cut, index) => ({ cut, index })).filter(({ cut }) => !cut.storyboard || !cut.storyboardImageAssetId);
     if (targets.length === 0) {
-      setVisualError("이 화의 모든 컷에 SVG 콘티가 있습니다.");
+      setVisualError("이 화의 모든 컷에 러프 콘티가 있습니다.");
       return;
     }
     setBulkLayoutGenerating(true);
@@ -567,7 +598,7 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
           )}
 
           {visualError && (
-            <div className={`rounded-xl px-4 py-2.5 text-xs ${visualError.includes("생성했습니다") || visualError.includes("추가했습니다") || visualError.includes("모든 컷") ? "bg-green-50 border border-green-200 text-green-700" : "bg-red-50 border border-red-200 text-red-600"}`}>
+              <div className={`rounded-xl px-4 py-2.5 text-xs ${visualError.includes("생성했습니다") || visualError.includes("그렸습니다") || visualError.includes("추가했습니다") || visualError.includes("모든 컷") ? "bg-green-50 border border-green-200 text-green-700" : "bg-red-50 border border-red-200 text-red-600"}`}>
               {visualError}
             </div>
           )}
@@ -788,8 +819,8 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
                         <div className="col-span-2 rounded-xl border border-[#E4DDF8] bg-[#FAF8FF] p-3 sm:p-4 space-y-3">
                           <div className="flex flex-wrap items-center justify-between gap-2">
                             <div>
-                              <p className="text-xs font-bold text-[#1A1A1A]">편집 가능한 SVG 콘티</p>
-                              <p className="text-[10px] text-[#7A7067] mt-1">Gemini가 구도 초안을 만들면 인물과 말풍선을 직접 움직일 수 있어요.</p>
+                              <p className="text-xs font-bold text-[#1A1A1A]">AI 러프 드로잉 콘티</p>
+                              <p className="text-[10px] text-[#7A7067] mt-1">캐릭터 시트를 참고한 러프 원화 위에 말풍선·대사·배치 영역을 편집합니다.</p>
                             </div>
                             <button
                               type="button"
@@ -798,7 +829,7 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
                               className="inline-flex items-center gap-1.5 rounded-full bg-[#7C3AED] text-white text-[11px] font-semibold px-3 py-2 disabled:opacity-50"
                             >
                               {layoutGeneratingIds.has(cut.id) ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Wand2 className="w-3.5 h-3.5" />}
-                              {layoutGeneratingIds.has(cut.id) ? "구도 생성 중..." : cut.storyboard ? "콘티 다시 제안" : "SVG 콘티 만들기"}
+                              {layoutGeneratingIds.has(cut.id) ? "러프 드로잉 생성 중..." : cut.storyboardImageAssetId ? "콘티 새로 제안" : "AI 러프 콘티 만들기"}
                             </button>
                           </div>
 
@@ -822,16 +853,20 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
                             <StoryboardEditor
                               document={cut.storyboard}
                               characters={project?.characters ?? []}
+                              storyboardAssetId={cut.storyboardImageAssetId}
+                              storyboardStale={Boolean(cut.storyboardImageAssetId && project && cut.storyboardImageSourceHash !== storyboardSketchHash({ ...project, episodes }, ep, cut))}
+                              generatingSketch={sketchGeneratingIds.has(cut.id)}
                               sceneAssetId={cut.sceneImageAssetId}
                               sceneStale={Boolean(cut.sceneImageAssetId && project && cut.sceneSourceHash !== sceneHash({ ...project, episodes }, ep, cut))}
                               generatingScene={sceneGeneratingIds.has(cut.id)}
                               onChange={(storyboard: StoryboardDocument) => replaceCut(cutIdx, (current) => ({ ...current, storyboard }))}
+                              onRegenerateSketch={() => regenerateStoryboardSketch(cutIdx)}
                               onGenerateScene={() => generateScene(cutIdx)}
                             />
                           ) : (
                             <div className="rounded-xl border border-dashed border-[#C4B5FD] bg-white py-8 text-center">
                               <Film className="w-7 h-7 text-[#C4B5FD] mx-auto mb-2" />
-                              <p className="text-[11px] text-[#7A7067]">장면 설명과 등장인물을 정한 뒤 SVG 콘티를 만들어보세요.</p>
+                              <p className="text-[11px] text-[#7A7067]">장면 설명과 등장인물을 정한 뒤 AI 러프 콘티를 만들어보세요.</p>
                             </div>
                           )}
                         </div>

@@ -4,6 +4,7 @@ import {
   characterInputSchema,
   generateSceneImage,
   generateStoryboardLayout,
+  generateStoryboardSketch,
   projectVisualContextSchema,
 } from "@/lib/gemini";
 import { generateCharacterSheet } from "@/lib/openaiImage";
@@ -95,6 +96,15 @@ const requestSchema = z.discriminatedUnion("action", [
     characters: z.array(characterInputSchema).max(4),
   }),
   z.object({
+    action: z.literal("storyboard-sketch"),
+    context: projectVisualContextSchema,
+    episode: episodeSchema,
+    cut: cutSchema,
+    storyboard: storyboardSchema,
+    layoutImage: imagePayloadSchema,
+    references: z.array(z.object({ character: characterInputSchema, ...imagePayloadSchema.shape })).max(4),
+  }),
+  z.object({
     action: z.literal("scene-image"),
     context: projectVisualContextSchema,
     episode: episodeSchema,
@@ -133,6 +143,9 @@ export async function POST(request: Request) {
     }
     if (body.action === "storyboard-layout") {
       return NextResponse.json({ storyboard: await generateStoryboardLayout(body) });
+    }
+    if (body.action === "storyboard-sketch") {
+      return NextResponse.json(await generateStoryboardSketch(body));
     }
     return NextResponse.json(await generateSceneImage(body));
   } catch (error) {

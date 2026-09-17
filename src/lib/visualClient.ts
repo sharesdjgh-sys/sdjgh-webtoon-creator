@@ -84,18 +84,9 @@ export async function requestStoryboardLayout(project: Project, episode: Episode
   return response.storyboard;
 }
 
-export function sceneHash(project: Project, episode: Episode, cut: Cut): string {
-  const references = project.characters
-    .filter((character) => cut.characterIds.includes(character.id))
-    .map((character) => ({ id: character.id, imageAssetId: character.imageAssetId, imageSourceHash: character.imageSourceHash }));
-  return sourceHash({ context: context(project), episode: { number: episode.episodeNumber, title: episode.title, synopsis: episode.synopsis }, cut: cutData(cut), storyboard: cut.storyboard, references });
-}
-
-export async function requestSceneImage(project: Project, episode: Episode, cut: Cut): Promise<{ blob: Blob; prompt: string; sourceHash: string }> {
-  if (!cut.storyboard) throw new Error("먼저 편집 가능한 콘티를 만들어주세요.");
-  const layoutBlob = await svgToPngBlob(cut.storyboard);
+async function characterReferences(project: Project, cut: Cut) {
   const selected = project.characters.filter((character) => cut.characterIds.includes(character.id)).slice(0, 4);
-  const references = (await Promise.all(selected.map(async (character) => {
+  return (await Promise.all(selected.map(async (character) => {
     const asset = await getMediaAsset(character.imageAssetId);
     if (!asset) return null;
     return {
@@ -104,13 +95,54 @@ export async function requestSceneImage(project: Project, episode: Episode, cut:
       mimeType: asset.mimeType,
     };
   }))).filter((reference): reference is NonNullable<typeof reference> => reference !== null);
+}
+
+export function storyboardSketchHash(project: Project, episode: Episode, cut: Cut): string {
+  const references = project.characters
+    .filter((character) => cut.characterIds.includes(character.id))
+    .map((character) => ({ id: character.id, imageAssetId: character.imageAssetId, imageSourceHash: character.imageSourceHash }));
+  return sourceHash({ renderer: "gemini-rough-storyboard-v1", context: context(project), episode: { number: episode.episodeNumber, title: episode.title, synopsis: episode.synopsis }, cut: cutData(cut), storyboard: cut.storyboard, references });
+}
+
+export async function requestStoryboardSketch(project: Project, episode: Episode, cut: Cut): Promise<{ blob: Blob; prompt: string; sourceHash: string }> {
+  if (!cut.storyboard) throw new Error("먼저 콘티 배치를 만들어주세요.");
+  const layoutBlob = await svgToPngBlob(cut.storyboard);
+  const response = await postVisual<GeneratedImageResponse>({
+    action: "storyboard-sketch",
+    context: context(project),
+    episode: { number: episode.episodeNumber, title: episode.title, synopsis: episode.synopsis },
+    cut: cutData(cut),
+    storyboard: cut.storyboard,
+    layoutImage: { data: await blobToBase64(layoutBlob), mimeType: "image/png" },
+    references: await characterReferences(project, cut),
+  });
+  return {
+    blob: base64ToBlob(response.data, response.mimeType),
+    prompt: response.prompt,
+    sourceHash: storyboardSketchHash(project, episode, cut),
+  };
+}
+
+export function sceneHash(project: Project, episode: Episode, cut: Cut): string {
+  const references = project.characters
+    .filter((character) => cut.characterIds.includes(character.id))
+    .map((character) => ({ id: character.id, imageAssetId: character.imageAssetId, imageSourceHash: character.imageSourceHash }));
+  return sourceHash({ context: context(project), episode: { number: episode.episodeNumber, title: episode.title, synopsis: episode.synopsis }, cut: cutData(cut), storyboard: cut.storyboard, storyboardImageAssetId: cut.storyboardImageAssetId, storyboardImageSourceHash: cut.storyboardImageSourceHash, references });
+}
+
+export async function requestSceneImage(project: Project, episode: Episode, cut: Cut): Promise<{ blob: Blob; prompt: string; sourceHash: string }> {
+  if (!cut.storyboard) throw new Error("먼저 편집 가능한 콘티를 만들어주세요.");
+  const storyboardAsset = await getMediaAsset(cut.storyboardImageAssetId);
+  const layoutBlob = storyboardAsset?.blob ?? await svgToPngBlob(cut.storyboard);
+  const layoutMimeType = storyboardAsset?.mimeType ?? "image/png";
+  const references = await characterReferences(project, cut);
   const response = await postVisual<GeneratedImageResponse>({
     action: "scene-image",
     context: context(project),
     episode: { number: episode.episodeNumber, title: episode.title, synopsis: episode.synopsis },
     cut: cutData(cut),
     storyboard: cut.storyboard,
-    layoutImage: { data: await blobToBase64(layoutBlob), mimeType: "image/png" },
+    layoutImage: { data: await blobToBase64(layoutBlob), mimeType: layoutMimeType },
     references,
   });
   return {

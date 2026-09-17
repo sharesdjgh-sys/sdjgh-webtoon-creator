@@ -12,6 +12,7 @@ import {
   MessageCircle,
   MousePointer2,
   Redo2,
+  RefreshCw,
   RotateCcw,
   Sparkles,
   Square,
@@ -30,10 +31,14 @@ import StoredImage from "@/components/visual/StoredImage";
 type Props = {
   document: StoryboardDocument;
   characters: Character[];
+  storyboardAssetId?: string;
+  storyboardStale?: boolean;
+  generatingSketch?: boolean;
   sceneAssetId?: string;
   sceneStale?: boolean;
   generatingScene?: boolean;
   onChange: (document: StoryboardDocument) => void;
+  onRegenerateSketch: () => void;
   onGenerateScene: () => void;
 };
 
@@ -215,10 +220,11 @@ function SceneElement({
   );
 }
 
-export default function StoryboardEditor({ document, characters, sceneAssetId, sceneStale, generatingScene, onChange, onGenerateScene }: Props) {
+export default function StoryboardEditor({ document, characters, storyboardAssetId, storyboardStale, generatingSketch, sceneAssetId, sceneStale, generatingScene, onChange, onRegenerateSketch, onGenerateScene }: Props) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
   const [finalView, setFinalView] = useState(Boolean(sceneAssetId));
+  const [showBlocking, setShowBlocking] = useState(false);
   const undoStack = useRef<StoryboardDocument[]>([]);
   const redoStack = useRef<StoryboardDocument[]>([]);
   const pointerAction = useRef<PointerAction | null>(null);
@@ -396,8 +402,8 @@ export default function StoryboardEditor({ document, characters, sceneAssetId, s
   };
 
   const downloadSvg = () => {
-    const blob = new Blob([storyboardToSvg(document)], { type: "image/svg+xml;charset=utf-8" });
-    downloadBlob(blob, "webtoon-storyboard.svg");
+    const blob = new Blob([storyboardToSvg(document, { overlaysOnly: Boolean(storyboardAssetId), transparent: Boolean(storyboardAssetId) })], { type: "image/svg+xml;charset=utf-8" });
+    downloadBlob(blob, storyboardAssetId ? "webtoon-storyboard-overlay.svg" : "webtoon-storyboard.svg");
   };
 
   const downloadFinal = async () => {
@@ -422,6 +428,7 @@ export default function StoryboardEditor({ document, characters, sceneAssetId, s
           <button type="button" onClick={() => addElement("sfx")} className="editor-tool"><Type className="w-3.5 h-3.5" /> 효과음</button>
         </div>
         <div className="flex items-center gap-1.5">
+          {storyboardAssetId && !finalView && <button type="button" onClick={() => setShowBlocking((value) => !value)} className="editor-tool"><User className="w-3.5 h-3.5" /> {showBlocking ? "러프만 보기" : "포즈·배치 수정"}</button>}
           {sceneAssetId && <button type="button" onClick={() => setFinalView((value) => !value)} className="editor-tool"><MousePointer2 className="w-3.5 h-3.5" /> {finalView ? "구도 편집" : "완성 보기"}</button>}
           <button type="button" onClick={() => setExpanded((value) => !value)} className="editor-tool">{expanded ? <X className="w-3.5 h-3.5" /> : <Expand className="w-3.5 h-3.5" />}</button>
         </div>
@@ -431,6 +438,7 @@ export default function StoryboardEditor({ document, characters, sceneAssetId, s
         <div className="relative bg-[#E9E4DC] rounded-xl p-3 min-h-[260px] flex items-center justify-center overflow-hidden">
           <div className="relative w-full max-h-[76vh] shadow-xl bg-white" style={{ aspectRatio: `${document.width}/${document.height}` }}>
             {sceneAssetId && finalView && <StoredImage assetId={sceneAssetId} alt="생성된 웹툰 장면" className="absolute inset-0 w-full h-full object-cover" />}
+            {storyboardAssetId && !finalView && <StoredImage assetId={storyboardAssetId} alt="AI 러프 드로잉 콘티" className="absolute inset-0 w-full h-full object-cover" />}
             <svg
               ref={svgRef}
               viewBox={`0 0 ${document.width} ${document.height}`}
@@ -440,21 +448,26 @@ export default function StoryboardEditor({ document, characters, sceneAssetId, s
               onPointerCancel={() => { pointerAction.current = null; }}
               onPointerDown={() => setSelectedId(null)}
             >
-              {!finalView && <rect width={document.width} height={document.height} fill="#FBF9F6" />}
+              {!finalView && !storyboardAssetId && <rect width={document.width} height={document.height} fill="#FBF9F6" />}
               {visibleElements.map((element) => (
                 <g
                   key={element.id}
                   transform={`translate(${element.x} ${element.y}) rotate(${element.rotation} ${element.width / 2} ${element.height / 2})`}
+                  opacity={storyboardAssetId && !finalView && showBlocking && !isOverlayElement(element) ? 0.72 : 1}
                   onPointerDown={(event) => startPointer(event, element, "drag")}
                   className="cursor-move"
                 >
-                  <SceneElement
-                    element={element}
-                    characterName={element.characterId ? characterNames.get(element.characterId) : undefined}
-                    selected={selectedId === element.id && !finalView}
-                    onJointPointerDown={(event, jointKey) => startJointPointer(event, element, jointKey)}
-                    onTailPointerDown={(event) => startTailPointer(event, element)}
-                  />
+                  {storyboardAssetId && !finalView && !showBlocking && !isOverlayElement(element) ? (
+                    <rect width={element.width} height={element.height} fill="transparent" stroke={selectedId === element.id ? "#7C3AED" : "transparent"} strokeWidth={4} />
+                  ) : (
+                    <SceneElement
+                      element={element}
+                      characterName={element.characterId ? characterNames.get(element.characterId) : undefined}
+                      selected={selectedId === element.id && !finalView}
+                      onJointPointerDown={(event, jointKey) => startJointPointer(event, element, jointKey)}
+                      onTailPointerDown={(event) => startTailPointer(event, element)}
+                    />
+                  )}
                   {selectedId === element.id && !finalView && (
                     <>
                       <rect x={-8} y={-8} width={element.width + 16} height={element.height + 16} fill="none" stroke="#7C3AED" strokeWidth={4} strokeDasharray="10 7" />
@@ -622,10 +635,14 @@ export default function StoryboardEditor({ document, characters, sceneAssetId, s
 
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2">
-          <button type="button" onClick={downloadSvg} className="editor-action"><Download className="w-3.5 h-3.5" /> SVG 저장</button>
+          <button type="button" onClick={downloadSvg} className="editor-action"><Download className="w-3.5 h-3.5" /> {storyboardAssetId ? "오버레이 SVG" : "SVG 저장"}</button>
           {sceneAssetId && <button type="button" onClick={downloadFinal} className="editor-action"><Download className="w-3.5 h-3.5" /> 최종 PNG</button>}
         </div>
         <div className="flex items-center gap-2">
+          {storyboardStale && storyboardAssetId && <span className="text-[10px] text-orange-600 bg-orange-50 px-2 py-1 rounded-full">배치 수정이 러프 그림에 아직 반영되지 않았어요</span>}
+          <button type="button" disabled={generatingSketch} onClick={onRegenerateSketch} className="editor-action">
+            <RefreshCw className={`w-3.5 h-3.5 ${generatingSketch ? "animate-spin" : ""}`} /> {generatingSketch ? "러프 다시 그리는 중..." : "현재 배치로 러프 다시 그리기"}
+          </button>
           {sceneStale && sceneAssetId && <span className="text-[10px] text-orange-600 bg-orange-50 px-2 py-1 rounded-full">구도가 변경되어 재생성이 필요해요</span>}
           <button type="button" disabled={generatingScene} onClick={onGenerateScene} className="inline-flex items-center gap-1.5 rounded-full bg-[#1A1A1A] text-white text-xs font-semibold px-4 py-2 hover:bg-black disabled:opacity-50">
             <Sparkles className="w-3.5 h-3.5" /> {generatingScene ? "콘티 좌표를 고정해 생성 중..." : sceneAssetId ? "이 콘티로 다시 생성" : "이 콘티 고정으로 장면 생성"}

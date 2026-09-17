@@ -45,6 +45,24 @@ export const projectVisualContextSchema = z.object({
   artDirection: artDirectionSchema,
 });
 
+const generatedJointSchema = z.object({ x: z.number().min(0).max(1), y: z.number().min(0).max(1) });
+const generatedRigSchema = z.object({
+  head: generatedJointSchema,
+  neck: generatedJointSchema,
+  leftShoulder: generatedJointSchema,
+  leftElbow: generatedJointSchema,
+  leftHand: generatedJointSchema,
+  rightShoulder: generatedJointSchema,
+  rightElbow: generatedJointSchema,
+  rightHand: generatedJointSchema,
+  leftHip: generatedJointSchema,
+  rightHip: generatedJointSchema,
+  leftKnee: generatedJointSchema,
+  leftFoot: generatedJointSchema,
+  rightKnee: generatedJointSchema,
+  rightFoot: generatedJointSchema,
+});
+
 const generatedElementSchema = z.object({
   id: z.string().max(100).optional(),
   type: z.enum(["character", "prop", "shape", "arrow", "speech", "caption", "sfx"]),
@@ -59,6 +77,7 @@ const generatedElementSchema = z.object({
   shape: z.enum(["rect", "ellipse"]).optional(),
   pose: z.string().max(200).optional(),
   expression: z.string().max(200).optional(),
+  characterRig: generatedRigSchema.optional(),
   balloonStyle: z.enum(["normal", "thought", "shout", "whisper"]).optional(),
   tailX: z.number().optional(),
   tailY: z.number().optional(),
@@ -90,6 +109,22 @@ const STORYBOARD_JSON_SCHEMA = {
           shape: { type: "string", enum: ["rect", "ellipse"] },
           pose: { type: "string" },
           expression: { type: "string" },
+          characterRig: {
+            type: "object",
+            description: "Normalized 0..1 joint positions inside the character bounding box. Required for character elements.",
+            properties: Object.fromEntries([
+              "head", "neck", "leftShoulder", "leftElbow", "leftHand", "rightShoulder", "rightElbow", "rightHand",
+              "leftHip", "rightHip", "leftKnee", "leftFoot", "rightKnee", "rightFoot",
+            ].map((joint) => [joint, {
+              type: "object",
+              properties: { x: { type: "number" }, y: { type: "number" } },
+              required: ["x", "y"],
+            }])),
+            required: [
+              "head", "neck", "leftShoulder", "leftElbow", "leftHand", "rightShoulder", "rightElbow", "rightHand",
+              "leftHip", "rightHip", "leftKnee", "leftFoot", "rightKnee", "rightFoot",
+            ],
+          },
           balloonStyle: { type: "string", enum: ["normal", "thought", "shout", "whisper"] },
           tailX: { type: "number", description: "Speech-tail endpoint x in local normalized coordinates; 0..1 is inside the balloon" },
           tailY: { type: "number", description: "Speech-tail endpoint y in local normalized coordinates; 0..1 is inside the balloon" },
@@ -263,6 +298,7 @@ ${cast || "No named character selected"}
 Return a practical SVG scene graph using only the supplied JSON schema.
 - Keep every element fully inside the canvas.
 - Use character elements for blocking people; characterId must exactly match a selected cast ID.
+- Every character element must include characterRig with all 14 normalized joints. Build the actual described action and weight balance — sitting must bend hips and knees onto a seat, running must show stride and arm counter-swing, looking back must turn the shoulder line and head. Never fall back to a generic standing pose.
 - Use prop, shape, and arrow elements only when they clarify depth, motion, foreground, or background.
 - Use speech/caption/sfx elements for exact Korean text; these remain editable overlays.
 - For every speech element, choose balloonStyle: normal for ordinary dialogue, thought for inner monologue, shout for yelling, or whisper for quiet/breathing dialogue. Set speakerCharacterId to the exact cast ID and aim tailX/tailY toward that speaker. tail coordinates are local to the balloon: (0,0) top-left, (1,1) bottom-right, and may extend outside the box.
@@ -289,6 +325,74 @@ Return a practical SVG scene graph using only the supplied JSON schema.
     height,
     elements: parsed.elements.map((element, index) => clampElement(element, index, width, height, ids)),
   };
+}
+
+export async function generateStoryboardSketch(input: {
+  context: ProjectVisualContext;
+  episode: { number: number; title: string; synopsis: string };
+  cut: { angle: string; description: string; dialogue: string; soundEffect: string; aspectRatio: PanelAspectRatio };
+  storyboard: StoryboardDocument;
+  layoutImage: { data: string; mimeType: string };
+  references: Array<{ character: CharacterVisualInput; data: string; mimeType: string }>;
+}): Promise<{ data: string; mimeType: string; prompt: string }> {
+  const cast = input.references.map(({ character }, index) =>
+    `Reference image ${index + 2}: approved design sheet for ${character.name} (${character.role}). Translate the same face shape, hair silhouette, body proportions, outfit and signature accessories into loose storyboard line art.`
+  ).join("\n");
+  const blocking = input.storyboard.elements
+    .filter((element) => !["speech", "caption", "sfx"].includes(element.type))
+    .sort((left, right) => left.zIndex - right.zIndex)
+    .map((element) => `- ${element.type} ${element.text || element.id}: box=(${Math.round(element.x)},${Math.round(element.y)},${Math.round(element.width)},${Math.round(element.height)}), rotation=${element.rotation}, pose=${element.pose || "n/a"}, expression=${element.expression || "n/a"}`)
+    .join("\n");
+  const reserved = input.storyboard.elements
+    .filter((element) => ["speech", "caption", "sfx"].includes(element.type))
+    .map((element) => `- leave quiet space at (${Math.round(element.x)},${Math.round(element.y)},${Math.round(element.width)},${Math.round(element.height)}) for editable ${element.type}`)
+    .join("\n");
+  const prompt = `Draw ONE professional Korean webtoon storyboard/continuity sketch, using reference image 1 only as the exact blocking map.
+
+This must look like a human storyboard artist's rough drawing — NOT stick figures, NOT geometric mannequins, NOT a polished final illustration.
+
+STORY BEAT
+- Episode: ${input.episode.number}. ${input.episode.title}
+- Context: ${input.episode.synopsis}
+- Camera: ${input.cut.angle}
+- Action: ${input.cut.description}
+- Dialogue intention: ${input.cut.dialogue || "none"}
+- Sound/action emphasis: ${input.cut.soundEffect || "none"}
+
+CHARACTER REFERENCES
+${cast || "No approved character sheet is available; design readable rough human figures appropriate to the scene."}
+
+BLOCKING FROM THE EDITABLE LAYOUT
+${blocking || "Infer the minimum necessary staging from the story beat."}
+
+TYPOGRAPHY SAFE AREAS
+${reserved || "none"}
+
+DRAWING STANDARD
+- Monochrome pencil or thin ink roughs on white, with confident construction lines and selective hatching like an actual webtoon 콘티.
+- Draw recognizable human anatomy: head shape and jaw, neck, shoulders, torso and pelvis volume, bent elbows and knees, readable hands, feet and weight balance.
+- Show the specified pose and expression clearly. Do not invent a generic standing pose when the action describes sitting, running, turning, falling, touching or looking.
+- Preserve each referenced character's recognizable hair, outfit silhouette and accessories in simplified rough form.
+- Include enough environment and perspective lines to establish location, horizon, depth, foreground and camera angle. Use speed lines or impact marks only when motivated.
+- Match reference image 1's framing, character scale, placement, overlap, facing direction and eyeline. Do not rearrange the composition.
+- Keep important faces and hands readable and keep all figures inside the panel.
+- Do not draw labels, pseudo-text, dialogue letters, captions, sound-effect lettering, finished speech balloons, panel numbers, borders, logos or watermarks. The app adds editable typography afterward.
+- Prioritize visual storytelling and acting over pretty rendering.`;
+  const interaction = await client().interactions.create({
+    model: IMAGE_MODEL,
+    input: [
+      { type: "image" as const, mime_type: input.layoutImage.mimeType, data: input.layoutImage.data },
+      ...input.references.map((reference) => ({ type: "image" as const, mime_type: reference.mimeType, data: reference.data })),
+      { type: "text" as const, text: prompt },
+    ],
+    response_format: {
+      type: "image",
+      mime_type: "image/jpeg",
+      aspect_ratio: input.cut.aspectRatio,
+      image_size: "1K",
+    },
+  });
+  return { ...imageResult(interaction), prompt };
 }
 
 export async function generateSceneImage(input: {

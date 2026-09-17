@@ -4,7 +4,7 @@ const DB_NAME = "webtoon_creator_media";
 const STORE_NAME = "assets";
 const DB_VERSION = 1;
 
-export type MediaOwnerType = "character" | "scene";
+export type MediaOwnerType = "character" | "storyboard" | "scene";
 
 export type MediaAsset = {
   id: string;

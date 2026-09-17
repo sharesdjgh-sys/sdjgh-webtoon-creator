@@ -109,6 +109,8 @@ export type Cut = {
   characterIds: string[];
   aspectRatio: PanelAspectRatio;
   storyboard?: StoryboardDocument;
+  storyboardImageAssetId?: string;
+  storyboardImageSourceHash?: string;
   sceneImageAssetId?: string;
   sceneSourceHash?: string;
 };
