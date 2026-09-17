@@ -220,6 +220,54 @@ function SceneElement({
   );
 }
 
+function LayoutControlOverlay({
+  element,
+  label,
+  selected,
+  onJointPointerDown,
+}: {
+  element: StoryboardElement;
+  label: string;
+  selected: boolean;
+  onJointPointerDown: (event: React.PointerEvent, jointKey: CharacterJointKey) => void;
+}) {
+  if (element.type !== "character") {
+    return (
+      <>
+        <rect width={element.width} height={element.height} rx={12} fill="#7C3AED" fillOpacity={0.08} stroke="#7C3AED" strokeWidth={3} strokeDasharray="10 7" />
+        <rect x={8} y={8} width={Math.min(element.width - 16, Math.max(72, label.length * 15))} height={28} rx={10} fill="#5B21B6" />
+        <text x={18} y={23} dominantBaseline="middle" fontSize={14} fontWeight={700} fill="white">{label}</text>
+      </>
+    );
+  }
+  const rig = resolveCharacterRig(element);
+  const point = (key: CharacterJointKey) => ({ x: rig[key].x * element.width, y: rig[key].y * element.height });
+  const segments: Array<[CharacterJointKey, CharacterJointKey]> = [
+    ["head", "neck"], ["neck", "leftShoulder"], ["neck", "rightShoulder"],
+    ["leftShoulder", "leftElbow"], ["leftElbow", "leftHand"],
+    ["rightShoulder", "rightElbow"], ["rightElbow", "rightHand"],
+    ["leftShoulder", "leftHip"], ["rightShoulder", "rightHip"], ["leftHip", "rightHip"],
+    ["leftHip", "leftKnee"], ["leftKnee", "leftFoot"],
+    ["rightHip", "rightKnee"], ["rightKnee", "rightFoot"],
+  ];
+  return (
+    <>
+      <rect width={element.width} height={element.height} rx={12} fill="#7C3AED" fillOpacity={selected ? 0.1 : 0.04} stroke="#7C3AED" strokeWidth={3} strokeDasharray="10 7" />
+      {segments.map(([from, to]) => {
+        const start = point(from);
+        const end = point(to);
+        return <line key={`${from}-${to}`} x1={start.x} y1={start.y} x2={end.x} y2={end.y} stroke="#7C3AED" strokeOpacity={0.72} strokeWidth={4} strokeDasharray="8 6" strokeLinecap="round" />;
+      })}
+      <rect x={8} y={8} width={Math.min(element.width - 16, Math.max(86, label.length * 16))} height={30} rx={10} fill="#5B21B6" />
+      <text x={18} y={24} dominantBaseline="middle" fontSize={14} fontWeight={700} fill="white">{label}</text>
+      {selected && (Object.keys(rig) as CharacterJointKey[]).map((jointKey) => {
+        const joint = point(jointKey);
+        return <circle key={jointKey} cx={joint.x} cy={joint.y} r={9} fill="#FDE68A" stroke="#5B21B6" strokeWidth={4} className="cursor-grab active:cursor-grabbing" onPointerDown={(event) => onJointPointerDown(event, jointKey)} />;
+      })}
+    </>
+  );
+}
+
 export default function StoryboardEditor({ document, characters, storyboardAssetId, storyboardStale, generatingSketch, sceneAssetId, sceneStale, generatingScene, onChange, onRegenerateSketch, onGenerateScene }: Props) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
@@ -370,6 +418,7 @@ export default function StoryboardEditor({ document, characters, storyboardAsset
     apply({ ...document, elements: [...document.elements, element] });
     setSelectedId(element.id);
     setFinalView(false);
+    if (storyboardAssetId && !isOverlayElement(element)) setShowBlocking(true);
   };
 
   const setSpeechSpeaker = (speech: StoryboardElement, characterId: string) => {
@@ -428,7 +477,8 @@ export default function StoryboardEditor({ document, characters, storyboardAsset
           <button type="button" onClick={() => addElement("sfx")} className="editor-tool"><Type className="w-3.5 h-3.5" /> 효과음</button>
         </div>
         <div className="flex items-center gap-1.5">
-          {storyboardAssetId && !finalView && <button type="button" onClick={() => setShowBlocking((value) => !value)} className="editor-tool"><User className="w-3.5 h-3.5" /> {showBlocking ? "러프만 보기" : "포즈·배치 수정"}</button>}
+          {storyboardAssetId && !finalView && <button type="button" onClick={() => setShowBlocking((value) => !value)} className={`editor-tool ${showBlocking ? "border-[#7C3AED] bg-[#F5F3FF] text-[#5B21B6]" : ""}`}><User className="w-3.5 h-3.5" /> {showBlocking ? "수정 모드 닫기" : "콘티 수정"}</button>}
+          {storyboardAssetId && storyboardStale && !finalView && <button type="button" disabled={generatingSketch} onClick={onRegenerateSketch} className="inline-flex items-center gap-1.5 rounded-lg bg-[#7C3AED] px-3 py-1.5 text-[11px] font-semibold text-white transition hover:bg-[#6D28D9] active:scale-95 disabled:opacity-50"><RefreshCw className={`w-3.5 h-3.5 ${generatingSketch ? "animate-spin" : ""}`} /> {generatingSketch ? "수정 적용 중..." : "수정사항 적용"}</button>}
           {sceneAssetId && <button type="button" onClick={() => setFinalView((value) => !value)} className="editor-tool"><MousePointer2 className="w-3.5 h-3.5" /> {finalView ? "구도 편집" : "완성 보기"}</button>}
           <button type="button" onClick={() => setExpanded((value) => !value)} className="editor-tool">{expanded ? <X className="w-3.5 h-3.5" /> : <Expand className="w-3.5 h-3.5" />}</button>
         </div>
@@ -457,8 +507,15 @@ export default function StoryboardEditor({ document, characters, storyboardAsset
                   onPointerDown={(event) => startPointer(event, element, "drag")}
                   className="cursor-move"
                 >
-                  {storyboardAssetId && !finalView && !showBlocking && !isOverlayElement(element) ? (
-                    <rect width={element.width} height={element.height} fill="transparent" stroke={selectedId === element.id ? "#7C3AED" : "transparent"} strokeWidth={4} />
+                  {storyboardAssetId && !finalView && !isOverlayElement(element) ? (
+                    showBlocking ? (
+                      <LayoutControlOverlay
+                        element={element}
+                        label={element.characterId ? characterNames.get(element.characterId) ?? element.text : element.text || labelForType(element.type)}
+                        selected={selectedId === element.id}
+                        onJointPointerDown={(event, jointKey) => startJointPointer(event, element, jointKey)}
+                      />
+                    ) : <rect width={element.width} height={element.height} fill="transparent" />
                   ) : (
                     <SceneElement
                       element={element}
@@ -627,7 +684,9 @@ export default function StoryboardEditor({ document, characters, storyboardAsset
           ) : (
             <div className="py-8 text-center">
               <MousePointer2 className="w-6 h-6 text-[#D4CFC9] mx-auto mb-2" />
-              <p className="text-xs text-[#ADA8A0] leading-relaxed">요소를 선택해 내용을 편집하거나<br />드래그해서 구도를 조정하세요.</p>
+              <p className="text-xs text-[#ADA8A0] leading-relaxed">
+                {storyboardAssetId && !showBlocking ? <>상단의 <strong className="text-[#7C3AED]">콘티 수정</strong>을 눌러<br />인물 포즈와 배치를 편집하세요.</> : <>요소를 선택해 내용을 편집하거나<br />드래그해서 구도를 조정하세요.</>}
+              </p>
             </div>
           )}
         </div>
