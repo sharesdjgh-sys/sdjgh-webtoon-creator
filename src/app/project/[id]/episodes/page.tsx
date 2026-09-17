@@ -17,7 +17,7 @@ import StoryboardEditor from "@/components/visual/StoryboardEditor";
 import { BlobImage } from "@/components/visual/StoredImage";
 import { requestSceneImage, requestStoryboardLayout, sceneHash } from "@/lib/visualClient";
 import { deleteMediaAsset, deleteMediaByOwner, saveMediaAsset } from "@/lib/mediaStorage";
-import { storyboardDimensions } from "@/lib/storyboardSvg";
+import { composeScenePng, storyboardDimensions } from "@/lib/storyboardSvg";
 
 const ANGLES = ["풀샷", "미디엄샷", "클로즈업", "익스트림 클로즈업", "버드뷰", "웜뷰", "오버더숄더"];
 const INTERACTIVE_BUTTON = "transform-gpu transition-all duration-200 active:scale-[0.96] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#7C3AED]/30 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:active:scale-100";
@@ -73,7 +73,7 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
   const [noIdeaChat, setNoIdeaChat] = useState(false);
   const [layoutGeneratingIds, setLayoutGeneratingIds] = useState<Set<string>>(new Set());
   const [sceneGeneratingIds, setSceneGeneratingIds] = useState<Set<string>>(new Set());
-  const [sceneCandidates, setSceneCandidates] = useState<Record<string, { blob: Blob; sourceHash: string }>>({});
+  const [sceneCandidates, setSceneCandidates] = useState<Record<string, { blob: Blob; previewBlob: Blob; sourceHash: string }>>({});
   const [visualError, setVisualError] = useState("");
   const [bulkLayoutGenerating, setBulkLayoutGenerating] = useState(false);
   const [aiCutProgress, setAiCutProgress] = useState<AiCutProgress | null>(null);
@@ -342,11 +342,16 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
     const episode = episodes[activeEp];
     const cut = episode?.cuts[cutIdx];
     if (!episode || !cut) return;
+    if (!cut.storyboard) {
+      setVisualError("먼저 콘티를 만든 뒤 장면을 생성해 주세요.");
+      return;
+    }
     setVisualError("");
     setLoadingId(setSceneGeneratingIds, cut.id, true);
     try {
       const result = await requestSceneImage({ ...project, episodes }, episode, cut);
-      setSceneCandidates((current) => ({ ...current, [cut.id]: { blob: result.blob, sourceHash: result.sourceHash } }));
+      const previewBlob = await composeScenePng(cut.storyboard, result.blob);
+      setSceneCandidates((current) => ({ ...current, [cut.id]: { blob: result.blob, previewBlob, sourceHash: result.sourceHash } }));
     } catch (error) {
       setVisualError(error instanceof Error ? error.message : "장면 이미지 생성에 실패했습니다.");
     } finally {
@@ -800,11 +805,11 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
                           {sceneCandidates[cut.id] && (
                             <div className="rounded-xl border border-[#C4B5FD] bg-white p-3 grid gap-3 sm:grid-cols-[180px_1fr]">
                               <div className="rounded-lg overflow-hidden bg-[#F4F1EC]" style={{ aspectRatio: cut.aspectRatio.replace(":", "/") }}>
-                                <BlobImage blob={sceneCandidates[cut.id].blob} alt="새 장면 생성 결과" className="w-full h-full object-cover" />
+                                <BlobImage blob={sceneCandidates[cut.id].previewBlob} alt="콘티 오버레이가 합성된 새 장면 생성 결과" className="w-full h-full object-cover" />
                               </div>
                               <div className="self-center">
                                 <p className="text-xs font-bold text-[#1A1A1A] mb-1">새 장면을 적용할까요?</p>
-                                <p className="text-[10px] text-[#7A7067] mb-3">적용 전까지 기존 장면은 유지됩니다. 말풍선과 대사는 SVG로 별도 합성돼요.</p>
+                                <p className="text-[10px] text-[#7A7067] mb-3">콘티의 좌표·관절·레이어를 고정해 생성했고, 위 미리보기에는 편집한 말풍선과 대사까지 합성했습니다.</p>
                                 <div className="flex gap-2">
                                   <button type="button" onClick={() => acceptScene(cutIdx)} className="inline-flex items-center gap-1 rounded-full bg-[#7C3AED] text-white px-3 py-1.5 text-[11px] font-semibold"><Check className="w-3 h-3" /> 적용</button>
                                   <button type="button" onClick={() => setSceneCandidates((current) => { const next = { ...current }; delete next[cut.id]; return next; })} className="inline-flex items-center gap-1 rounded-full border border-[#EBE7E0] px-3 py-1.5 text-[11px]"><X className="w-3 h-3" /> 취소</button>

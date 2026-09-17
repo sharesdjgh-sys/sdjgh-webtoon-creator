@@ -29,6 +29,54 @@ const cutSchema = z.object({
   aspectRatio: z.enum(["4:3", "3:4", "1:1", "9:16"]),
 });
 
+const pointSchema = z.object({
+  x: z.number().min(-1).max(2),
+  y: z.number().min(-1).max(2),
+});
+
+const characterRigSchema = z.object({
+  head: pointSchema,
+  neck: pointSchema,
+  leftShoulder: pointSchema,
+  leftElbow: pointSchema,
+  leftHand: pointSchema,
+  rightShoulder: pointSchema,
+  rightElbow: pointSchema,
+  rightHand: pointSchema,
+  leftHip: pointSchema,
+  rightHip: pointSchema,
+  leftKnee: pointSchema,
+  leftFoot: pointSchema,
+  rightKnee: pointSchema,
+  rightFoot: pointSchema,
+});
+
+const storyboardSchema = z.object({
+  version: z.literal(1),
+  aspectRatio: z.enum(["4:3", "3:4", "1:1", "9:16"]),
+  width: z.number().positive().max(4_000),
+  height: z.number().positive().max(4_000),
+  elements: z.array(z.object({
+    id: z.string().max(100),
+    type: z.enum(["character", "prop", "shape", "arrow", "speech", "caption", "sfx"]),
+    x: z.number(),
+    y: z.number(),
+    width: z.number().positive(),
+    height: z.number().positive(),
+    rotation: z.number(),
+    zIndex: z.number(),
+    text: z.string().max(1_000),
+    characterId: z.string().max(120).optional(),
+    shape: z.enum(["rect", "ellipse"]).optional(),
+    pose: z.string().max(300).optional(),
+    expression: z.string().max(300).optional(),
+    fontFamily: z.enum(["clean", "serif", "handwritten", "cute", "comic", "impact"]).optional(),
+    fontSize: z.number().positive().max(300).optional(),
+    fontWeight: z.number().min(100).max(900).optional(),
+    characterRig: characterRigSchema.optional(),
+  })).min(1).max(32),
+});
+
 const requestSchema = z.discriminatedUnion("action", [
   z.object({
     action: z.literal("character-sheet"),
@@ -47,6 +95,7 @@ const requestSchema = z.discriminatedUnion("action", [
     context: projectVisualContextSchema,
     episode: episodeSchema,
     cut: cutSchema,
+    storyboard: storyboardSchema,
     layoutImage: imagePayloadSchema,
     references: z.array(z.object({ character: characterInputSchema, ...imagePayloadSchema.shape })).max(4),
   }),

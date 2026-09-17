@@ -516,7 +516,7 @@ export default function StoryboardEditor({ document, characters, sceneAssetId, s
         <div className="flex items-center gap-2">
           {sceneStale && sceneAssetId && <span className="text-[10px] text-orange-600 bg-orange-50 px-2 py-1 rounded-full">구도가 변경되어 재생성이 필요해요</span>}
           <button type="button" disabled={generatingScene} onClick={onGenerateScene} className="inline-flex items-center gap-1.5 rounded-full bg-[#1A1A1A] text-white text-xs font-semibold px-4 py-2 hover:bg-black disabled:opacity-50">
-            <Sparkles className="w-3.5 h-3.5" /> {generatingScene ? "장면 생성 중..." : sceneAssetId ? "장면 다시 생성" : "이 구도로 장면 생성"}
+            <Sparkles className="w-3.5 h-3.5" /> {generatingScene ? "콘티 좌표를 고정해 생성 중..." : sceneAssetId ? "이 콘티로 다시 생성" : "이 콘티 고정으로 장면 생성"}
           </button>
         </div>
       </div>

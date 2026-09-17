@@ -109,6 +109,7 @@ export async function requestSceneImage(project: Project, episode: Episode, cut:
     context: context(project),
     episode: { number: episode.episodeNumber, title: episode.title, synopsis: episode.synopsis },
     cut: cutData(cut),
+    storyboard: cut.storyboard,
     layoutImage: { data: await blobToBase64(layoutBlob), mimeType: "image/png" },
     references,
   });

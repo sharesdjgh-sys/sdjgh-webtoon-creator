@@ -3,6 +3,7 @@ import "server-only";
 import { GoogleGenAI } from "@google/genai";
 import { z } from "zod";
 import type { PanelAspectRatio, StoryboardDocument, StoryboardElement } from "@/lib/storage";
+import { resolveCharacterRig } from "@/lib/storyboardRig";
 
 const IMAGE_MODEL = process.env.GEMINI_IMAGE_MODEL ?? "gemini-3.1-flash-image";
 const LAYOUT_MODEL = process.env.GEMINI_LAYOUT_MODEL ?? "gemini-3.8-flash";
@@ -279,13 +280,50 @@ export async function generateSceneImage(input: {
   context: ProjectVisualContext;
   episode: { number: number; title: string; synopsis: string };
   cut: { angle: string; description: string; dialogue: string; soundEffect: string; aspectRatio: PanelAspectRatio };
+  storyboard: StoryboardDocument;
   layoutImage: { data: string; mimeType: string };
   references: Array<{ character: CharacterVisualInput; data: string; mimeType: string }>;
 }): Promise<{ data: string; mimeType: string; prompt: string }> {
   const cast = input.references.map(({ character }, index) =>
     `Reference image ${index + 2} is the approved design sheet for ${character.name} (${character.role}). Preserve that character's face, hair, outfit, colors and proportions.`
   ).join("\n");
-  const prompt = `Create one finished webtoon panel using the first image as a strict COMPOSITION BLUEPRINT.
+  const pct = (value: number, total: number) => `${((value / total) * 100).toFixed(1)}%`;
+  const rotate = (x: number, y: number, element: StoryboardElement) => {
+    const centerX = element.x + element.width / 2;
+    const centerY = element.y + element.height / 2;
+    const radians = element.rotation * Math.PI / 180;
+    const dx = x - centerX;
+    const dy = y - centerY;
+    return {
+      x: centerX + dx * Math.cos(radians) - dy * Math.sin(radians),
+      y: centerY + dx * Math.sin(radians) + dy * Math.cos(radians),
+    };
+  };
+  const elementBox = (element: StoryboardElement) =>
+    `left=${pct(element.x, input.storyboard.width)}, top=${pct(element.y, input.storyboard.height)}, width=${pct(element.width, input.storyboard.width)}, height=${pct(element.height, input.storyboard.height)}, rotation=${element.rotation.toFixed(1)}deg, layer=${element.zIndex}`;
+  const referenceNames = new Map(input.references.map(({ character }) => [character.id, character.name]));
+  const spatialContract = input.storyboard.elements
+    .slice()
+    .sort((left, right) => left.zIndex - right.zIndex)
+    .map((element) => {
+      if (element.type !== "character") {
+        const purpose = ["speech", "caption", "sfx"].includes(element.type)
+          ? "RESERVED TYPOGRAPHY AREA — leave visually quiet and do not draw text"
+          : `visual=${element.text || element.type}`;
+        return `- [${element.type.toUpperCase()} ${element.id}] ${elementBox(element)}; ${purpose}`;
+      }
+      const rig = resolveCharacterRig(element);
+      const joints = Object.entries(rig).map(([name, point]) => {
+        const position = rotate(element.x + point.x * element.width, element.y + point.y * element.height, element);
+        return `${name}=(${pct(position.x, input.storyboard.width)},${pct(position.y, input.storyboard.height)})`;
+      }).join(", ");
+      const identity = referenceNames.get(element.characterId ?? "") || element.text || "character";
+      return `- [CHARACTER ${element.id}] identity=${identity}; ${elementBox(element)}; pose=${element.pose || "follow rig"}; expression=${element.expression || "follow scene"}; JOINTS ${joints}`;
+    })
+    .join("\n");
+  const characterCount = input.storyboard.elements.filter((element) => element.type === "character").length;
+
+  const prompt = `REDRAW the first image as one finished webtoon panel. This is a layout-locked image-to-image production task, not a new composition.
 
 PROJECT
 - Title: ${input.context.title}
@@ -300,7 +338,18 @@ PANEL
 - Episode context: ${input.episode.synopsis}
 ${cast}
 
-Follow the blueprint's framing, positions, scale, depth, facing direction and action. Replace diagram figures and boxes with finished characters, props and environment. Make the storytelling beat immediately readable and keep safe space where the blueprint shows speech balloons.
+NON-NEGOTIABLE SPATIAL CONTRACT (coordinates are percentages of the final image):
+${spatialContract}
+
+COMPOSITION LOCK:
+- Preserve the exact camera framing and canvas edges from reference image 1. Do not zoom, crop, pan, mirror, or choose a new angle.
+- Render exactly ${characterCount} character figure(s). Do not add, remove, merge, duplicate, or swap them.
+- Each character's head, hands, elbows, knees and feet must land on the listed JOINTS. Keep the complete body inside its listed bounding box.
+- Preserve every element's bounding box, scale, rotation, overlap and front-to-back layer. Background perspective must support these placements, never move them.
+- The characterId/design-sheet mapping is fixed. Use the matching design sheet only for that figure's identity, outfit, colors and proportions.
+- Keep all RESERVED TYPOGRAPHY AREA boxes visually quiet. Do not place faces, hands or important props inside them.
+- Replace diagram figures and boxes with finished art, but do not reinterpret their blocking. If written scene prose conflicts with the spatial contract, the spatial contract wins.
+- Before returning the image, compare it against reference image 1 from edge to edge and correct any displaced figure or prop.
 
 IMPORTANT: Produce artwork only. Do not draw speech balloons, dialogue, captions, sound-effect letters, labels, panel borders, logos or watermarks. The application will add exact editable Korean typography afterward.`;
   const imageInputs = [
