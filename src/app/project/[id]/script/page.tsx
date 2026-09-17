@@ -3,11 +3,11 @@
 import { useState, useEffect, use, useRef } from "react";
 import Link from "next/link";
 import { Textarea } from "@/components/ui/textarea";
-import AiChat from "@/components/ai-assistant/AiChat";
 import StepIndicator from "@/components/progress-tracker/StepIndicator";
 import MobileChatSheet, { type MobileChatSheetHandle } from "@/components/mobile/MobileChatSheet";
 import MobileStepBar from "@/components/MobileStepBar";
-import { Save, ArrowRight, ArrowLeft, CheckCircle, Sparkles, Check, Download, FileText, Plus, ChevronDown, ChevronUp, Users, Wand2 } from "lucide-react";
+import { Save, ArrowRight, ArrowLeft, CheckCircle, Sparkles, Check, Download, FileText, Plus, ChevronDown, ChevronUp, Users, Wand2, Eye, PenLine } from "lucide-react";
+import ReactMarkdown from "react-markdown";
 import { getProject, updateProject, type Episode, type Cut, type Project, type Character, type ChatMessage } from "@/lib/storage";
 import { downloadEpisode, downloadAllEpisodes } from "@/lib/download";
 
@@ -58,6 +58,7 @@ export default function ScriptPage({ params }: { params: Promise<{ id: string }>
   const [autofilling, setAutofilling] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
   const [noIdeaChat, setNoIdeaChat] = useState(false);
+  const [previewMode, setPreviewMode] = useState(false);
   const mobileChatRef = useRef<MobileChatSheetHandle>(null);
 
   useEffect(() => {
@@ -118,7 +119,8 @@ export default function ScriptPage({ params }: { params: Promise<{ id: string }>
       });
       const data = await res.json();
       if (data.script) {
-        updateEp("script", data.script);
+        const existing = episodes[activeEp]?.script ?? "";
+        updateEp("script", existing ? `${existing}\n\n---\n\n${data.script}` : data.script);
       }
     } finally {
       setAutofilling(false);
@@ -279,27 +281,69 @@ export default function ScriptPage({ params }: { params: Promise<{ id: string }>
                 <FileText className="w-4 h-4 text-[#7C3AED]" />
                 <span className="text-sm font-bold text-[#1A1A1A]">대본</span>
               </div>
-              <button
-                onClick={autofill}
-                disabled={autofilling}
-                className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-full border border-[#EBE7E0] text-[#7A7067] hover:bg-[#F4F1EC] transition-all duration-200 disabled:opacity-50"
-              >
-                <Wand2 className="w-3.5 h-3.5" /> {autofilling ? "작성 중..." : "AI 자동채우기"}
-              </button>
+              <div className="flex items-center gap-2">
+                <div className="flex rounded-full border border-[#EBE7E0] overflow-hidden text-xs">
+                  <button
+                    onClick={() => setPreviewMode(false)}
+                    className={`flex items-center gap-1 px-3 py-1.5 transition-colors ${!previewMode ? "bg-[#7C3AED] text-white" : "text-[#7A7067] hover:bg-[#F4F1EC]"}`}
+                  >
+                    <PenLine className="w-3 h-3" /> 편집
+                  </button>
+                  <button
+                    onClick={() => setPreviewMode(true)}
+                    className={`flex items-center gap-1 px-3 py-1.5 transition-colors ${previewMode ? "bg-[#7C3AED] text-white" : "text-[#7A7067] hover:bg-[#F4F1EC]"}`}
+                  >
+                    <Eye className="w-3 h-3" /> 미리보기
+                  </button>
+                </div>
+                <button
+                  onClick={autofill}
+                  disabled={autofilling}
+                  className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-full border border-[#EBE7E0] text-[#7A7067] hover:bg-[#F4F1EC] transition-all duration-200 disabled:opacity-50"
+                >
+                  <Wand2 className="w-3.5 h-3.5" /> {autofilling ? "작성 중..." : "AI 자동채우기"}
+                </button>
+              </div>
             </div>
             <div className="p-5">
-              <p className="text-xs text-[#ADA8A0] mb-3">장면 묘사, 대사, 효과음을 자유롭게 써봐요</p>
-              <Textarea
-                placeholder={`대본을 작성해주세요.\n\n예시:\n[장면1: 학교 복도, 낮]\n(주인공이 급하게 달려온다)\n주인공: "늦었어! 어떡해!"\n친구: (손을 흔들며) "여기야!"`}
-                value={scriptText}
-                onChange={(e) => updateEp("script", e.target.value)}
-                rows={26}
-                className="font-mono text-xs"
-              />
-              <div className="flex justify-end mt-2 gap-3 text-[10px] text-[#ADA8A0]">
-                <span>{lineCount}줄</span>
-                <span>{charCount.toLocaleString()}자</span>
-              </div>
+              {previewMode ? (
+                scriptText ? (
+                  <div className="min-h-[400px] prose prose-sm max-w-none text-[#1A1A1A]
+                    [&_h1]:text-xl [&_h1]:font-bold [&_h1]:mb-3 [&_h1]:mt-5
+                    [&_h2]:text-base [&_h2]:font-bold [&_h2]:mb-2 [&_h2]:mt-4 [&_h2]:text-[#7C3AED]
+                    [&_h3]:text-sm [&_h3]:font-semibold [&_h3]:mb-1.5 [&_h3]:mt-3
+                    [&_p]:text-xs [&_p]:leading-[1.9] [&_p]:mb-2
+                    [&_strong]:font-semibold [&_strong]:text-[#1A1A1A]
+                    [&_em]:italic [&_em]:text-[#5A5550]
+                    [&_hr]:border-[#EBE7E0] [&_hr]:my-4
+                    [&_blockquote]:border-l-2 [&_blockquote]:border-[#7C3AED] [&_blockquote]:pl-3 [&_blockquote]:text-[#7A7067] [&_blockquote]:italic [&_blockquote]:my-2
+                    [&_ul]:list-disc [&_ul]:pl-5 [&_ul]:text-xs [&_ul]:leading-relaxed
+                    [&_li]:mb-1
+                    [&_pre]:bg-[#F4F1EC] [&_pre]:rounded-xl [&_pre]:p-4 [&_pre]:text-xs [&_pre]:font-mono [&_pre]:whitespace-pre-wrap [&_pre]:my-3
+                    [&_code]:bg-[#F4F1EC] [&_code]:px-1.5 [&_code]:py-0.5 [&_code]:rounded [&_code]:text-xs [&_code]:font-mono [&_code]:text-[#7C3AED]">
+                    <ReactMarkdown>{scriptText}</ReactMarkdown>
+                  </div>
+                ) : (
+                  <div className="min-h-[400px] flex items-center justify-center text-xs text-[#ADA8A0]">
+                    대본을 먼저 작성하면 여기서 미리볼 수 있어요
+                  </div>
+                )
+              ) : (
+                <>
+                  <p className="text-xs text-[#ADA8A0] mb-3">장면 묘사, 대사, 효과음을 자유롭게 써봐요</p>
+                  <Textarea
+                    placeholder={`대본을 작성해주세요.\n\n예시:\n[장면1: 학교 복도, 낮]\n(주인공이 급하게 달려온다)\n주인공: "늦었어! 어떡해!"\n친구: (손을 흔들며) "여기야!"`}
+                    value={scriptText}
+                    onChange={(e) => updateEp("script", e.target.value)}
+                    rows={26}
+                    className="font-mono text-xs"
+                  />
+                  <div className="flex justify-end mt-2 gap-3 text-[10px] text-[#ADA8A0]">
+                    <span>{lineCount}줄</span>
+                    <span>{charCount.toLocaleString()}자</span>
+                  </div>
+                </>
+              )}
             </div>
           </div>
 
@@ -326,17 +370,8 @@ export default function ScriptPage({ params }: { params: Promise<{ id: string }>
           </div>
         </main>
 
-        <aside className="hidden lg:flex w-72 flex-shrink-0 sticky top-20 flex-col gap-3" style={{ height: "calc(100vh - 5rem)" }}>
+        <aside className="hidden lg:block w-72 flex-shrink-0 sticky top-20">
           <CharacterPanel characters={project?.characters ?? []} />
-          <div className="flex-1 min-h-0">
-            <AiChat
-              step="script"
-              initialMessage="대본 작업을 도와드릴게요! 대사나 장면 묘사에 대해 도움이 필요하시면 말씀해 주세요!"
-              placeholder="대본·대사에 대해 질문하세요..."
-              initialMessages={project?.scriptChat}
-              onMessagesChange={(msgs) => updateProject(id, { scriptChat: msgs as ChatMessage[] })}
-            />
-          </div>
         </aside>
       </div>
 
