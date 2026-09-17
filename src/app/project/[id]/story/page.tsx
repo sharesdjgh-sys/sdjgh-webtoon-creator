@@ -5,7 +5,6 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
-import AiChat from "@/components/ai-assistant/AiChat";
 import StepIndicator from "@/components/progress-tracker/StepIndicator";
 import EmptyContentModal from "@/components/EmptyContentModal";
 import MobileChatSheet, { type MobileChatSheetHandle } from "@/components/mobile/MobileChatSheet";
@@ -196,15 +195,6 @@ export default function StoryPage({ params }: { params: Promise<{ id: string }> 
           </div>
         </main>
 
-        <aside className="hidden lg:block w-72 flex-shrink-0 h-[calc(100vh-5rem)] sticky top-20">
-          <AiChat
-            step="story"
-            initialMessage="안녕하세요! 스토리 구성을 도와드릴게요. 어떤 이야기를 만들고 싶으신가요?"
-            placeholder="스토리에 대해 질문하세요..."
-            initialMessages={project?.storyChat}
-            onMessagesChange={(msgs) => updateProject(id, { storyChat: msgs as ChatMessage[] })}
-          />
-        </aside>
       </div>
 
       {showEmptyModal && (

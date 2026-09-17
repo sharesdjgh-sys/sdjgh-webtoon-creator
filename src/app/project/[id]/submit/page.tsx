@@ -3,12 +3,12 @@
 import { useState, useEffect, use } from "react";
 import Link from "next/link";
 import { Textarea } from "@/components/ui/textarea";
-import AiChat from "@/components/ai-assistant/AiChat";
 import StepIndicator from "@/components/progress-tracker/StepIndicator";
 import { Trophy, CheckCircle, Circle, ArrowLeft, Sparkles, Download } from "lucide-react";
 import { getProject, updateProject } from "@/lib/storage";
 import { downloadFullSummary } from "@/lib/download";
 import MobileStepBar from "@/components/MobileStepBar";
+import MobileChatSheet from "@/components/mobile/MobileChatSheet";
 
 const CHECKLIST = [
   { id: "story", label: "스토리 기승전결이 완성되었나요?" },
@@ -181,14 +181,12 @@ export default function SubmitPage({ params }: { params: Promise<{ id: string }>
           </div>
         </main>
 
-        <aside className="hidden lg:block w-72 flex-shrink-0 h-[calc(100vh-5rem)] sticky top-20">
-          <AiChat
-            step="completion"
-            initialMessage="거의 다 왔어요! 제출 전 최종 점검을 도와드릴게요. 작가 노트 작성이나 마지막으로 확인하고 싶은 부분이 있으시면 말씀해 주세요!"
-            placeholder="마지막 점검에 도움을 요청하세요..."
-          />
-        </aside>
       </div>
+      <MobileChatSheet
+        step="completion"
+        initialMessage="거의 다 왔어요! 제출 전 최종 점검을 도와드릴게요. 작가 노트 작성이나 마지막으로 확인하고 싶은 부분이 있으시면 말씀해 주세요!"
+        placeholder="마지막 점검에 도움을 요청하세요..."
+      />
     </div>
   );
 }
