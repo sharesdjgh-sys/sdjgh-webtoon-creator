@@ -59,6 +59,10 @@ const generatedElementSchema = z.object({
   shape: z.enum(["rect", "ellipse"]).optional(),
   pose: z.string().max(200).optional(),
   expression: z.string().max(200).optional(),
+  balloonStyle: z.enum(["normal", "thought", "shout", "whisper"]).optional(),
+  tailX: z.number().optional(),
+  tailY: z.number().optional(),
+  speakerCharacterId: z.string().max(120).optional(),
 });
 
 const generatedDocumentSchema = z.object({
@@ -86,6 +90,10 @@ const STORYBOARD_JSON_SCHEMA = {
           shape: { type: "string", enum: ["rect", "ellipse"] },
           pose: { type: "string" },
           expression: { type: "string" },
+          balloonStyle: { type: "string", enum: ["normal", "thought", "shout", "whisper"] },
+          tailX: { type: "number", description: "Speech-tail endpoint x in local normalized coordinates; 0..1 is inside the balloon" },
+          tailY: { type: "number", description: "Speech-tail endpoint y in local normalized coordinates; 0..1 is inside the balloon" },
+          speakerCharacterId: { type: "string", description: "Exact selected cast ID of the speaker" },
         },
         required: ["type", "x", "y", "width", "height", "rotation", "zIndex", "text"],
       },
@@ -221,6 +229,12 @@ function clampElement(
     rotation: Math.min(Math.max(element.rotation, -180), 180),
     zIndex: index,
     characterId: element.characterId && characterIds.has(element.characterId) ? element.characterId : undefined,
+    balloonStyle: element.type === "speech" ? (element.balloonStyle ?? "normal") : undefined,
+    tailX: element.type === "speech" ? Math.min(2, Math.max(-1, element.tailX ?? 0.25)) : undefined,
+    tailY: element.type === "speech" ? Math.min(2, Math.max(-1, element.tailY ?? 1.22)) : undefined,
+    speakerCharacterId: element.type === "speech" && element.speakerCharacterId && characterIds.has(element.speakerCharacterId)
+      ? element.speakerCharacterId
+      : undefined,
   };
 }
 
@@ -251,6 +265,7 @@ Return a practical SVG scene graph using only the supplied JSON schema.
 - Use character elements for blocking people; characterId must exactly match a selected cast ID.
 - Use prop, shape, and arrow elements only when they clarify depth, motion, foreground, or background.
 - Use speech/caption/sfx elements for exact Korean text; these remain editable overlays.
+- For every speech element, choose balloonStyle: normal for ordinary dialogue, thought for inner monologue, shout for yelling, or whisper for quiet/breathing dialogue. Set speakerCharacterId to the exact cast ID and aim tailX/tailY toward that speaker. tail coordinates are local to the balloon: (0,0) top-left, (1,1) bottom-right, and may extend outside the box.
 - text for character and prop elements is a short Korean label. Include concise pose and expression notes for characters.
 - Avoid overlaps that obscure faces or key action. Keep 10% safe margins for text.
 - zIndex must describe back-to-front order.`;
@@ -308,7 +323,7 @@ export async function generateSceneImage(input: {
     .map((element) => {
       if (element.type !== "character") {
         const purpose = ["speech", "caption", "sfx"].includes(element.type)
-          ? "RESERVED TYPOGRAPHY AREA — leave visually quiet and do not draw text"
+          ? `RESERVED TYPOGRAPHY AREA — leave visually quiet and do not draw text${element.type === "speech" ? `; balloon=${element.balloonStyle ?? "normal"}; speaker=${referenceNames.get(element.speakerCharacterId ?? "") ?? element.speakerCharacterId ?? "unassigned"}; tail=(${element.tailX ?? 0.25},${element.tailY ?? 1.22}) local` : ""}`
           : `visual=${element.text || element.type}`;
         return `- [${element.type.toUpperCase()} ${element.id}] ${elementBox(element)}; ${purpose}`;
       }

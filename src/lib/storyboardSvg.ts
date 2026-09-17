@@ -71,6 +71,40 @@ export function storyboardTextLines(text: string, maxCharacters: number): string
   return lines.slice(0, 10);
 }
 
+export function speechBalloonGeometry(element: StoryboardElement) {
+  const centerX = element.width / 2;
+  const centerY = element.height / 2;
+  const radiusX = Math.max(1, centerX - 3);
+  const radiusY = Math.max(1, centerY - 3);
+  const tailX = (element.tailX ?? 0.25) * element.width;
+  const tailY = (element.tailY ?? 1.22) * element.height;
+  let dx = tailX - centerX;
+  let dy = tailY - centerY;
+  if (Math.abs(dx) + Math.abs(dy) < 0.001) {
+    dx = -element.width * 0.25;
+    dy = element.height;
+  }
+  const boundaryScale = 1 / Math.sqrt((dx * dx) / (radiusX * radiusX) + (dy * dy) / (radiusY * radiusY));
+  const boundaryX = centerX + dx * boundaryScale;
+  const boundaryY = centerY + dy * boundaryScale;
+  const length = Math.max(1, Math.hypot(dx, dy));
+  const baseWidth = Math.max(9, Math.min(element.width, element.height) * 0.09);
+  const perpendicularX = -dy / length;
+  const perpendicularY = dx / length;
+  const tailPoints = `${boundaryX + perpendicularX * baseWidth},${boundaryY + perpendicularY * baseWidth} ${tailX},${tailY} ${boundaryX - perpendicularX * baseWidth},${boundaryY - perpendicularY * baseWidth}`;
+  const thoughtDots = [0.22, 0.52, 0.8].map((ratio, index) => ({
+    x: boundaryX + (tailX - boundaryX) * ratio,
+    y: boundaryY + (tailY - boundaryY) * ratio,
+    radius: Math.max(4, baseWidth * (0.7 - index * 0.18)),
+  }));
+  const spikePoints = Array.from({ length: 32 }, (_, index) => {
+    const angle = -Math.PI / 2 + (Math.PI * 2 * index) / 32;
+    const radius = index % 2 === 0 ? 1 : 0.82;
+    return `${centerX + Math.cos(angle) * radiusX * radius},${centerY + Math.sin(angle) * radiusY * radius}`;
+  }).join(" ");
+  return { centerX, centerY, radiusX, radiusY, tailX, tailY, boundaryX, boundaryY, tailPoints, thoughtDots, spikePoints };
+}
+
 function svgText(element: StoryboardElement, fontSize: number, weight = 600): string {
   const resolvedFontSize = element.fontSize ?? fontSize;
   const resolvedWeight = element.fontWeight ?? weight;
@@ -99,19 +133,23 @@ function characterMarkup(element: StoryboardElement): string {
   const rightFoot = point("rightFoot");
   const radius = Math.max(14, Math.min(element.width, element.height) * 0.09);
   const limb = Math.max(7, Math.min(element.width, element.height) * 0.035);
-  const line = (a: { x: number; y: number }, b: { x: number; y: number }, width = limb) => `<line x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}" stroke="#5B21B6" stroke-width="${width}" stroke-linecap="round"/>`;
-  return `${line(head, neck, limb * 0.7)}
-    ${line(leftShoulder, leftElbow)}${line(leftElbow, leftHand, limb * 0.82)}
-    ${line(rightShoulder, rightElbow)}${line(rightElbow, rightHand, limb * 0.82)}
-    ${line(leftHip, leftKnee, limb * 1.15)}${line(leftKnee, leftFoot, limb)}
-    ${line(rightHip, rightKnee, limb * 1.15)}${line(rightKnee, rightFoot, limb)}
-    <polygon points="${leftShoulder.x},${leftShoulder.y} ${rightShoulder.x},${rightShoulder.y} ${rightHip.x},${rightHip.y} ${leftHip.x},${leftHip.y}" fill="#EDE9FE" stroke="#5B21B6" stroke-width="${Math.max(4, limb * 0.45)}" stroke-linejoin="round"/>
-    <ellipse cx="${head.x}" cy="${head.y}" rx="${radius * 0.82}" ry="${radius}" fill="#fff" stroke="#5B21B6" stroke-width="${Math.max(4, limb * 0.45)}"/>
-    <path d="M ${head.x} ${head.y + radius * 0.2} Q ${head.x + radius * 0.35} ${head.y + radius * 0.35} ${head.x + radius * 0.55} ${head.y + radius * 0.08}" fill="none" stroke="#7C3AED" stroke-width="${Math.max(2, limb * 0.25)}" stroke-linecap="round"/>
-    <circle cx="${leftHand.x}" cy="${leftHand.y}" r="${limb * 0.62}" fill="#fff" stroke="#5B21B6" stroke-width="${Math.max(3, limb * 0.35)}"/>
-    <circle cx="${rightHand.x}" cy="${rightHand.y}" r="${limb * 0.62}" fill="#fff" stroke="#5B21B6" stroke-width="${Math.max(3, limb * 0.35)}"/>
-    <line x1="${leftFoot.x - limb}" y1="${leftFoot.y}" x2="${leftFoot.x + limb * 1.2}" y2="${leftFoot.y}" stroke="#5B21B6" stroke-width="${limb * 0.8}" stroke-linecap="round"/>
-    <line x1="${rightFoot.x - limb}" y1="${rightFoot.y}" x2="${rightFoot.x + limb * 1.2}" y2="${rightFoot.y}" stroke="#5B21B6" stroke-width="${limb * 0.8}" stroke-linecap="round"/>
+  const line = (a: { x: number; y: number }, b: { x: number; y: number }, width = limb, color = "#DDD6FE") => `<line x1="${a.x}" y1="${a.y}" x2="${b.x}" y2="${b.y}" stroke="${color}" stroke-width="${width}" stroke-linecap="round"/>`;
+  const outline = (a: { x: number; y: number }, b: { x: number; y: number }, width: number) => `${line(a, b, width + Math.max(3, limb * 0.38), "#5B21B6")}${line(a, b, width)}`;
+  return `${outline(head, neck, limb * 1.15)}
+    ${outline(leftShoulder, leftElbow, limb * 2.15)}${outline(leftElbow, leftHand, limb * 1.7)}
+    ${outline(rightShoulder, rightElbow, limb * 2.15)}${outline(rightElbow, rightHand, limb * 1.7)}
+    ${outline(leftHip, leftKnee, limb * 2.8)}${outline(leftKnee, leftFoot, limb * 2.15)}
+    ${outline(rightHip, rightKnee, limb * 2.8)}${outline(rightKnee, rightFoot, limb * 2.15)}
+    <path d="M ${leftShoulder.x} ${leftShoulder.y} Q ${head.x} ${neck.y + limb} ${rightShoulder.x} ${rightShoulder.y} L ${rightHip.x} ${rightHip.y} Q ${head.x} ${Math.max(leftHip.y, rightHip.y) + limb * 1.3} ${leftHip.x} ${leftHip.y} Z" fill="#EDE9FE" stroke="#5B21B6" stroke-width="${Math.max(4, limb * 0.45)}" stroke-linejoin="round"/>
+    <path d="M ${leftHip.x - limb * 0.35} ${leftHip.y} Q ${head.x} ${leftHip.y + limb * 2.4} ${rightHip.x + limb * 0.35} ${rightHip.y}" fill="none" stroke="#7C3AED" stroke-width="${Math.max(3, limb * 0.35)}"/>
+    <path d="M ${head.x - radius * 0.78} ${head.y - radius * 0.45} Q ${head.x - radius * 0.65} ${head.y - radius} ${head.x} ${head.y - radius} Q ${head.x + radius * 0.72} ${head.y - radius * 0.9} ${head.x + radius * 0.78} ${head.y - radius * 0.35} L ${head.x + radius * 0.6} ${head.y + radius * 0.42} Q ${head.x} ${head.y + radius * 1.08} ${head.x - radius * 0.6} ${head.y + radius * 0.42} Z" fill="#FFF7ED" stroke="#5B21B6" stroke-width="${Math.max(4, limb * 0.45)}"/>
+    <path d="M ${head.x - radius * 0.8} ${head.y - radius * 0.35} Q ${head.x - radius * 0.45} ${head.y - radius * 1.18} ${head.x + radius * 0.72} ${head.y - radius * 0.52} Q ${head.x + radius * 0.25} ${head.y - radius * 0.62} ${head.x - radius * 0.05} ${head.y - radius * 0.18}" fill="#C4B5FD" stroke="#5B21B6" stroke-width="${Math.max(3, limb * 0.35)}" stroke-linecap="round"/>
+    <path d="M ${head.x - radius * 0.48} ${head.y} Q ${head.x} ${head.y - radius * 0.08} ${head.x + radius * 0.48} ${head.y}" fill="none" stroke="#7C3AED" stroke-width="${Math.max(2, limb * 0.25)}" stroke-linecap="round"/>
+    <path d="M ${head.x} ${head.y - radius * 0.55} L ${head.x + radius * 0.08} ${head.y + radius * 0.5}" fill="none" stroke="#A78BFA" stroke-width="${Math.max(2, limb * 0.2)}" stroke-dasharray="6 5"/>
+    <circle cx="${leftHand.x}" cy="${leftHand.y}" r="${limb * 0.9}" fill="#FFF7ED" stroke="#5B21B6" stroke-width="${Math.max(3, limb * 0.35)}"/>
+    <circle cx="${rightHand.x}" cy="${rightHand.y}" r="${limb * 0.9}" fill="#FFF7ED" stroke="#5B21B6" stroke-width="${Math.max(3, limb * 0.35)}"/>
+    <path d="M ${leftFoot.x - limb * 1.1} ${leftFoot.y} Q ${leftFoot.x} ${leftFoot.y - limb * 0.7} ${leftFoot.x + limb * 1.65} ${leftFoot.y + limb * 0.15}" fill="none" stroke="#5B21B6" stroke-width="${limb * 1.15}" stroke-linecap="round"/>
+    <path d="M ${rightFoot.x - limb * 1.1} ${rightFoot.y} Q ${rightFoot.x} ${rightFoot.y - limb * 0.7} ${rightFoot.x + limb * 1.65} ${rightFoot.y + limb * 0.15}" fill="none" stroke="#5B21B6" stroke-width="${limb * 1.15}" stroke-linecap="round"/>
     <rect x="${Math.max(0, head.x - element.width * 0.24)}" y="0" width="${element.width * 0.48}" height="28" rx="10" fill="#5B21B6"/>
     <text x="${head.x}" y="15" text-anchor="middle" dominant-baseline="middle" font-family="Pretendard, sans-serif" font-size="16" font-weight="700" fill="#fff">${escapeXml(element.text || "캐릭터")}</text>`;
 }
@@ -122,7 +160,17 @@ function elementMarkup(element: StoryboardElement): string {
   if (element.type === "character") {
     content = characterMarkup(element);
   } else if (element.type === "speech") {
-    content = `<ellipse cx="${element.width / 2}" cy="${element.height / 2}" rx="${Math.max(1, element.width / 2 - 3)}" ry="${Math.max(1, element.height / 2 - 3)}" fill="#fff" stroke="#171717" stroke-width="4"/><path d="M ${element.width * 0.35} ${element.height * 0.86} L ${element.width * 0.22} ${element.height + 18} L ${element.width * 0.48} ${element.height * 0.91}" fill="#fff" stroke="#171717" stroke-width="4" stroke-linejoin="round"/>${svgText(element, Math.max(16, Math.min(30, element.height / 5)))}`;
+    const balloon = speechBalloonGeometry(element);
+    const style = element.balloonStyle ?? "normal";
+    if (style === "thought") {
+      content = `<ellipse cx="${balloon.centerX}" cy="${balloon.centerY}" rx="${balloon.radiusX}" ry="${balloon.radiusY}" fill="#fff" stroke="#171717" stroke-width="4"/>${balloon.thoughtDots.map((dot) => `<circle cx="${dot.x}" cy="${dot.y}" r="${dot.radius}" fill="#fff" stroke="#171717" stroke-width="3"/>`).join("")}${svgText(element, Math.max(16, Math.min(30, element.height / 5)))}`;
+    } else if (style === "shout") {
+      content = `<polygon points="${balloon.tailPoints}" fill="#fff" stroke="#171717" stroke-width="4" stroke-linejoin="round"/><polygon points="${balloon.spikePoints}" fill="#fff" stroke="#171717" stroke-width="4" stroke-linejoin="round"/>${svgText(element, Math.max(16, Math.min(30, element.height / 5)), 800)}`;
+    } else if (style === "whisper") {
+      content = `<path d="M ${balloon.boundaryX} ${balloon.boundaryY} Q ${(balloon.boundaryX + balloon.tailX) / 2 + 8} ${(balloon.boundaryY + balloon.tailY) / 2} ${balloon.tailX} ${balloon.tailY}" fill="none" stroke="#555" stroke-width="3" stroke-dasharray="8 7"/><ellipse cx="${balloon.centerX}" cy="${balloon.centerY}" rx="${balloon.radiusX}" ry="${balloon.radiusY}" fill="#fff" stroke="#555" stroke-width="3" stroke-dasharray="9 7"/>${svgText(element, Math.max(16, Math.min(30, element.height / 5)), 400)}`;
+    } else {
+      content = `<polygon points="${balloon.tailPoints}" fill="#fff" stroke="#171717" stroke-width="4" stroke-linejoin="round"/><ellipse cx="${balloon.centerX}" cy="${balloon.centerY}" rx="${balloon.radiusX}" ry="${balloon.radiusY}" fill="#fff" stroke="#171717" stroke-width="4"/>${svgText(element, Math.max(16, Math.min(30, element.height / 5)))}`;
+    }
   } else if (element.type === "caption") {
     content = `<rect width="${element.width}" height="${element.height}" rx="8" fill="#fff" stroke="#171717" stroke-width="4"/>${svgText(element, Math.max(16, Math.min(28, element.height / 4)))}`;
   } else if (element.type === "sfx") {

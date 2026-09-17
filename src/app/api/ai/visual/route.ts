@@ -74,6 +74,10 @@ const storyboardSchema = z.object({
     fontSize: z.number().positive().max(300).optional(),
     fontWeight: z.number().min(100).max(900).optional(),
     characterRig: characterRigSchema.optional(),
+    balloonStyle: z.enum(["normal", "thought", "shout", "whisper"]).optional(),
+    tailX: z.number().min(-2).max(3).optional(),
+    tailY: z.number().min(-2).max(3).optional(),
+    speakerCharacterId: z.string().max(120).optional(),
   })).min(1).max(32),
 });
 

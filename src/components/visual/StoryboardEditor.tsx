@@ -22,7 +22,7 @@ import {
   X,
 } from "lucide-react";
 import type { Character, CharacterJointKey, StoryboardDocument, StoryboardElement, StoryboardElementType } from "@/lib/storage";
-import { composeScenePng, defaultWebtoonFont, isOverlayElement, storyboardTextLines, storyboardToSvg, WEBTOON_FONT_OPTIONS, webtoonFontStack } from "@/lib/storyboardSvg";
+import { composeScenePng, defaultWebtoonFont, isOverlayElement, speechBalloonGeometry, storyboardTextLines, storyboardToSvg, WEBTOON_FONT_OPTIONS, webtoonFontStack } from "@/lib/storyboardSvg";
 import { CHARACTER_POSE_PRESETS, resolveCharacterRig } from "@/lib/storyboardRig";
 import { downloadBlob, getMediaAsset } from "@/lib/mediaStorage";
 import StoredImage from "@/components/visual/StoredImage";
@@ -38,7 +38,7 @@ type Props = {
 };
 
 type PointerAction = {
-  mode: "drag" | "resize" | "joint";
+  mode: "drag" | "resize" | "joint" | "tail";
   elementId: string;
   jointKey?: CharacterJointKey;
   startX: number;
@@ -69,11 +69,13 @@ function SceneElement({
   characterName,
   selected,
   onJointPointerDown,
+  onTailPointerDown,
 }: {
   element: StoryboardElement;
   characterName?: string;
   selected?: boolean;
   onJointPointerDown?: (event: React.PointerEvent, jointKey: CharacterJointKey) => void;
+  onTailPointerDown?: (event: React.PointerEvent) => void;
 }) {
   const centerX = element.width / 2;
   const centerY = element.height / 2;
@@ -108,24 +110,33 @@ function SceneElement({
     const rightFoot = point("rightFoot");
     const headRadius = Math.max(14, Math.min(element.width, element.height) * 0.09);
     const limbWidth = Math.max(7, Math.min(element.width, element.height) * 0.035);
-    const limb = (from: { x: number; y: number }, to: { x: number; y: number }, width = limbWidth) => (
-      <line x1={from.x} y1={from.y} x2={to.x} y2={to.y} stroke="#5B21B6" strokeWidth={width} strokeLinecap="round" />
+    const limb = (from: { x: number; y: number }, to: { x: number; y: number }, width: number, color = "#DDD6FE") => (
+      <line x1={from.x} y1={from.y} x2={to.x} y2={to.y} stroke={color} strokeWidth={width} strokeLinecap="round" />
+    );
+    const outlinedLimb = (from: { x: number; y: number }, to: { x: number; y: number }, width: number) => (
+      <>
+        {limb(from, to, width + Math.max(3, limbWidth * 0.38), "#5B21B6")}
+        {limb(from, to, width)}
+      </>
     );
     const joints = Object.keys(rig) as CharacterJointKey[];
     return (
       <>
-        {limb(head, neck, limbWidth * 0.7)}
-        {limb(leftShoulder, leftElbow)}{limb(leftElbow, leftHand, limbWidth * 0.82)}
-        {limb(rightShoulder, rightElbow)}{limb(rightElbow, rightHand, limbWidth * 0.82)}
-        {limb(leftHip, leftKnee, limbWidth * 1.15)}{limb(leftKnee, leftFoot)}
-        {limb(rightHip, rightKnee, limbWidth * 1.15)}{limb(rightKnee, rightFoot)}
-        <polygon points={`${leftShoulder.x},${leftShoulder.y} ${rightShoulder.x},${rightShoulder.y} ${rightHip.x},${rightHip.y} ${leftHip.x},${leftHip.y}`} fill="#EDE9FE" stroke="#5B21B6" strokeWidth={Math.max(4, limbWidth * 0.45)} strokeLinejoin="round" />
-        <ellipse cx={head.x} cy={head.y} rx={headRadius * 0.82} ry={headRadius} fill="white" stroke="#5B21B6" strokeWidth={Math.max(4, limbWidth * 0.45)} />
-        <path d={`M ${head.x} ${head.y + headRadius * 0.2} Q ${head.x + headRadius * 0.35} ${head.y + headRadius * 0.35} ${head.x + headRadius * 0.55} ${head.y + headRadius * 0.08}`} fill="none" stroke="#7C3AED" strokeWidth={Math.max(2, limbWidth * 0.25)} strokeLinecap="round" />
-        <circle cx={leftHand.x} cy={leftHand.y} r={limbWidth * 0.62} fill="white" stroke="#5B21B6" strokeWidth={Math.max(3, limbWidth * 0.35)} />
-        <circle cx={rightHand.x} cy={rightHand.y} r={limbWidth * 0.62} fill="white" stroke="#5B21B6" strokeWidth={Math.max(3, limbWidth * 0.35)} />
-        <line x1={leftFoot.x - limbWidth} y1={leftFoot.y} x2={leftFoot.x + limbWidth * 1.2} y2={leftFoot.y} stroke="#5B21B6" strokeWidth={limbWidth * 0.8} strokeLinecap="round" />
-        <line x1={rightFoot.x - limbWidth} y1={rightFoot.y} x2={rightFoot.x + limbWidth * 1.2} y2={rightFoot.y} stroke="#5B21B6" strokeWidth={limbWidth * 0.8} strokeLinecap="round" />
+        {outlinedLimb(head, neck, limbWidth * 1.15)}
+        {outlinedLimb(leftShoulder, leftElbow, limbWidth * 2.15)}{outlinedLimb(leftElbow, leftHand, limbWidth * 1.7)}
+        {outlinedLimb(rightShoulder, rightElbow, limbWidth * 2.15)}{outlinedLimb(rightElbow, rightHand, limbWidth * 1.7)}
+        {outlinedLimb(leftHip, leftKnee, limbWidth * 2.8)}{outlinedLimb(leftKnee, leftFoot, limbWidth * 2.15)}
+        {outlinedLimb(rightHip, rightKnee, limbWidth * 2.8)}{outlinedLimb(rightKnee, rightFoot, limbWidth * 2.15)}
+        <path d={`M ${leftShoulder.x} ${leftShoulder.y} Q ${head.x} ${neck.y + limbWidth} ${rightShoulder.x} ${rightShoulder.y} L ${rightHip.x} ${rightHip.y} Q ${head.x} ${Math.max(leftHip.y, rightHip.y) + limbWidth * 1.3} ${leftHip.x} ${leftHip.y} Z`} fill="#EDE9FE" stroke="#5B21B6" strokeWidth={Math.max(4, limbWidth * 0.45)} strokeLinejoin="round" />
+        <path d={`M ${leftHip.x - limbWidth * 0.35} ${leftHip.y} Q ${head.x} ${leftHip.y + limbWidth * 2.4} ${rightHip.x + limbWidth * 0.35} ${rightHip.y}`} fill="none" stroke="#7C3AED" strokeWidth={Math.max(3, limbWidth * 0.35)} />
+        <path d={`M ${head.x - headRadius * 0.78} ${head.y - headRadius * 0.45} Q ${head.x - headRadius * 0.65} ${head.y - headRadius} ${head.x} ${head.y - headRadius} Q ${head.x + headRadius * 0.72} ${head.y - headRadius * 0.9} ${head.x + headRadius * 0.78} ${head.y - headRadius * 0.35} L ${head.x + headRadius * 0.6} ${head.y + headRadius * 0.42} Q ${head.x} ${head.y + headRadius * 1.08} ${head.x - headRadius * 0.6} ${head.y + headRadius * 0.42} Z`} fill="#FFF7ED" stroke="#5B21B6" strokeWidth={Math.max(4, limbWidth * 0.45)} />
+        <path d={`M ${head.x - headRadius * 0.8} ${head.y - headRadius * 0.35} Q ${head.x - headRadius * 0.45} ${head.y - headRadius * 1.18} ${head.x + headRadius * 0.72} ${head.y - headRadius * 0.52} Q ${head.x + headRadius * 0.25} ${head.y - headRadius * 0.62} ${head.x - headRadius * 0.05} ${head.y - headRadius * 0.18}`} fill="#C4B5FD" stroke="#5B21B6" strokeWidth={Math.max(3, limbWidth * 0.35)} strokeLinecap="round" />
+        <path d={`M ${head.x - headRadius * 0.48} ${head.y} Q ${head.x} ${head.y - headRadius * 0.08} ${head.x + headRadius * 0.48} ${head.y}`} fill="none" stroke="#7C3AED" strokeWidth={Math.max(2, limbWidth * 0.25)} strokeLinecap="round" />
+        <path d={`M ${head.x} ${head.y - headRadius * 0.55} L ${head.x + headRadius * 0.08} ${head.y + headRadius * 0.5}`} fill="none" stroke="#A78BFA" strokeWidth={Math.max(2, limbWidth * 0.2)} strokeDasharray="6 5" />
+        <circle cx={leftHand.x} cy={leftHand.y} r={limbWidth * 0.9} fill="#FFF7ED" stroke="#5B21B6" strokeWidth={Math.max(3, limbWidth * 0.35)} />
+        <circle cx={rightHand.x} cy={rightHand.y} r={limbWidth * 0.9} fill="#FFF7ED" stroke="#5B21B6" strokeWidth={Math.max(3, limbWidth * 0.35)} />
+        <path d={`M ${leftFoot.x - limbWidth * 1.1} ${leftFoot.y} Q ${leftFoot.x} ${leftFoot.y - limbWidth * 0.7} ${leftFoot.x + limbWidth * 1.65} ${leftFoot.y + limbWidth * 0.15}`} fill="none" stroke="#5B21B6" strokeWidth={limbWidth * 1.15} strokeLinecap="round" />
+        <path d={`M ${rightFoot.x - limbWidth * 1.1} ${rightFoot.y} Q ${rightFoot.x} ${rightFoot.y - limbWidth * 0.7} ${rightFoot.x + limbWidth * 1.65} ${rightFoot.y + limbWidth * 0.15}`} fill="none" stroke="#5B21B6" strokeWidth={limbWidth * 1.15} strokeLinecap="round" />
         <rect x={Math.max(0, head.x - element.width * 0.24)} y={0} width={element.width * 0.48} height={28} rx={10} fill="#5B21B6" />
         <text x={head.x} y={15} textAnchor="middle" dominantBaseline="middle" fontSize={16} fontWeight={700} fill="white">{characterName || element.text || "캐릭터"}</text>
         {selected && joints.map((jointKey) => {
@@ -136,11 +147,33 @@ function SceneElement({
     );
   }
   if (element.type === "speech") {
+    const balloon = speechBalloonGeometry(element);
+    const style = element.balloonStyle ?? "normal";
     return (
       <>
-        <ellipse cx={centerX} cy={centerY} rx={Math.max(1, centerX - 3)} ry={Math.max(1, centerY - 3)} fill="white" stroke="#171717" strokeWidth={4} />
-        <path d={`M ${element.width * 0.35} ${element.height * 0.86} L ${element.width * 0.22} ${element.height + 18} L ${element.width * 0.48} ${element.height * 0.91}`} fill="white" stroke="#171717" strokeWidth={4} strokeLinejoin="round" />
+        {style === "thought" ? (
+          <>
+            <ellipse cx={balloon.centerX} cy={balloon.centerY} rx={balloon.radiusX} ry={balloon.radiusY} fill="white" stroke="#171717" strokeWidth={4} />
+            {balloon.thoughtDots.map((dot, index) => <circle key={index} cx={dot.x} cy={dot.y} r={dot.radius} fill="white" stroke="#171717" strokeWidth={3} />)}
+          </>
+        ) : style === "shout" ? (
+          <>
+            <polygon points={balloon.tailPoints} fill="white" stroke="#171717" strokeWidth={4} strokeLinejoin="round" />
+            <polygon points={balloon.spikePoints} fill="white" stroke="#171717" strokeWidth={4} strokeLinejoin="round" />
+          </>
+        ) : style === "whisper" ? (
+          <>
+            <path d={`M ${balloon.boundaryX} ${balloon.boundaryY} Q ${(balloon.boundaryX + balloon.tailX) / 2 + 8} ${(balloon.boundaryY + balloon.tailY) / 2} ${balloon.tailX} ${balloon.tailY}`} fill="none" stroke="#555" strokeWidth={3} strokeDasharray="8 7" />
+            <ellipse cx={balloon.centerX} cy={balloon.centerY} rx={balloon.radiusX} ry={balloon.radiusY} fill="white" stroke="#555" strokeWidth={3} strokeDasharray="9 7" />
+          </>
+        ) : (
+          <>
+            <polygon points={balloon.tailPoints} fill="white" stroke="#171717" strokeWidth={4} strokeLinejoin="round" />
+            <ellipse cx={balloon.centerX} cy={balloon.centerY} rx={balloon.radiusX} ry={balloon.radiusY} fill="white" stroke="#171717" strokeWidth={4} />
+          </>
+        )}
         {multilineText("대사")}
+        {selected && <circle cx={balloon.tailX} cy={balloon.tailY} r={11} fill="#FDE68A" stroke="#7C3AED" strokeWidth={4} className="cursor-crosshair" onPointerDown={onTailPointerDown} />}
       </>
     );
   }
@@ -255,6 +288,24 @@ export default function StoryboardEditor({ document, characters, sceneAssetId, s
     svgRef.current?.setPointerCapture(event.pointerId);
   };
 
+  const startTailPointer = (event: React.PointerEvent, element: StoryboardElement) => {
+    event.stopPropagation();
+    setSelectedId(element.id);
+    setFinalView(false);
+    const rect = svgRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    undoStack.current.push(structuredClone(document));
+    redoStack.current = [];
+    pointerAction.current = {
+      mode: "tail",
+      elementId: element.id,
+      startX: ((event.clientX - rect.left) / rect.width) * document.width,
+      startY: ((event.clientY - rect.top) / rect.height) * document.height,
+      original: structuredClone(element),
+    };
+    svgRef.current?.setPointerCapture(event.pointerId);
+  };
+
   const movePointer = (event: React.PointerEvent<SVGSVGElement>) => {
     const action = pointerAction.current;
     if (!action) return;
@@ -271,6 +322,11 @@ export default function StoryboardEditor({ document, characters, sceneAssetId, s
             y: Math.min(1, Math.max(0, (current.y - action.original.y) / action.original.height)),
           },
         },
+      }, false);
+    } else if (action.mode === "tail") {
+      updateElement(action.elementId, {
+        tailX: Math.min(2, Math.max(-1, (current.x - action.original.x) / action.original.width)),
+        tailY: Math.min(2, Math.max(-1, (current.y - action.original.y) / action.original.height)),
       }, false);
     } else if (action.mode === "drag") {
       updateElement(action.elementId, {
@@ -293,7 +349,7 @@ export default function StoryboardEditor({ document, characters, sceneAssetId, s
       x: document.width * 0.34,
       y: document.height * 0.34,
       width: type === "character" ? document.width * 0.22 : document.width * 0.3,
-      height: type === "character" ? document.height * 0.5 : document.height * 0.14,
+      height: type === "character" ? document.height * 0.5 : type === "arrow" ? document.height * 0.06 : document.height * 0.14,
       rotation: 0,
       zIndex: document.elements.length,
       text: labelForType(type),
@@ -301,10 +357,28 @@ export default function StoryboardEditor({ document, characters, sceneAssetId, s
       characterId: type === "character" ? characters[0]?.id : undefined,
       fontFamily: isTextType ? defaultWebtoonFont(type) : undefined,
       fontWeight: type === "sfx" ? 900 : isTextType ? 600 : undefined,
+      balloonStyle: type === "speech" ? "normal" : undefined,
+      tailX: type === "speech" ? 0.25 : undefined,
+      tailY: type === "speech" ? 1.22 : undefined,
     };
     apply({ ...document, elements: [...document.elements, element] });
     setSelectedId(element.id);
     setFinalView(false);
+  };
+
+  const setSpeechSpeaker = (speech: StoryboardElement, characterId: string) => {
+    const characterElement = document.elements.find((element) => element.type === "character" && element.characterId === characterId);
+    if (!characterElement) {
+      updateElement(speech.id, { speakerCharacterId: characterId || undefined });
+      return;
+    }
+    const targetX = characterElement.x + characterElement.width * 0.5;
+    const targetY = characterElement.y + characterElement.height * 0.34;
+    updateElement(speech.id, {
+      speakerCharacterId: characterId,
+      tailX: Math.min(2, Math.max(-1, (targetX - speech.x) / speech.width)),
+      tailY: Math.min(2, Math.max(-1, (targetY - speech.y) / speech.height)),
+    });
   };
 
   const undo = () => {
@@ -342,6 +416,7 @@ export default function StoryboardEditor({ document, characters, sceneAssetId, s
           <button type="button" onClick={() => addElement("character")} className="editor-tool"><User className="w-3.5 h-3.5" /> 인물</button>
           <button type="button" onClick={() => addElement("prop")} className="editor-tool"><Square className="w-3.5 h-3.5" /> 소품</button>
           <button type="button" onClick={() => addElement("shape", "ellipse")} className="editor-tool"><Circle className="w-3.5 h-3.5" /> 도형</button>
+          <button type="button" onClick={() => addElement("arrow")} className="editor-tool"><ArrowUp className="w-3.5 h-3.5 rotate-90" /> 동선</button>
           <button type="button" onClick={() => addElement("speech")} className="editor-tool"><MessageCircle className="w-3.5 h-3.5" /> 말풍선</button>
           <button type="button" onClick={() => addElement("caption")} className="editor-tool"><Captions className="w-3.5 h-3.5" /> 캡션</button>
           <button type="button" onClick={() => addElement("sfx")} className="editor-tool"><Type className="w-3.5 h-3.5" /> 효과음</button>
@@ -378,6 +453,7 @@ export default function StoryboardEditor({ document, characters, sceneAssetId, s
                     characterName={element.characterId ? characterNames.get(element.characterId) : undefined}
                     selected={selectedId === element.id && !finalView}
                     onJointPointerDown={(event, jointKey) => startJointPointer(event, element, jointKey)}
+                    onTailPointerDown={(event) => startTailPointer(event, element)}
                   />
                   {selectedId === element.id && !finalView && (
                     <>
@@ -430,6 +506,42 @@ export default function StoryboardEditor({ document, characters, sceneAssetId, s
               )}
               <label className="visual-label">표시 내용</label>
               <textarea value={selected.text} onChange={(event) => updateElement(selected.id, { text: event.target.value })} className="visual-input min-h-16 resize-none" />
+              {selected.type === "speech" && (
+                <div className="space-y-2.5 rounded-xl border border-[#F1D5B9] bg-[#FFF9F2] p-3">
+                  <div>
+                    <label className="visual-label">말풍선 종류</label>
+                    <div className="mt-1.5 grid grid-cols-2 gap-1.5">
+                      {([
+                        ["normal", "일반 대사"],
+                        ["thought", "생각"],
+                        ["shout", "외침"],
+                        ["whisper", "속삭임"],
+                      ] as const).map(([value, label]) => (
+                        <button
+                          key={value}
+                          type="button"
+                          onClick={() => updateElement(selected.id, { balloonStyle: value })}
+                          className={`rounded-lg border px-2 py-1.5 text-[10px] font-semibold transition active:scale-95 ${selected.balloonStyle === value || (!selected.balloonStyle && value === "normal") ? "border-[#7C3AED] bg-[#F5F3FF] text-[#5B21B6]" : "border-[#E8DCCF] bg-white text-[#7A7067] hover:border-[#C4B5FD]"}`}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div>
+                    <label className="visual-label">화자와 꼬리 방향</label>
+                    <select
+                      value={selected.speakerCharacterId ?? ""}
+                      onChange={(event) => setSpeechSpeaker(selected, event.target.value)}
+                      className="visual-input mt-1.5"
+                    >
+                      <option value="">화자 직접 지정 안 함</option>
+                      {characters.map((character) => <option key={character.id} value={character.id}>{character.name || "이름 없음"}</option>)}
+                    </select>
+                    <p className="mt-1.5 text-[10px] leading-relaxed text-[#9A7654]">화자를 선택하면 꼬리가 인물을 향합니다. 캔버스의 노란 핸들을 드래그해 정확한 방향을 조절할 수 있어요.</p>
+                  </div>
+                </div>
+              )}
               {isOverlayElement(selected) && (
                 <div className="space-y-2.5 rounded-xl border border-[#E4DDF8] bg-[#FAF8FF] p-3">
                   <div className="flex items-center justify-between">

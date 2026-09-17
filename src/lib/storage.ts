@@ -12,6 +12,7 @@ export type ArtDirection = {
 
 export type PanelAspectRatio = "4:3" | "3:4" | "1:1" | "9:16";
 export type WebtoonFontFamily = "clean" | "serif" | "handwritten" | "cute" | "comic" | "impact";
+export type SpeechBalloonStyle = "normal" | "thought" | "shout" | "whisper";
 export type CharacterJointKey =
   | "head"
   | "neck"
@@ -56,6 +57,10 @@ export type StoryboardElement = {
   fontSize?: number;
   fontWeight?: number;
   characterRig?: CharacterRig;
+  balloonStyle?: SpeechBalloonStyle;
+  tailX?: number;
+  tailY?: number;
+  speakerCharacterId?: string;
 };
 
 export type StoryboardDocument = {
