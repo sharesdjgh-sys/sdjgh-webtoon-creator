@@ -1,0 +1,322 @@
+import "server-only";
+
+import { GoogleGenAI } from "@google/genai";
+import { z } from "zod";
+import type { PanelAspectRatio, StoryboardDocument, StoryboardElement } from "@/lib/storage";
+
+const IMAGE_MODEL = process.env.GEMINI_IMAGE_MODEL ?? "gemini-3.1-flash-image";
+const LAYOUT_MODEL = process.env.GEMINI_LAYOUT_MODEL ?? "gemini-3.8-flash";
+
+export const artDirectionSchema = z.object({
+  preset: z.enum(["clean-webtoon", "romance-watercolor", "action-contrast", "dark-noir", "pencil-sketch"]),
+  custom: z.string().trim().max(600).default(""),
+});
+
+export const characterInputSchema = z.object({
+  id: z.string().max(120),
+  name: z.string().trim().min(1).max(100),
+  role: z.string().trim().max(50),
+  age: z.string().trim().max(50),
+  appearance: z.string().trim().max(1_500),
+  personality: z.string().trim().max(1_000),
+  backstory: z.string().trim().max(1_500),
+  visualProfile: z.object({
+    gender: z.string().trim().max(100),
+    heightBuild: z.string().trim().max(300),
+    faceShape: z.string().trim().max(300),
+    eyes: z.string().trim().max(300),
+    noseMouth: z.string().trim().max(300),
+    skinTone: z.string().trim().max(200),
+    hair: z.string().trim().max(500),
+    distinctiveFeatures: z.string().trim().max(500),
+    outfit: z.string().trim().max(800),
+    shoes: z.string().trim().max(300),
+    accessories: z.string().trim().max(600),
+    colorPalette: z.string().trim().max(300),
+  }),
+  imageInstructions: z.string().trim().max(600).optional().default(""),
+});
+
+export const projectVisualContextSchema = z.object({
+  title: z.string().trim().max(200),
+  genre: z.string().trim().max(100),
+  setting: z.string().trim().max(2_000),
+  artDirection: artDirectionSchema,
+});
+
+const generatedElementSchema = z.object({
+  id: z.string().max(100).optional(),
+  type: z.enum(["character", "prop", "shape", "arrow", "speech", "caption", "sfx"]),
+  x: z.number(),
+  y: z.number(),
+  width: z.number(),
+  height: z.number(),
+  rotation: z.number().optional().default(0),
+  zIndex: z.number().optional().default(0),
+  text: z.string().max(500).optional().default(""),
+  characterId: z.string().max(120).optional(),
+  shape: z.enum(["rect", "ellipse"]).optional(),
+  pose: z.string().max(200).optional(),
+  expression: z.string().max(200).optional(),
+});
+
+const generatedDocumentSchema = z.object({
+  elements: z.array(generatedElementSchema).min(1).max(24),
+});
+
+const STORYBOARD_JSON_SCHEMA = {
+  type: "object",
+  properties: {
+    elements: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          id: { type: "string" },
+          type: { type: "string", enum: ["character", "prop", "shape", "arrow", "speech", "caption", "sfx"] },
+          x: { type: "number", description: "Left coordinate in the provided SVG viewBox" },
+          y: { type: "number", description: "Top coordinate in the provided SVG viewBox" },
+          width: { type: "number" },
+          height: { type: "number" },
+          rotation: { type: "number" },
+          zIndex: { type: "integer" },
+          text: { type: "string" },
+          characterId: { type: "string" },
+          shape: { type: "string", enum: ["rect", "ellipse"] },
+          pose: { type: "string" },
+          expression: { type: "string" },
+        },
+        required: ["type", "x", "y", "width", "height", "rotation", "zIndex", "text"],
+      },
+    },
+  },
+  required: ["elements"],
+} as const;
+
+export type CharacterVisualInput = z.infer<typeof characterInputSchema>;
+export type ProjectVisualContext = z.infer<typeof projectVisualContextSchema>;
+
+const STYLE_DESCRIPTIONS: Record<z.infer<typeof artDirectionSchema>["preset"], string> = {
+  "clean-webtoon": "clean Korean webtoon line art, polished cel shading, readable silhouette, contemporary digital comic finish",
+  "romance-watercolor": "romance webtoon aesthetic, delicate line art, soft watercolor-like color transitions, luminous gentle atmosphere",
+  "action-contrast": "dynamic action webtoon aesthetic, confident angular ink lines, dramatic high-contrast cel shading, energetic silhouettes",
+  "dark-noir": "dark noir webtoon aesthetic, restrained color palette, bold shadows, cinematic rim light and textured ink lines",
+  "pencil-sketch": "professional webtoon pre-production pencil style, expressive clean graphite lines, light monochrome shading",
+};
+
+function client(): GoogleGenAI {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) throw new Error("GEMINI_API_KEY가 설정되지 않았습니다.");
+  return new GoogleGenAI({ apiKey });
+}
+
+function artStyle(context: ProjectVisualContext): string {
+  const base = STYLE_DESCRIPTIONS[context.artDirection.preset];
+  return context.artDirection.custom ? `${base}. Additional art direction: ${context.artDirection.custom}` : base;
+}
+
+function imageResult(interaction: { output_image?: { data?: string; mime_type?: string } }): { data: string; mimeType: string } {
+  const data = interaction.output_image?.data;
+  if (!data) throw new Error("Gemini가 이미지 결과를 반환하지 않았습니다.");
+  return { data, mimeType: interaction.output_image?.mime_type ?? "image/jpeg" };
+}
+
+export function buildCharacterSheetPrompt(
+  context: ProjectVisualContext,
+  character: CharacterVisualInput,
+): string {
+  const prompt = `Create a premium, studio-ready MASTER CHARACTER DESIGN SHEET for an original serialized webtoon. This is a practical visual bible that a webtoon art team will use to draw the same character consistently across many episodes — not a poster, splash art, or generic portrait.
+
+PROJECT
+- Title: ${context.title || "Untitled webtoon"}
+- Genre: ${context.genre || "Webtoon"}
+- World/setting: ${context.setting || "Not specified"}
+- Art direction: ${artStyle(context)}
+
+CHARACTER IDENTITY LOCK — every figure on the sheet must be unmistakably the exact same person
+- Name: ${character.name}
+- Gender/presentation: ${character.visualProfile.gender || "Infer carefully from the creator's description; do not exaggerate stereotypes"}
+- Story role: ${character.role || "Character"}
+- Age/school year: ${character.age || "Not specified"}
+- Height and body type: ${character.visualProfile.heightBuild || "Infer a distinctive but natural silhouette appropriate to age and role"}
+- Appearance: ${character.appearance || "Use a distinctive, production-ready design appropriate for the role"}
+- Face shape and jawline: ${character.visualProfile.faceShape || "Derive consistently from the appearance description"}
+- Eyes — shape, size and iris color: ${character.visualProfile.eyes || "Design distinctive, readable webtoon eyes and keep them identical in every view"}
+- Nose and mouth: ${character.visualProfile.noseMouth || "Natural, repeatable shapes appropriate to the face"}
+- Skin tone: ${character.visualProfile.skinTone || "Natural and consistent in every study"}
+- Hairstyle — length, fringe, texture and color: ${character.visualProfile.hair || "Derive from the appearance description and show its construction clearly"}
+- Distinctive physical features: ${character.visualProfile.distinctiveFeatures || "Use only details supported by the description"}
+- Personality translated into posture, habitual gestures, facial tension and body language: ${character.personality || "Natural and readable"}
+- Backstory cues that may subtly inform costume or props: ${character.backstory || "None"}
+- Default outfit: ${character.visualProfile.outfit || "Create a role-appropriate, memorable but repeatable webtoon outfit"}
+- Shoes: ${character.visualProfile.shoes || "Coordinate with the outfit and show clearly in full-body views"}
+- Signature accessories and props: ${character.visualProfile.accessories || "Invent one restrained, story-relevant signature item only if useful"}
+- Creator-defined color palette: ${character.visualProfile.colorPalette || "Build a coherent palette of 3–5 main colors from the written design"}
+- Creator's extra visual direction: ${character.imageInstructions || "None"}
+
+CANVAS AND VISUAL HIERARCHY
+- Landscape 3:2 master sheet, high resolution, clean warm-white or very pale neutral studio background.
+- Treat the outer 7% of the canvas on every side as a completely empty SAFE MARGIN. No hair, head, hand, foot, clothing, prop, swatch, guide, or detail panel may enter this margin or touch any canvas edge.
+- Every study must be a complete self-contained drawing. Never use edge-cropped portrait boxes or detail fragments that continue beyond the canvas.
+- Use an orderly professional concept-art grid with generous spacing. No overlapping studies and no cropped hands, feet, hair, clothing or props.
+- The large hero figure occupies no more than the left 24%: clear head-to-toe three-quarter standing view in the default outfit, neutral readable pose. Leave visible background above the highest hair strand and below both shoe soles.
+- Organize the remaining studies as compact rows inside the safe area: turnaround figures across the upper-middle, face and expression studies in the upper-right, and proportion/accessory/costume/pose studies across an inset lower row.
+- If the layout becomes crowded, uniformly scale every study smaller and increase whitespace. Never solve a space problem by cropping, enlarging beyond its cell, overlapping, or pushing artwork against an edge.
+
+MANDATORY STUDIES — include every numbered item on this single sheet
+1. Full-body FRONT view in a neutral standing pose.
+2. Full-body THREE-QUARTER view that clearly shows face and costume volume.
+3. Full-body SIDE profile.
+4. Full-body BACK view. Front, side and back must use the same scale, baseline and body proportions.
+5. Large FACE FRONT close-up, unobstructed and expression-neutral, useful as the primary facial reference.
+6. Large FACE SIDE profile close-up showing forehead, nose, lips, chin, ear and hair silhouette accurately.
+7. Six-expression sheet: neutral, gentle smile, open-mouth laugh, anger, sadness, and surprise. Preserve facial structure, eye shape, features and hair exactly.
+8. Hair construction studies showing a clear FRONT and BACK view, including fringe division, crown volume, length and tied sections where relevant.
+9. Enlarged ACCESSORY AND PROP CALLOUTS: signature jewelry, glasses, bag, weapon, device, footwear or story-relevant personal object. Show attachment points and construction clearly.
+10. Enlarged COSTUME AND MATERIAL DETAILS: two or three close-ups for garment layers, closures, seams, pattern, fabric texture, scars, tattoos or unique design features.
+11. A clean COLOR PALETTE of six to eight swatches covering skin, hair, eyes, main clothing, accent, footwear and accessories. Match every depiction exactly.
+12. A FULL-BODY PROPORTION GUIDE with a simple head-unit guide beside the neutral figure so height, shoulder width, limb length and overall silhouette are easy to reproduce. Do not use written measurements.
+13. Three additional STORYTELLING POSES: a signature everyday pose, a dynamic movement/action pose, and a strong emotional/dramatic pose. Make their silhouettes distinct and useful for webtoon panel staging.
+14. Two or three HAND/GESTURE studies showing a habitual gesture and how the character holds their key prop.
+
+CONSISTENCY AND PRODUCTION RULES
+- Same face, apparent age, body proportions, skin tone, eye color, hairstyle, outfit, accessories and palette across every depiction. Never create alternate people, clones with changed features, or costume redesigns.
+- Favor a clear, repeatable webtoon design with a memorable silhouette and details that an artist can reproduce panel after panel.
+- Match this project's art direction precisely while keeping construction lines and material separation readable.
+- No environment, scenery, finished story panel, cinematic background, decorative frame, manga page layout, logo, watermark, artist signature or extra character.
+- Do not render names, headings, captions, measurements, letters or pseudo-text. Separate sections visually using whitespace only; the application will handle any labels.
+- Framing priority is absolute: safe margin and fully visible anatomy/props take precedence over making any individual study large. All four canvas edges must remain visibly clear.
+
+Quality check before finishing: inspect the top, bottom, left and right edges. Confirm that the outer safe margin is empty; every head has air above the hair; every standing figure has background below the shoe soles; every seated or action pose, hand, accessory and detail callout is fully enclosed; and nothing appears cut off. Then confirm every required study is present, accessories are readable, and identity consistency is strict. The result must look like a professional webtoon production reference sheet, not an AI image collage.`;
+
+  return prompt;
+}
+
+function dimensions(aspectRatio: PanelAspectRatio): { width: number; height: number } {
+  return {
+    "4:3": { width: 1200, height: 900 },
+    "3:4": { width: 900, height: 1200 },
+    "1:1": { width: 1000, height: 1000 },
+    "9:16": { width: 900, height: 1600 },
+  }[aspectRatio];
+}
+
+function clampElement(
+  element: z.infer<typeof generatedElementSchema>,
+  index: number,
+  width: number,
+  height: number,
+  characterIds: Set<string>,
+): StoryboardElement {
+  const elementWidth = Math.min(Math.max(element.width, 50), width);
+  const elementHeight = Math.min(Math.max(element.height, 40), height);
+  return {
+    ...element,
+    id: element.id || `element-${crypto.randomUUID()}`,
+    x: Math.min(Math.max(element.x, 0), width - elementWidth),
+    y: Math.min(Math.max(element.y, 0), height - elementHeight),
+    width: elementWidth,
+    height: elementHeight,
+    rotation: Math.min(Math.max(element.rotation, -180), 180),
+    zIndex: index,
+    characterId: element.characterId && characterIds.has(element.characterId) ? element.characterId : undefined,
+  };
+}
+
+export async function generateStoryboardLayout(input: {
+  context: ProjectVisualContext;
+  episode: { number: number; title: string; synopsis: string };
+  cut: { angle: string; description: string; dialogue: string; soundEffect: string; aspectRatio: PanelAspectRatio };
+  characters: CharacterVisualInput[];
+}): Promise<StoryboardDocument> {
+  const { width, height } = dimensions(input.cut.aspectRatio);
+  const cast = input.characters.map((character) =>
+    `- ${character.id}: ${character.name} (${character.role}), appearance=${character.appearance}, personality=${character.personality}`
+  ).join("\n");
+  const prompt = `You are a professional webtoon storyboard artist. Plan ONE editable panel as a sparse composition diagram.
+
+Canvas viewBox: 0 0 ${width} ${height} (${input.cut.aspectRatio})
+Episode ${input.episode.number}: ${input.episode.title}
+Episode context: ${input.episode.synopsis}
+Camera angle: ${input.cut.angle}
+Scene: ${input.cut.description || "Infer a clear beat from the episode context"}
+Dialogue: ${input.cut.dialogue || "None"}
+Sound effect: ${input.cut.soundEffect || "None"}
+Selected cast:
+${cast || "No named character selected"}
+
+Return a practical SVG scene graph using only the supplied JSON schema.
+- Keep every element fully inside the canvas.
+- Use character elements for blocking people; characterId must exactly match a selected cast ID.
+- Use prop, shape, and arrow elements only when they clarify depth, motion, foreground, or background.
+- Use speech/caption/sfx elements for exact Korean text; these remain editable overlays.
+- text for character and prop elements is a short Korean label. Include concise pose and expression notes for characters.
+- Avoid overlaps that obscure faces or key action. Keep 10% safe margins for text.
+- zIndex must describe back-to-front order.`;
+
+  const interaction = await client().interactions.create({
+    model: LAYOUT_MODEL,
+    input: prompt,
+    response_format: {
+      type: "text",
+      mime_type: "application/json",
+      schema: STORYBOARD_JSON_SCHEMA,
+    },
+  });
+  if (!interaction.output_text) throw new Error("Gemini가 콘티 구성을 반환하지 않았습니다.");
+  const parsed = generatedDocumentSchema.parse(JSON.parse(interaction.output_text));
+  const ids = new Set(input.characters.map((character) => character.id));
+  return {
+    version: 1,
+    aspectRatio: input.cut.aspectRatio,
+    width,
+    height,
+    elements: parsed.elements.map((element, index) => clampElement(element, index, width, height, ids)),
+  };
+}
+
+export async function generateSceneImage(input: {
+  context: ProjectVisualContext;
+  episode: { number: number; title: string; synopsis: string };
+  cut: { angle: string; description: string; dialogue: string; soundEffect: string; aspectRatio: PanelAspectRatio };
+  layoutImage: { data: string; mimeType: string };
+  references: Array<{ character: CharacterVisualInput; data: string; mimeType: string }>;
+}): Promise<{ data: string; mimeType: string; prompt: string }> {
+  const cast = input.references.map(({ character }, index) =>
+    `Reference image ${index + 2} is the approved design sheet for ${character.name} (${character.role}). Preserve that character's face, hair, outfit, colors and proportions.`
+  ).join("\n");
+  const prompt = `Create one finished webtoon panel using the first image as a strict COMPOSITION BLUEPRINT.
+
+PROJECT
+- Title: ${input.context.title}
+- Genre: ${input.context.genre}
+- Setting: ${input.context.setting}
+- Art direction: ${artStyle(input.context)}
+
+PANEL
+- Aspect ratio: ${input.cut.aspectRatio}
+- Camera: ${input.cut.angle}
+- Scene: ${input.cut.description}
+- Episode context: ${input.episode.synopsis}
+${cast}
+
+Follow the blueprint's framing, positions, scale, depth, facing direction and action. Replace diagram figures and boxes with finished characters, props and environment. Make the storytelling beat immediately readable and keep safe space where the blueprint shows speech balloons.
+
+IMPORTANT: Produce artwork only. Do not draw speech balloons, dialogue, captions, sound-effect letters, labels, panel borders, logos or watermarks. The application will add exact editable Korean typography afterward.`;
+  const imageInputs = [
+    { type: "image" as const, mime_type: input.layoutImage.mimeType, data: input.layoutImage.data },
+    ...input.references.map((reference) => ({ type: "image" as const, mime_type: reference.mimeType, data: reference.data })),
+    { type: "text" as const, text: prompt },
+  ];
+  const interaction = await client().interactions.create({
+    model: IMAGE_MODEL,
+    input: imageInputs,
+    response_format: {
+      type: "image",
+      mime_type: "image/jpeg",
+      aspect_ratio: input.cut.aspectRatio,
+      image_size: "1K",
+    },
+  });
+  return { ...imageResult(interaction), prompt };
+}
