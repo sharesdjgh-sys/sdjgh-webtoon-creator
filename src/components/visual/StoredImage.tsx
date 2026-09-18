@@ -1,16 +1,18 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import type { CSSProperties } from "react";
 import { getMediaAsset } from "@/lib/mediaStorage";
 
 type StoredImageProps = {
   assetId?: string;
   alt: string;
   className?: string;
+  style?: CSSProperties;
   onMissing?: () => void;
 };
 
-export default function StoredImage({ assetId, alt, className, onMissing }: StoredImageProps) {
+export default function StoredImage({ assetId, alt, className, style, onMissing }: StoredImageProps) {
   const [image, setImage] = useState<{ assetId: string; url: string } | null>(null);
 
   useEffect(() => {
@@ -34,7 +36,7 @@ export default function StoredImage({ assetId, alt, className, onMissing }: Stor
   if (!assetId || image?.assetId !== assetId) return null;
   // Blob URLs are local user-generated assets and do not benefit from Next image optimization.
   // eslint-disable-next-line @next/next/no-img-element
-  return <img src={image.url} alt={alt} className={className} />;
+  return <img src={image.url} alt={alt} className={className} style={style} draggable={false} />;
 }
 
 export function BlobImage({ blob, alt, className }: { blob: Blob; alt: string; className?: string }) {

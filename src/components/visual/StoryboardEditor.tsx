@@ -9,6 +9,11 @@ import {
   Copy,
   Download,
   Expand,
+  Eye,
+  EyeOff,
+  FlipHorizontal2,
+  Layers3,
+  Lock,
   MessageCircle,
   MousePointer2,
   Redo2,
@@ -19,6 +24,7 @@ import {
   Trash2,
   Type,
   Undo2,
+  Unlock,
   User,
   X,
 } from "lucide-react";
@@ -27,18 +33,18 @@ import { composeScenePng, defaultWebtoonFont, isOverlayElement, speechBalloonGeo
 import { CHARACTER_POSE_PRESETS, resolveCharacterRig } from "@/lib/storyboardRig";
 import { downloadBlob, getMediaAsset } from "@/lib/mediaStorage";
 import StoredImage from "@/components/visual/StoredImage";
+import { composeStoryboardPng } from "@/lib/storyboardComposite";
 
 type Props = {
   document: StoryboardDocument;
   characters: Character[];
-  storyboardAssetId?: string;
-  storyboardStale?: boolean;
-  generatingSketch?: boolean;
+  staleLayerIds?: Set<string>;
+  generatingLayerIds?: Set<string>;
   sceneAssetId?: string;
   sceneStale?: boolean;
   generatingScene?: boolean;
   onChange: (document: StoryboardDocument) => void;
-  onRegenerateSketch: () => void;
+  onRegenerateLayer: (layerId: string) => void;
   onGenerateScene: () => void;
 };
 
@@ -53,6 +59,7 @@ type PointerAction = {
 
 function labelForType(type: StoryboardElementType): string {
   return {
+    background: "배경",
     character: "캐릭터",
     prop: "소품",
     shape: "도형",
@@ -268,7 +275,7 @@ function LayoutControlOverlay({
   );
 }
 
-export default function StoryboardEditor({ document, characters, storyboardAssetId, storyboardStale, generatingSketch, sceneAssetId, sceneStale, generatingScene, onChange, onRegenerateSketch, onGenerateScene }: Props) {
+export default function StoryboardEditor({ document, characters, staleLayerIds = new Set(), generatingLayerIds = new Set(), sceneAssetId, sceneStale, generatingScene, onChange, onRegenerateLayer, onGenerateScene }: Props) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
   const [finalView, setFinalView] = useState(Boolean(sceneAssetId));
@@ -281,8 +288,9 @@ export default function StoryboardEditor({ document, characters, storyboardAsset
   const selected = document.elements.find((element) => element.id === selectedId);
   const characterNames = useMemo(() => new Map(characters.map((character) => [character.id, character.name])), [characters]);
   const visibleElements = document.elements
-    .filter((element) => !finalView || !sceneAssetId || isOverlayElement(element))
+    .filter((element) => element.visible !== false && (!finalView || !sceneAssetId || isOverlayElement(element)))
     .sort((left, right) => left.zIndex - right.zIndex);
+  const imageLayers = visibleElements.filter((element) => ["background", "character", "prop"].includes(element.type) && element.assetId);
 
   const apply = (next: StoryboardDocument, remember = true) => {
     if (remember) {
@@ -309,6 +317,7 @@ export default function StoryboardEditor({ document, characters, storyboardAsset
     event.stopPropagation();
     setSelectedId(element.id);
     setFinalView(false);
+    if (element.locked) return;
     const rect = svgRef.current?.getBoundingClientRect();
     if (!rect) return;
     undoStack.current.push(structuredClone(document));
@@ -327,6 +336,7 @@ export default function StoryboardEditor({ document, characters, storyboardAsset
     event.stopPropagation();
     setSelectedId(element.id);
     setFinalView(false);
+    if (element.locked) return;
     const rect = svgRef.current?.getBoundingClientRect();
     if (!rect) return;
     undoStack.current.push(structuredClone(document));
@@ -346,6 +356,7 @@ export default function StoryboardEditor({ document, characters, storyboardAsset
     event.stopPropagation();
     setSelectedId(element.id);
     setFinalView(false);
+    if (element.locked) return;
     const rect = svgRef.current?.getBoundingClientRect();
     if (!rect) return;
     undoStack.current.push(structuredClone(document));
@@ -383,11 +394,21 @@ export default function StoryboardEditor({ document, characters, storyboardAsset
         tailY: Math.min(2, Math.max(-1, (current.y - action.original.y) / action.original.height)),
       }, false);
     } else if (action.mode === "drag") {
+      const minX = action.original.type === "background" ? Math.min(0, document.width - action.original.width) : 0;
+      const minY = action.original.type === "background" ? Math.min(0, document.height - action.original.height) : 0;
+      const maxX = action.original.type === "background" ? Math.max(0, document.width - action.original.width) : document.width - action.original.width;
+      const maxY = action.original.type === "background" ? Math.max(0, document.height - action.original.height) : document.height - action.original.height;
       updateElement(action.elementId, {
-        x: Math.min(Math.max(0, action.original.x + dx), document.width - action.original.width),
-        y: Math.min(Math.max(0, action.original.y + dy), document.height - action.original.height),
+        x: Math.min(Math.max(minX, action.original.x + dx), maxX),
+        y: Math.min(Math.max(minY, action.original.y + dy), maxY),
       }, false);
     } else {
+      if (action.original.type === "background") {
+        const width = Math.min(Math.max(document.width, action.original.width + dx), document.width * 2);
+        const height = width * document.height / document.width;
+        updateElement(action.elementId, { width, height }, false);
+        return;
+      }
       updateElement(action.elementId, {
         width: Math.min(Math.max(50, action.original.width + dx), document.width - action.original.x),
         height: Math.min(Math.max(40, action.original.height + dy), document.height - action.original.y),
@@ -414,11 +435,15 @@ export default function StoryboardEditor({ document, characters, storyboardAsset
       balloonStyle: type === "speech" ? "normal" : undefined,
       tailX: type === "speech" ? 0.25 : undefined,
       tailY: type === "speech" ? 1.22 : undefined,
+      visible: true,
+      locked: false,
+      opacity: 1,
+      flipX: false,
     };
     apply({ ...document, elements: [...document.elements, element] });
     setSelectedId(element.id);
     setFinalView(false);
-    if (storyboardAssetId && !isOverlayElement(element)) setShowBlocking(true);
+    if (["character", "prop"].includes(element.type)) setShowBlocking(true);
   };
 
   const setSpeechSpeaker = (speech: StoryboardElement, characterId: string) => {
@@ -451,14 +476,18 @@ export default function StoryboardEditor({ document, characters, storyboardAsset
   };
 
   const downloadSvg = () => {
-    const blob = new Blob([storyboardToSvg(document, { overlaysOnly: Boolean(storyboardAssetId), transparent: Boolean(storyboardAssetId) })], { type: "image/svg+xml;charset=utf-8" });
-    downloadBlob(blob, storyboardAssetId ? "webtoon-storyboard-overlay.svg" : "webtoon-storyboard.svg");
+    const blob = new Blob([storyboardToSvg(document, { overlaysOnly: true, transparent: true })], { type: "image/svg+xml;charset=utf-8" });
+    downloadBlob(blob, "webtoon-storyboard-overlay.svg");
   };
 
   const downloadFinal = async () => {
     const asset = await getMediaAsset(sceneAssetId);
     if (!asset) return;
     downloadBlob(await composeScenePng(document, asset.blob), "webtoon-panel.png");
+  };
+
+  const downloadStoryboard = async () => {
+    downloadBlob(await composeStoryboardPng(document), "webtoon-storyboard.png");
   };
 
   const editor = (
@@ -477,8 +506,7 @@ export default function StoryboardEditor({ document, characters, storyboardAsset
           <button type="button" onClick={() => addElement("sfx")} className="editor-tool"><Type className="w-3.5 h-3.5" /> 효과음</button>
         </div>
         <div className="flex items-center gap-1.5">
-          {storyboardAssetId && !finalView && <button type="button" onClick={() => setShowBlocking((value) => !value)} className={`editor-tool ${showBlocking ? "border-[#7C3AED] bg-[#F5F3FF] text-[#5B21B6]" : ""}`}><User className="w-3.5 h-3.5" /> {showBlocking ? "수정 모드 닫기" : "콘티 수정"}</button>}
-          {storyboardAssetId && storyboardStale && !finalView && <button type="button" disabled={generatingSketch} onClick={onRegenerateSketch} className="inline-flex items-center gap-1.5 rounded-lg bg-[#7C3AED] px-3 py-1.5 text-[11px] font-semibold text-white transition hover:bg-[#6D28D9] active:scale-95 disabled:opacity-50"><RefreshCw className={`w-3.5 h-3.5 ${generatingSketch ? "animate-spin" : ""}`} /> {generatingSketch ? "수정 적용 중..." : "수정사항 적용"}</button>}
+          {selected?.type === "character" && !finalView && <button type="button" onClick={() => setShowBlocking((value) => !value)} className={`editor-tool ${showBlocking ? "border-[#7C3AED] bg-[#F5F3FF] text-[#5B21B6]" : ""}`}><User className="w-3.5 h-3.5" /> {showBlocking ? "포즈 핸들 닫기" : "포즈 수정"}</button>}
           {sceneAssetId && <button type="button" onClick={() => setFinalView((value) => !value)} className="editor-tool"><MousePointer2 className="w-3.5 h-3.5" /> {finalView ? "구도 편집" : "완성 보기"}</button>}
           <button type="button" onClick={() => setExpanded((value) => !value)} className="editor-tool">{expanded ? <X className="w-3.5 h-3.5" /> : <Expand className="w-3.5 h-3.5" />}</button>
         </div>
@@ -488,27 +516,45 @@ export default function StoryboardEditor({ document, characters, storyboardAsset
         <div className="relative bg-[#E9E4DC] rounded-xl p-3 min-h-[260px] flex items-center justify-center overflow-hidden">
           <div className="relative w-full max-h-[76vh] shadow-xl bg-white" style={{ aspectRatio: `${document.width}/${document.height}` }}>
             {sceneAssetId && finalView && <StoredImage assetId={sceneAssetId} alt="생성된 웹툰 장면" className="absolute inset-0 w-full h-full object-cover" />}
-            {storyboardAssetId && !finalView && <StoredImage assetId={storyboardAssetId} alt="AI 러프 드로잉 콘티" className="absolute inset-0 w-full h-full object-cover" />}
+            {!finalView && imageLayers.map((layer) => (
+              <StoredImage
+                key={layer.id}
+                assetId={layer.assetId}
+                alt={`${layer.text || labelForType(layer.type)} 콘티 레이어`}
+                className="absolute pointer-events-none select-none"
+                style={{
+                  left: `${layer.x / document.width * 100}%`,
+                  top: `${layer.y / document.height * 100}%`,
+                  width: `${layer.width / document.width * 100}%`,
+                  height: `${layer.height / document.height * 100}%`,
+                  objectFit: layer.type === "background" ? "cover" : "contain",
+                  transform: `rotate(${layer.rotation}deg) scaleX(${layer.flipX ? -1 : 1})`,
+                  transformOrigin: "center",
+                  opacity: layer.opacity ?? 1,
+                  zIndex: layer.zIndex + 100,
+                }}
+              />
+            ))}
             <svg
               ref={svgRef}
               viewBox={`0 0 ${document.width} ${document.height}`}
-              className="absolute inset-0 w-full h-full touch-none select-none"
+              className="absolute inset-0 z-[1000] w-full h-full touch-none select-none"
               onPointerMove={movePointer}
               onPointerUp={() => { pointerAction.current = null; }}
               onPointerCancel={() => { pointerAction.current = null; }}
               onPointerDown={() => setSelectedId(null)}
             >
-              {!finalView && !storyboardAssetId && <rect width={document.width} height={document.height} fill="#FBF9F6" />}
+              {!finalView && imageLayers.length === 0 && <rect width={document.width} height={document.height} fill="#FBF9F6" />}
               {visibleElements.map((element) => (
                 <g
                   key={element.id}
                   transform={`translate(${element.x} ${element.y}) rotate(${element.rotation} ${element.width / 2} ${element.height / 2})`}
-                  opacity={storyboardAssetId && !finalView && showBlocking && !isOverlayElement(element) ? 0.72 : 1}
+                  opacity={element.opacity ?? 1}
                   onPointerDown={(event) => startPointer(event, element, "drag")}
-                  className="cursor-move"
+                  className={element.locked ? "cursor-not-allowed" : "cursor-move"}
                 >
-                  {storyboardAssetId && !finalView && !isOverlayElement(element) ? (
-                    showBlocking ? (
+                  {!finalView && ["background", "character", "prop"].includes(element.type) ? (
+                    !element.assetId || (showBlocking && element.type === "character" && selectedId === element.id) ? (
                       <LayoutControlOverlay
                         element={element}
                         label={element.characterId ? characterNames.get(element.characterId) ?? element.text : element.text || labelForType(element.type)}
@@ -525,7 +571,7 @@ export default function StoryboardEditor({ document, characters, storyboardAsset
                       onTailPointerDown={(event) => startTailPointer(event, element)}
                     />
                   )}
-                  {selectedId === element.id && !finalView && (
+                  {selectedId === element.id && !finalView && !element.locked && (
                     <>
                       <rect x={-8} y={-8} width={element.width + 16} height={element.height + 16} fill="none" stroke="#7C3AED" strokeWidth={4} strokeDasharray="10 7" />
                       <circle cx={element.width + 8} cy={element.height + 8} r={15} fill="#7C3AED" stroke="white" strokeWidth={4} onPointerDown={(event) => startPointer(event, element, "resize")} className="cursor-se-resize" />
@@ -538,6 +584,27 @@ export default function StoryboardEditor({ document, characters, storyboardAsset
         </div>
 
         <div className="rounded-xl border border-[#EBE7E0] bg-white p-3 space-y-3">
+          <div className="rounded-lg border border-[#EBE7E0] bg-[#FBF9F6] p-2">
+            <div className="mb-2 flex items-center justify-between">
+              <span className="flex items-center gap-1 text-[11px] font-bold text-[#514A45]"><Layers3 className="h-3.5 w-3.5" /> 레이어</span>
+              <span className="text-[9px] text-[#ADA8A0]">{document.elements.length}개</span>
+            </div>
+            <div className="max-h-40 space-y-1 overflow-auto">
+              {document.elements.slice().sort((left, right) => right.zIndex - left.zIndex).map((layer) => (
+                <div key={layer.id} className={`flex items-center gap-1 rounded-md border px-1.5 py-1 ${selectedId === layer.id ? "border-[#A78BFA] bg-[#F5F3FF]" : "border-transparent bg-white"}`}>
+                  <button type="button" onClick={() => { setSelectedId(layer.id); setFinalView(false); }} className="min-w-0 flex-1 truncate text-left text-[10px] font-medium text-[#514A45]">
+                    {staleLayerIds.has(layer.id) && <span className="mr-1 text-orange-500">●</span>}{layer.characterId ? characterNames.get(layer.characterId) ?? layer.text : layer.text || labelForType(layer.type)}
+                  </button>
+                  <button type="button" title={layer.visible === false ? "표시" : "숨김"} onClick={() => updateElement(layer.id, { visible: layer.visible === false })} className="rounded p-1 text-[#8C837A] hover:bg-white">
+                    {layer.visible === false ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
+                  </button>
+                  <button type="button" title={layer.locked ? "잠금 해제" : "잠금"} onClick={() => updateElement(layer.id, { locked: !layer.locked })} className="rounded p-1 text-[#8C837A] hover:bg-white">
+                    {layer.locked ? <Lock className="h-3 w-3" /> : <Unlock className="h-3 w-3" />}
+                  </button>
+                </div>
+              ))}
+            </div>
+          </div>
           {selected ? (
             <>
               <div className="flex items-center justify-between">
@@ -547,6 +614,26 @@ export default function StoryboardEditor({ document, characters, storyboardAsset
                   setSelectedId(null);
                 }} className="p-1.5 text-red-400 hover:bg-red-50 rounded-lg"><Trash2 className="w-3.5 h-3.5" /></button>
               </div>
+              {["background", "character", "prop"].includes(selected.type) && (
+                <div className="space-y-2 rounded-xl border border-[#DDD6FE] bg-[#FAF8FF] p-3">
+                  <button
+                    type="button"
+                    disabled={generatingLayerIds.has(selected.id)}
+                    onClick={() => onRegenerateLayer(selected.id)}
+                    className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-[#7C3AED] px-3 py-2 text-[11px] font-semibold text-white transition hover:bg-[#6D28D9] active:scale-95 disabled:opacity-50"
+                  >
+                    <RefreshCw className={`h-3.5 w-3.5 ${generatingLayerIds.has(selected.id) ? "animate-spin" : ""}`} />
+                    {generatingLayerIds.has(selected.id) ? "이 레이어 그리는 중..." : !selected.assetId ? "이 레이어 생성" : staleLayerIds.has(selected.id) ? "포즈·표정 수정 적용" : "이 레이어 다시 그리기"}
+                  </button>
+                  {staleLayerIds.has(selected.id) && <p className="text-[10px] text-orange-600">포즈·표정 변경이 아직 이미지에 반영되지 않았습니다.</p>}
+                  <div className="grid grid-cols-2 gap-2">
+                    <button type="button" onClick={() => updateElement(selected.id, { flipX: !selected.flipX })} className="editor-tool justify-center"><FlipHorizontal2 className="h-3.5 w-3.5" /> 좌우 반전</button>
+                    <button type="button" onClick={() => updateElement(selected.id, { locked: !selected.locked })} className="editor-tool justify-center">{selected.locked ? <Unlock className="h-3.5 w-3.5" /> : <Lock className="h-3.5 w-3.5" />} {selected.locked ? "잠금 해제" : "잠금"}</button>
+                  </div>
+                  <label className="visual-label">불투명도 {Math.round((selected.opacity ?? 1) * 100)}%</label>
+                  <input type="range" min="0.1" max="1" step="0.05" value={selected.opacity ?? 1} onChange={(event) => updateElement(selected.id, { opacity: Number(event.target.value) })} className="w-full accent-[#7C3AED]" />
+                </div>
+              )}
               {selected.type === "character" && (
                 <div className="space-y-2.5">
                   <select value={selected.characterId ?? ""} onChange={(event) => updateElement(selected.id, { characterId: event.target.value, text: characterNames.get(event.target.value) ?? "캐릭터" })} className="visual-input">
@@ -677,15 +764,15 @@ export default function StoryboardEditor({ document, characters, storyboardAsset
                   setSelectedId(copy.id);
                 }} className="editor-tool justify-center"><Copy className="w-3.5 h-3.5" /> 복제</button>
                 <button type="button" onClick={() => updateElement(selected.id, { rotation: 0 })} className="editor-tool justify-center"><RotateCcw className="w-3.5 h-3.5" /> 회전 초기화</button>
-                <button type="button" onClick={() => updateElement(selected.id, { zIndex: Math.min(document.elements.length, selected.zIndex + 1) })} className="editor-tool justify-center"><ArrowUp className="w-3.5 h-3.5" /> 앞으로</button>
-                <button type="button" onClick={() => updateElement(selected.id, { zIndex: Math.max(0, selected.zIndex - 1) })} className="editor-tool justify-center"><ArrowDown className="w-3.5 h-3.5" /> 뒤로</button>
+                <button type="button" onClick={() => updateElement(selected.id, { zIndex: Math.max(...document.elements.map((element) => element.zIndex), 0) + 1 })} className="editor-tool justify-center"><ArrowUp className="w-3.5 h-3.5" /> 앞으로</button>
+                <button type="button" onClick={() => updateElement(selected.id, { zIndex: Math.min(...document.elements.map((element) => element.zIndex), 0) - 1 })} className="editor-tool justify-center"><ArrowDown className="w-3.5 h-3.5" /> 뒤로</button>
               </div>
             </>
           ) : (
             <div className="py-8 text-center">
               <MousePointer2 className="w-6 h-6 text-[#D4CFC9] mx-auto mb-2" />
               <p className="text-xs text-[#ADA8A0] leading-relaxed">
-                {storyboardAssetId && !showBlocking ? <>상단의 <strong className="text-[#7C3AED]">콘티 수정</strong>을 눌러<br />인물 포즈와 배치를 편집하세요.</> : <>요소를 선택해 내용을 편집하거나<br />드래그해서 구도를 조정하세요.</>}
+                캔버스나 레이어 목록에서 요소를 선택하고<br />직접 이동·크기·포즈를 조정하세요.
               </p>
             </div>
           )}
@@ -694,14 +781,12 @@ export default function StoryboardEditor({ document, characters, storyboardAsset
 
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2">
-          <button type="button" onClick={downloadSvg} className="editor-action"><Download className="w-3.5 h-3.5" /> {storyboardAssetId ? "오버레이 SVG" : "SVG 저장"}</button>
+          <button type="button" onClick={downloadStoryboard} className="editor-action"><Download className="w-3.5 h-3.5" /> 콘티 PNG</button>
+          <button type="button" onClick={downloadSvg} className="editor-action"><Download className="w-3.5 h-3.5" /> 오버레이 SVG</button>
           {sceneAssetId && <button type="button" onClick={downloadFinal} className="editor-action"><Download className="w-3.5 h-3.5" /> 최종 PNG</button>}
         </div>
         <div className="flex items-center gap-2">
-          {storyboardStale && storyboardAssetId && <span className="text-[10px] text-orange-600 bg-orange-50 px-2 py-1 rounded-full">배치 수정이 러프 그림에 아직 반영되지 않았어요</span>}
-          <button type="button" disabled={generatingSketch} onClick={onRegenerateSketch} className="editor-action">
-            <RefreshCw className={`w-3.5 h-3.5 ${generatingSketch ? "animate-spin" : ""}`} /> {generatingSketch ? "러프 다시 그리는 중..." : "현재 배치로 러프 다시 그리기"}
-          </button>
+          {staleLayerIds.size > 0 && <span className="text-[10px] text-orange-600 bg-orange-50 px-2 py-1 rounded-full">수정 적용이 필요한 레이어 {staleLayerIds.size}개</span>}
           {sceneStale && sceneAssetId && <span className="text-[10px] text-orange-600 bg-orange-50 px-2 py-1 rounded-full">구도가 변경되어 재생성이 필요해요</span>}
           <button type="button" disabled={generatingScene} onClick={onGenerateScene} className="inline-flex items-center gap-1.5 rounded-full bg-[#1A1A1A] text-white text-xs font-semibold px-4 py-2 hover:bg-black disabled:opacity-50">
             <Sparkles className="w-3.5 h-3.5" /> {generatingScene ? "콘티 좌표를 고정해 생성 중..." : sceneAssetId ? "이 콘티로 다시 생성" : "이 콘티 고정으로 장면 생성"}

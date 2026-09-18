@@ -157,7 +157,9 @@ function characterMarkup(element: StoryboardElement): string {
 function elementMarkup(element: StoryboardElement): string {
   const transform = `translate(${element.x} ${element.y}) rotate(${element.rotation} ${element.width / 2} ${element.height / 2})`;
   let content = "";
-  if (element.type === "character") {
+  if (element.type === "background") {
+    content = `<rect width="${element.width}" height="${element.height}" fill="#fff" stroke="#A8A29E" stroke-width="4" stroke-dasharray="16 10"/><text x="${element.width / 2}" y="${element.height / 2}" text-anchor="middle" dominant-baseline="middle" font-family="Pretendard, sans-serif" font-size="28" font-weight="700" fill="#78716C">${escapeXml(element.text || "배경")}</text>`;
+  } else if (element.type === "character") {
     content = characterMarkup(element);
   } else if (element.type === "speech") {
     const balloon = speechBalloonGeometry(element);
@@ -196,7 +198,7 @@ export function storyboardToSvg(
   options: { overlaysOnly?: boolean; transparent?: boolean } = {},
 ): string {
   const elements = document.elements
-    .filter((element) => !options.overlaysOnly || isOverlayElement(element))
+    .filter((element) => element.visible !== false && (!options.overlaysOnly || isOverlayElement(element)))
     .sort((left, right) => left.zIndex - right.zIndex);
   const background = options.transparent ? "" : `<rect width="100%" height="100%" fill="#FBF9F6"/>`;
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${document.width}" height="${document.height}" viewBox="0 0 ${document.width} ${document.height}">${background}${elements.map(elementMarkup).join("")}</svg>`;

@@ -4,7 +4,7 @@ import {
   characterInputSchema,
   generateSceneImage,
   generateStoryboardLayout,
-  generateStoryboardSketch,
+  generateStoryboardLayer,
   projectVisualContextSchema,
 } from "@/lib/gemini";
 import { generateCharacterSheet } from "@/lib/openaiImage";
@@ -53,13 +53,13 @@ const characterRigSchema = z.object({
 });
 
 const storyboardSchema = z.object({
-  version: z.literal(1),
+  version: z.literal(2),
   aspectRatio: z.enum(["4:3", "3:4", "1:1", "9:16"]),
   width: z.number().positive().max(4_000),
   height: z.number().positive().max(4_000),
   elements: z.array(z.object({
     id: z.string().max(100),
-    type: z.enum(["character", "prop", "shape", "arrow", "speech", "caption", "sfx"]),
+    type: z.enum(["background", "character", "prop", "shape", "arrow", "speech", "caption", "sfx"]),
     x: z.number(),
     y: z.number(),
     width: z.number().positive(),
@@ -79,10 +79,26 @@ const storyboardSchema = z.object({
     tailX: z.number().min(-2).max(3).optional(),
     tailY: z.number().min(-2).max(3).optional(),
     speakerCharacterId: z.string().max(120).optional(),
+    assetId: z.string().max(200).optional(),
+    assetSourceHash: z.string().max(200).optional(),
+    visible: z.boolean().optional(),
+    locked: z.boolean().optional(),
+    opacity: z.number().min(0).max(1).optional(),
+    flipX: z.boolean().optional(),
   })).min(1).max(32),
 });
 
 const requestSchema = z.discriminatedUnion("action", [
+  z.object({
+    action: z.literal("storyboard-layer"),
+    context: projectVisualContextSchema,
+    episode: episodeSchema,
+    cut: cutSchema,
+    storyboard: storyboardSchema,
+    layerId: z.string().max(100),
+    layoutImage: imagePayloadSchema,
+    references: z.array(z.object({ character: characterInputSchema, ...imagePayloadSchema.shape })).max(4),
+  }),
   z.object({
     action: z.literal("character-sheet"),
     context: projectVisualContextSchema,
@@ -94,15 +110,6 @@ const requestSchema = z.discriminatedUnion("action", [
     episode: episodeSchema,
     cut: cutSchema,
     characters: z.array(characterInputSchema).max(4),
-  }),
-  z.object({
-    action: z.literal("storyboard-sketch"),
-    context: projectVisualContextSchema,
-    episode: episodeSchema,
-    cut: cutSchema,
-    storyboard: storyboardSchema,
-    layoutImage: imagePayloadSchema,
-    references: z.array(z.object({ character: characterInputSchema, ...imagePayloadSchema.shape })).max(4),
   }),
   z.object({
     action: z.literal("scene-image"),
@@ -144,8 +151,8 @@ export async function POST(request: Request) {
     if (body.action === "storyboard-layout") {
       return NextResponse.json({ storyboard: await generateStoryboardLayout(body) });
     }
-    if (body.action === "storyboard-sketch") {
-      return NextResponse.json(await generateStoryboardSketch(body));
+    if (body.action === "storyboard-layer") {
+      return NextResponse.json(await generateStoryboardLayer(body));
     }
     return NextResponse.json(await generateSceneImage(body));
   } catch (error) {

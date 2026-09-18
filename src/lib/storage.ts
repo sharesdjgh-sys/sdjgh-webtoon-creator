@@ -31,6 +31,7 @@ export type CharacterJointKey =
 export type CharacterRig = Record<CharacterJointKey, { x: number; y: number }>;
 
 export type StoryboardElementType =
+  | "background"
   | "character"
   | "prop"
   | "shape"
@@ -61,15 +62,55 @@ export type StoryboardElement = {
   tailX?: number;
   tailY?: number;
   speakerCharacterId?: string;
+  assetId?: string;
+  assetSourceHash?: string;
+  visible?: boolean;
+  locked?: boolean;
+  opacity?: number;
+  flipX?: boolean;
 };
 
 export type StoryboardDocument = {
-  version: 1;
+  version: 2;
   aspectRatio: PanelAspectRatio;
   width: number;
   height: number;
   elements: StoryboardElement[];
 };
+
+function migrateStoryboard(cut: Cut): StoryboardDocument | undefined {
+  const source = cut.storyboard as (Omit<StoryboardDocument, "version"> & { version?: number }) | undefined;
+  if (!source?.elements?.length) return undefined;
+  const hasBackground = source.elements.some((element) => element.type === "background");
+  const legacyComposite = cut.storyboardImageAssetId && !hasBackground;
+  const migratedElements: StoryboardElement[] = source.elements.map((element) => ({
+    ...element,
+    visible: legacyComposite && ["character", "prop", "shape", "arrow"].includes(element.type) ? false : element.visible ?? true,
+    locked: element.locked ?? false,
+    opacity: element.opacity ?? 1,
+    flipX: element.flipX ?? false,
+  }));
+  if (legacyComposite) {
+    migratedElements.unshift({
+      id: makeId("layer-background"),
+      type: "background",
+      x: 0,
+      y: 0,
+      width: source.width,
+      height: source.height,
+      rotation: 0,
+      zIndex: -100,
+      text: "기존 합성 콘티",
+      assetId: cut.storyboardImageAssetId,
+      assetSourceHash: cut.storyboardImageSourceHash,
+      visible: true,
+      locked: true,
+      opacity: 1,
+      flipX: false,
+    });
+  }
+  return { ...source, version: 2, elements: migratedElements };
+}
 
 export type CharacterVisualProfile = {
   gender: string;
@@ -228,6 +269,7 @@ function normalizeProject(raw: Project): Project {
               return {
                 ...normalized,
                 characterIds: normalized.characterIds.filter((characterId) => validCharacterIds.has(characterId)),
+                storyboard: migrateStoryboard(normalized),
               };
             })
           : [],

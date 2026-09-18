@@ -15,9 +15,10 @@ import { downloadEpisode, downloadAllEpisodes } from "@/lib/download";
 import ArtDirectionEditor from "@/components/visual/ArtDirectionEditor";
 import StoryboardEditor from "@/components/visual/StoryboardEditor";
 import { BlobImage } from "@/components/visual/StoredImage";
-import { requestSceneImage, requestStoryboardLayout, requestStoryboardSketch, sceneHash, storyboardSketchHash } from "@/lib/visualClient";
-import { deleteMediaAsset, deleteMediaByOwner, saveMediaAsset } from "@/lib/mediaStorage";
+import { requestSceneImage, requestStoryboardLayer, requestStoryboardLayout, sceneHash, storyboardLayerHash } from "@/lib/visualClient";
+import { deleteMediaAsset, deleteMediaByOwner, saveMediaAsset, whiteToTransparentPng } from "@/lib/mediaStorage";
 import { composeScenePng, storyboardDimensions } from "@/lib/storyboardSvg";
+import { hasGeneratedStoryboardLayers } from "@/lib/storyboardComposite";
 
 const ANGLES = ["풀샷", "미디엄샷", "클로즈업", "익스트림 클로즈업", "버드뷰", "웜뷰", "오버더숄더"];
 const INTERACTIVE_BUTTON = "transform-gpu transition-all duration-200 active:scale-[0.96] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#7C3AED]/30 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:active:scale-100";
@@ -72,7 +73,8 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
   const [isDirty, setIsDirty] = useState(false);
   const [noIdeaChat, setNoIdeaChat] = useState(false);
   const [layoutGeneratingIds, setLayoutGeneratingIds] = useState<Set<string>>(new Set());
-  const [sketchGeneratingIds, setSketchGeneratingIds] = useState<Set<string>>(new Set());
+  const [layerGeneratingIds, setLayerGeneratingIds] = useState<Set<string>>(new Set());
+  const [layerGenerationProgress, setLayerGenerationProgress] = useState<Record<string, { completed: number; total: number }>>({});
   const [sceneGeneratingIds, setSceneGeneratingIds] = useState<Set<string>>(new Set());
   const [sceneCandidates, setSceneCandidates] = useState<Record<string, { blob: Blob; previewBlob: Blob; sourceHash: string }>>({});
   const [visualError, setVisualError] = useState("");
@@ -329,42 +331,69 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
       const currentProject = { ...project, episodes };
       const storyboard = await requestStoryboardLayout(currentProject, episode, cut);
       const draftCut = { ...cut, storyboard };
-      const sketch = await requestStoryboardSketch(currentProject, episode, draftCut);
-      const asset = await saveMediaAsset({ projectId: id, ownerId: cut.id, ownerType: "storyboard", mimeType: sketch.blob.type || "image/jpeg", blob: sketch.blob });
-      await deleteMediaAsset(cut.storyboardImageAssetId);
+      const targets = storyboard.elements.filter((element) => ["background", "character", "prop"].includes(element.type));
+      setLayerGenerationProgress((current) => ({ ...current, [cut.id]: { completed: 0, total: targets.length } }));
+      const generated = new Map<string, { assetId: string; sourceHash: string }>();
+      for (let index = 0; index < targets.length; index += 2) {
+        const batch = targets.slice(index, index + 2);
+        const results = await Promise.all(batch.map(async (layer) => {
+          const result = await requestStoryboardLayer(currentProject, episode, draftCut, layer.id);
+          const blob = layer.type === "background" ? result.blob : await whiteToTransparentPng(result.blob);
+          const asset = await saveMediaAsset({ projectId: id, ownerId: layer.id, ownerType: "storyboard-layer", mimeType: blob.type || "image/png", blob });
+          return { layerId: layer.id, assetId: asset.id, sourceHash: result.sourceHash };
+        }));
+        results.forEach((result) => generated.set(result.layerId, { assetId: result.assetId, sourceHash: result.sourceHash }));
+        setLayerGenerationProgress((current) => ({ ...current, [cut.id]: { completed: Math.min(index + batch.length, targets.length), total: targets.length } }));
+      }
+      const layeredStoryboard: StoryboardDocument = {
+        ...storyboard,
+        elements: storyboard.elements.map((element) => {
+          const result = generated.get(element.id);
+          return result ? { ...element, assetId: result.assetId, assetSourceHash: result.sourceHash } : element;
+        }),
+      };
       replaceCut(cutIdx, (current) => ({
         ...current,
-        storyboard,
-        storyboardImageAssetId: asset.id,
-        storyboardImageSourceHash: sketch.sourceHash,
+        storyboard: layeredStoryboard,
+        storyboardImageAssetId: undefined,
+        storyboardImageSourceHash: undefined,
       }));
-      setVisualError("캐릭터 시트와 장면 연출을 반영한 러프 콘티를 생성했습니다.");
+      setVisualError("배경·인물·소품을 분리한 레이어 콘티를 생성했습니다.");
       return true;
     } catch (error) {
-      setVisualError(error instanceof Error ? error.message : "러프 콘티 생성에 실패했습니다.");
+      setVisualError(error instanceof Error ? error.message : "레이어 콘티 생성에 실패했습니다.");
       return false;
     } finally {
       setLoadingId(setLayoutGeneratingIds, cut.id, false);
+      setLayerGenerationProgress((current) => { const next = { ...current }; delete next[cut.id]; return next; });
     }
   };
 
-  const regenerateStoryboardSketch = async (cutIdx: number) => {
+  const regenerateStoryboardLayer = async (cutIdx: number, layerId: string) => {
     if (!project) return;
     const episode = episodes[activeEp];
     const cut = episode?.cuts[cutIdx];
-    if (!episode || !cut?.storyboard) return;
+    const layer = cut?.storyboard?.elements.find((element) => element.id === layerId);
+    if (!episode || !cut?.storyboard || !layer || !["background", "character", "prop"].includes(layer.type)) return;
     setVisualError("");
-    setLoadingId(setSketchGeneratingIds, cut.id, true);
+    setLoadingId(setLayerGeneratingIds, layer.id, true);
     try {
-      const sketch = await requestStoryboardSketch({ ...project, episodes }, episode, cut);
-      const asset = await saveMediaAsset({ projectId: id, ownerId: cut.id, ownerType: "storyboard", mimeType: sketch.blob.type || "image/jpeg", blob: sketch.blob });
-      await deleteMediaAsset(cut.storyboardImageAssetId);
-      replaceCut(cutIdx, (current) => ({ ...current, storyboardImageAssetId: asset.id, storyboardImageSourceHash: sketch.sourceHash }));
-      setVisualError("현재 배치와 연출을 반영해 러프 콘티를 다시 그렸습니다.");
+      const result = await requestStoryboardLayer({ ...project, episodes }, episode, cut, layer.id);
+      const blob = layer.type === "background" ? result.blob : await whiteToTransparentPng(result.blob);
+      const asset = await saveMediaAsset({ projectId: id, ownerId: layer.id, ownerType: "storyboard-layer", mimeType: blob.type || "image/png", blob });
+      await deleteMediaAsset(layer.assetId);
+      replaceCut(cutIdx, (current) => ({
+        ...current,
+        storyboard: current.storyboard ? {
+          ...current.storyboard,
+          elements: current.storyboard.elements.map((element) => element.id === layer.id ? { ...element, assetId: asset.id, assetSourceHash: result.sourceHash, visible: true } : element),
+        } : current.storyboard,
+      }));
+      setVisualError(`${layer.text || "선택 레이어"} 수정사항을 반영했습니다.`);
     } catch (error) {
-      setVisualError(error instanceof Error ? error.message : "러프 콘티를 다시 그리지 못했습니다.");
+      setVisualError(error instanceof Error ? error.message : "선택한 콘티 레이어를 다시 그리지 못했습니다.");
     } finally {
-      setLoadingId(setSketchGeneratingIds, cut.id, false);
+      setLoadingId(setLayerGeneratingIds, layer.id, false);
     }
   };
 
@@ -377,10 +406,16 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
       setVisualError("먼저 콘티를 만든 뒤 장면을 생성해 주세요.");
       return;
     }
+    const currentProject = { ...project, episodes };
+    const incompleteLayers = cut.storyboard.elements.filter((layer) => ["background", "character", "prop"].includes(layer.type) && layer.visible !== false && (!layer.assetId || layer.assetSourceHash !== storyboardLayerHash(currentProject, episode, cut, layer.id)));
+    if (incompleteLayers.length > 0) {
+      setVisualError(`먼저 수정사항이 남은 콘티 레이어 ${incompleteLayers.length}개를 적용해주세요.`);
+      return;
+    }
     setVisualError("");
     setLoadingId(setSceneGeneratingIds, cut.id, true);
     try {
-      const result = await requestSceneImage({ ...project, episodes }, episode, cut);
+      const result = await requestSceneImage(currentProject, episode, cut);
       const previewBlob = await composeScenePng(cut.storyboard, result.blob);
       setSceneCandidates((current) => ({ ...current, [cut.id]: { blob: result.blob, previewBlob, sourceHash: result.sourceHash } }));
     } catch (error) {
@@ -412,16 +447,16 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
   };
 
   const generateMissingLayouts = async () => {
-    const targets = (episodes[activeEp]?.cuts ?? []).map((cut, index) => ({ cut, index })).filter(({ cut }) => !cut.storyboard || !cut.storyboardImageAssetId);
+    const targets = (episodes[activeEp]?.cuts ?? []).map((cut, index) => ({ cut, index })).filter(({ cut }) => !hasGeneratedStoryboardLayers(cut.storyboard));
     if (targets.length === 0) {
-      setVisualError("이 화의 모든 컷에 러프 콘티가 있습니다.");
+      setVisualError("이 화의 모든 컷에 레이어 콘티가 있습니다.");
       return;
     }
     setBulkLayoutGenerating(true);
     let success = 0;
     for (const target of targets) if (await generateLayout(target.index)) success += 1;
     setBulkLayoutGenerating(false);
-    setVisualError(`${success}/${targets.length}개의 SVG 콘티를 생성했습니다.`);
+    setVisualError(`${success}/${targets.length}개의 레이어 콘티를 생성했습니다.`);
   };
 
   const save = () => {
@@ -598,7 +633,7 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
           )}
 
           {visualError && (
-              <div className={`rounded-xl px-4 py-2.5 text-xs ${visualError.includes("생성했습니다") || visualError.includes("그렸습니다") || visualError.includes("추가했습니다") || visualError.includes("모든 컷") ? "bg-green-50 border border-green-200 text-green-700" : "bg-red-50 border border-red-200 text-red-600"}`}>
+              <div className={`rounded-xl px-4 py-2.5 text-xs ${visualError.includes("생성했습니다") || visualError.includes("그렸습니다") || visualError.includes("반영했습니다") || visualError.includes("추가했습니다") || visualError.includes("모든 컷") ? "bg-green-50 border border-green-200 text-green-700" : "bg-red-50 border border-red-200 text-red-600"}`}>
               {visualError}
             </div>
           )}
@@ -819,8 +854,8 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
                         <div className="col-span-2 rounded-xl border border-[#E4DDF8] bg-[#FAF8FF] p-3 sm:p-4 space-y-3">
                           <div className="flex flex-wrap items-center justify-between gap-2">
                             <div>
-                              <p className="text-xs font-bold text-[#1A1A1A]">AI 러프 드로잉 콘티</p>
-                              <p className="text-[10px] text-[#7A7067] mt-1">캐릭터 시트를 참고한 러프 원화 위에 말풍선·대사·배치 영역을 편집합니다.</p>
+                              <p className="text-xs font-bold text-[#1A1A1A]">레이어형 AI 콘티</p>
+                              <p className="text-[10px] text-[#7A7067] mt-1">화면에 보이는 배경·인물·소품 레이어를 직접 이동하고, 선택한 레이어만 다시 그릴 수 있습니다.</p>
                             </div>
                             <button
                               type="button"
@@ -829,7 +864,11 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
                               className="inline-flex items-center gap-1.5 rounded-full bg-[#7C3AED] text-white text-[11px] font-semibold px-3 py-2 disabled:opacity-50"
                             >
                               {layoutGeneratingIds.has(cut.id) ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Wand2 className="w-3.5 h-3.5" />}
-                              {layoutGeneratingIds.has(cut.id) ? "러프 드로잉 생성 중..." : cut.storyboardImageAssetId ? "콘티 새로 제안" : "AI 러프 콘티 만들기"}
+                              {layoutGeneratingIds.has(cut.id)
+                                ? layerGenerationProgress[cut.id]
+                                  ? `레이어 생성 ${layerGenerationProgress[cut.id].completed}/${layerGenerationProgress[cut.id].total}`
+                                  : "구도 설계 중..."
+                                : hasGeneratedStoryboardLayers(cut.storyboard) ? "레이어 콘티 새로 제안" : "AI 레이어 콘티 만들기"}
                             </button>
                           </div>
 
@@ -853,20 +892,21 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
                             <StoryboardEditor
                               document={cut.storyboard}
                               characters={project?.characters ?? []}
-                              storyboardAssetId={cut.storyboardImageAssetId}
-                              storyboardStale={Boolean(cut.storyboardImageAssetId && project && cut.storyboardImageSourceHash !== storyboardSketchHash({ ...project, episodes }, ep, cut))}
-                              generatingSketch={sketchGeneratingIds.has(cut.id)}
+                              staleLayerIds={new Set(cut.storyboard.elements
+                                .filter((layer) => ["background", "character", "prop"].includes(layer.type) && Boolean(layer.assetId) && layer.assetSourceHash !== storyboardLayerHash({ ...project!, episodes }, ep, cut, layer.id))
+                                .map((layer) => layer.id))}
+                              generatingLayerIds={layerGeneratingIds}
                               sceneAssetId={cut.sceneImageAssetId}
                               sceneStale={Boolean(cut.sceneImageAssetId && project && cut.sceneSourceHash !== sceneHash({ ...project, episodes }, ep, cut))}
                               generatingScene={sceneGeneratingIds.has(cut.id)}
                               onChange={(storyboard: StoryboardDocument) => replaceCut(cutIdx, (current) => ({ ...current, storyboard }))}
-                              onRegenerateSketch={() => regenerateStoryboardSketch(cutIdx)}
+                              onRegenerateLayer={(layerId) => regenerateStoryboardLayer(cutIdx, layerId)}
                               onGenerateScene={() => generateScene(cutIdx)}
                             />
                           ) : (
                             <div className="rounded-xl border border-dashed border-[#C4B5FD] bg-white py-8 text-center">
                               <Film className="w-7 h-7 text-[#C4B5FD] mx-auto mb-2" />
-                              <p className="text-[11px] text-[#7A7067]">장면 설명과 등장인물을 정한 뒤 AI 러프 콘티를 만들어보세요.</p>
+                              <p className="text-[11px] text-[#7A7067]">장면 설명과 등장인물을 정한 뒤 AI 레이어 콘티를 만들어보세요.</p>
                             </div>
                           )}
                         </div>

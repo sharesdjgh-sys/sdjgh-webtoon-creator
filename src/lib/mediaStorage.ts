@@ -4,7 +4,7 @@ const DB_NAME = "webtoon_creator_media";
 const STORE_NAME = "assets";
 const DB_VERSION = 1;
 
-export type MediaOwnerType = "character" | "storyboard" | "scene";
+export type MediaOwnerType = "character" | "storyboard" | "storyboard-layer" | "scene";
 
 export type MediaAsset = {
   id: string;
@@ -130,4 +130,37 @@ export function sourceHash(value: unknown): string {
     hash = Math.imul(hash, 16777619);
   }
   return (hash >>> 0).toString(36);
+}
+
+export async function whiteToTransparentPng(blob: Blob): Promise<Blob> {
+  const url = URL.createObjectURL(blob);
+  try {
+    const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const element = new Image();
+      element.onload = () => resolve(element);
+      element.onerror = () => reject(new Error("레이어 이미지를 불러오지 못했습니다."));
+      element.src = url;
+    });
+    const canvas = document.createElement("canvas");
+    canvas.width = image.naturalWidth;
+    canvas.height = image.naturalHeight;
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("레이어 투명 배경을 처리할 수 없습니다.");
+    context.drawImage(image, 0, 0);
+    const pixels = context.getImageData(0, 0, canvas.width, canvas.height);
+    for (let index = 0; index < pixels.data.length; index += 4) {
+      const red = pixels.data[index];
+      const green = pixels.data[index + 1];
+      const blue = pixels.data[index + 2];
+      const minimum = Math.min(red, green, blue);
+      const maximum = Math.max(red, green, blue);
+      if (minimum > 224 && maximum - minimum < 22) {
+        pixels.data[index + 3] = Math.round(255 * (255 - minimum) / 31);
+      }
+    }
+    context.putImageData(pixels, 0, 0);
+    return await new Promise<Blob>((resolve, reject) => canvas.toBlob((result) => result ? resolve(result) : reject(new Error("투명 PNG 변환에 실패했습니다.")), "image/png"));
+  } finally {
+    URL.revokeObjectURL(url);
+  }
 }

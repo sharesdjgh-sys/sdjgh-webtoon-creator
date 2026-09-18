@@ -270,6 +270,10 @@ function clampElement(
     speakerCharacterId: element.type === "speech" && element.speakerCharacterId && characterIds.has(element.speakerCharacterId)
       ? element.speakerCharacterId
       : undefined,
+    visible: true,
+    locked: false,
+    opacity: 1,
+    flipX: false,
   };
 }
 
@@ -319,77 +323,88 @@ Return a practical SVG scene graph using only the supplied JSON schema.
   const parsed = generatedDocumentSchema.parse(JSON.parse(interaction.output_text));
   const ids = new Set(input.characters.map((character) => character.id));
   return {
-    version: 1,
+    version: 2,
     aspectRatio: input.cut.aspectRatio,
     width,
     height,
-    elements: parsed.elements.map((element, index) => clampElement(element, index, width, height, ids)),
+    elements: [
+      {
+        id: `background-${crypto.randomUUID()}`,
+        type: "background",
+        x: 0,
+        y: 0,
+        width,
+        height,
+        rotation: 0,
+        zIndex: -100,
+        text: "배경",
+        visible: true,
+        locked: true,
+        opacity: 1,
+        flipX: false,
+      },
+      ...parsed.elements.map((element, index) => clampElement(element, index, width, height, ids)),
+    ],
   };
 }
 
-export async function generateStoryboardSketch(input: {
+function layerAspectRatio(layer: StoryboardElement, fallback: PanelAspectRatio): PanelAspectRatio {
+  if (layer.type === "background") return fallback;
+  const ratio = layer.width / layer.height;
+  if (ratio < 0.68) return "9:16";
+  if (ratio < 0.9) return "3:4";
+  if (ratio > 1.18) return "4:3";
+  return "1:1";
+}
+
+export async function generateStoryboardLayer(input: {
   context: ProjectVisualContext;
   episode: { number: number; title: string; synopsis: string };
   cut: { angle: string; description: string; dialogue: string; soundEffect: string; aspectRatio: PanelAspectRatio };
   storyboard: StoryboardDocument;
+  layerId: string;
   layoutImage: { data: string; mimeType: string };
   references: Array<{ character: CharacterVisualInput; data: string; mimeType: string }>;
 }): Promise<{ data: string; mimeType: string; prompt: string }> {
-  const cast = input.references.map(({ character }, index) =>
-    `Reference image ${index + 2}: approved design sheet for ${character.name} (${character.role}). Translate the same face shape, hair silhouette, body proportions, outfit and signature accessories into loose storyboard line art.`
-  ).join("\n");
-  const blocking = input.storyboard.elements
-    .filter((element) => !["speech", "caption", "sfx"].includes(element.type))
-    .sort((left, right) => left.zIndex - right.zIndex)
-    .map((element) => `- ${element.type} ${element.text || element.id}: box=(${Math.round(element.x)},${Math.round(element.y)},${Math.round(element.width)},${Math.round(element.height)}), rotation=${element.rotation}, pose=${element.pose || "n/a"}, expression=${element.expression || "n/a"}`)
-    .join("\n");
-  const reserved = input.storyboard.elements
-    .filter((element) => ["speech", "caption", "sfx"].includes(element.type))
-    .map((element) => `- leave quiet space at (${Math.round(element.x)},${Math.round(element.y)},${Math.round(element.width)},${Math.round(element.height)}) for editable ${element.type}`)
-    .join("\n");
-  const prompt = `Draw ONE professional Korean webtoon storyboard/continuity sketch, using reference image 1 only as the exact blocking map.
-
-This must look like a human storyboard artist's rough drawing — NOT stick figures, NOT geometric mannequins, NOT a polished final illustration.
-
-STORY BEAT
-- Episode: ${input.episode.number}. ${input.episode.title}
-- Context: ${input.episode.synopsis}
-- Camera: ${input.cut.angle}
-- Action: ${input.cut.description}
-- Dialogue intention: ${input.cut.dialogue || "none"}
-- Sound/action emphasis: ${input.cut.soundEffect || "none"}
-
-CHARACTER REFERENCES
-${cast || "No approved character sheet is available; design readable rough human figures appropriate to the scene."}
-
-BLOCKING FROM THE EDITABLE LAYOUT
-${blocking || "Infer the minimum necessary staging from the story beat."}
-
-TYPOGRAPHY SAFE AREAS
-${reserved || "none"}
-
-DRAWING STANDARD
-- Monochrome pencil or thin ink roughs on white, with confident construction lines and selective hatching like an actual webtoon 콘티.
-- Draw recognizable human anatomy: head shape and jaw, neck, shoulders, torso and pelvis volume, bent elbows and knees, readable hands, feet and weight balance.
-- Show the specified pose and expression clearly. Do not invent a generic standing pose when the action describes sitting, running, turning, falling, touching or looking.
-- Preserve each referenced character's recognizable hair, outfit silhouette and accessories in simplified rough form.
-- Include enough environment and perspective lines to establish location, horizon, depth, foreground and camera angle. Use speed lines or impact marks only when motivated.
-- Match reference image 1's framing, character scale, placement, overlap, facing direction and eyeline. Do not rearrange the composition.
-- Keep important faces and hands readable and keep all figures inside the panel.
-- Do not draw labels, pseudo-text, dialogue letters, captions, sound-effect lettering, finished speech balloons, panel numbers, borders, logos or watermarks. The app adds editable typography afterward.
-- Prioritize visual storytelling and acting over pretty rendering.`;
+  const layer = input.storyboard.elements.find((element) => element.id === input.layerId);
+  if (!layer || !["background", "character", "prop"].includes(layer.type)) throw new Error("생성할 콘티 레이어를 찾지 못했습니다.");
+  const reference = layer.type === "character"
+    ? input.references.find(({ character }) => character.id === layer.characterId)
+    : undefined;
+  const rig = layer.type === "character" ? resolveCharacterRig(layer) : undefined;
+  const rigText = rig ? Object.entries(rig).map(([name, point]) => `${name}=(${point.x.toFixed(3)},${point.y.toFixed(3)})`).join(", ") : "";
+  const common = `Project: ${input.context.title}; genre=${input.context.genre}; setting=${input.context.setting}
+Episode context: ${input.episode.synopsis}
+Panel camera: ${input.cut.angle}
+Panel action: ${input.cut.description}
+Art direction: monochrome Korean webtoon storyboard rough, confident pencil/ink construction lines, selective hatching, readable acting, unfinished production drawing.`;
+  const prompt = layer.type === "background"
+    ? `Draw ONLY the empty environment/background layer for one webtoon storyboard panel.
+${common}
+Background direction: ${layer.text || input.context.setting}
+Use input image 1 as the exact camera framing and perspective map. Establish horizon, depth, architecture, furniture and environmental context. Leave the character and major-prop areas visually open. Do not draw any people, body parts, foreground character silhouettes, speech balloons, letters, panel borders, labels or watermark. White paper background, monochrome rough line art.`
+    : layer.type === "character"
+      ? `Draw ONE isolated character layer for a professional webtoon storyboard.
+${common}
+Character: ${reference?.character.name ?? layer.text}; pose=${layer.pose || "follow the joint rig"}; expression=${layer.expression || "match the scene"}.
+The normalized joint rig inside this layer is: ${rigText}.
+Use input image 1 only for pose/blocking and input image 2, when present, as the approved character design. Preserve face shape, hair silhouette, body proportions, outfit and accessories. The pose must match every joint, weight balance and facing direction. Draw readable anatomy, hands and feet; do not replace it with a stick figure or generic standing pose.
+Output exactly one character, centered and fully visible, on pure white with no floor, shadow, background, props, text, balloon, border, label or watermark. Monochrome rough line art only.`
+      : `Draw ONE isolated major prop layer for a professional webtoon storyboard.
+${common}
+Prop: ${layer.text}. Use input image 1 for orientation and intended scale. Draw the complete prop centered on pure white, monochrome rough line art, with no person, hand, background, shadow, text, border, label or watermark.`;
   const interaction = await client().interactions.create({
     model: IMAGE_MODEL,
     input: [
       { type: "image" as const, mime_type: input.layoutImage.mimeType, data: input.layoutImage.data },
-      ...input.references.map((reference) => ({ type: "image" as const, mime_type: reference.mimeType, data: reference.data })),
+      ...(reference ? [{ type: "image" as const, mime_type: reference.mimeType, data: reference.data }] : []),
       { type: "text" as const, text: prompt },
     ],
     response_format: {
       type: "image",
       mime_type: "image/jpeg",
-      aspect_ratio: input.cut.aspectRatio,
-      image_size: "1K",
+      aspect_ratio: layerAspectRatio(layer, input.cut.aspectRatio),
+      image_size: layer.type === "background" ? "1K" : "512",
     },
   });
   return { ...imageResult(interaction), prompt };
@@ -419,10 +434,11 @@ export async function generateSceneImage(input: {
     };
   };
   const elementBox = (element: StoryboardElement) =>
-    `left=${pct(element.x, input.storyboard.width)}, top=${pct(element.y, input.storyboard.height)}, width=${pct(element.width, input.storyboard.width)}, height=${pct(element.height, input.storyboard.height)}, rotation=${element.rotation.toFixed(1)}deg, layer=${element.zIndex}`;
+    `left=${pct(element.x, input.storyboard.width)}, top=${pct(element.y, input.storyboard.height)}, width=${pct(element.width, input.storyboard.width)}, height=${pct(element.height, input.storyboard.height)}, rotation=${element.rotation.toFixed(1)}deg, mirrored=${element.flipX ? "yes" : "no"}, layer=${element.zIndex}`;
   const referenceNames = new Map(input.references.map(({ character }) => [character.id, character.name]));
   const spatialContract = input.storyboard.elements
     .slice()
+    .filter((element) => element.visible !== false)
     .sort((left, right) => left.zIndex - right.zIndex)
     .map((element) => {
       if (element.type !== "character") {
@@ -433,14 +449,15 @@ export async function generateSceneImage(input: {
       }
       const rig = resolveCharacterRig(element);
       const joints = Object.entries(rig).map(([name, point]) => {
-        const position = rotate(element.x + point.x * element.width, element.y + point.y * element.height, element);
+        const localX = element.flipX ? (1 - point.x) * element.width : point.x * element.width;
+        const position = rotate(element.x + localX, element.y + point.y * element.height, element);
         return `${name}=(${pct(position.x, input.storyboard.width)},${pct(position.y, input.storyboard.height)})`;
       }).join(", ");
       const identity = referenceNames.get(element.characterId ?? "") || element.text || "character";
       return `- [CHARACTER ${element.id}] identity=${identity}; ${elementBox(element)}; pose=${element.pose || "follow rig"}; expression=${element.expression || "follow scene"}; JOINTS ${joints}`;
     })
     .join("\n");
-  const characterCount = input.storyboard.elements.filter((element) => element.type === "character").length;
+  const characterCount = input.storyboard.elements.filter((element) => element.visible !== false && element.type === "character").length;
 
   const prompt = `REDRAW the first image as one finished webtoon panel. This is a layout-locked image-to-image production task, not a new composition.
 

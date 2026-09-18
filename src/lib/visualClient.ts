@@ -1,6 +1,7 @@
 import type { Character, Cut, Episode, Project, StoryboardDocument } from "@/lib/storage";
 import { base64ToBlob, blobToBase64, getMediaAsset, sourceHash } from "@/lib/mediaStorage";
 import { svgToPngBlob } from "@/lib/storyboardSvg";
+import { composeStoryboardPng } from "@/lib/storyboardComposite";
 
 type GeneratedImageResponse = { data: string; mimeType: string; prompt: string };
 export type CharacterSheetProgressStage = "generating" | "receiving";
@@ -97,29 +98,50 @@ async function characterReferences(project: Project, cut: Cut) {
   }))).filter((reference): reference is NonNullable<typeof reference> => reference !== null);
 }
 
-export function storyboardSketchHash(project: Project, episode: Episode, cut: Cut): string {
-  const references = project.characters
-    .filter((character) => cut.characterIds.includes(character.id))
-    .map((character) => ({ id: character.id, imageAssetId: character.imageAssetId, imageSourceHash: character.imageSourceHash }));
-  return sourceHash({ renderer: "gemini-rough-storyboard-v1", context: context(project), episode: { number: episode.episodeNumber, title: episode.title, synopsis: episode.synopsis }, cut: cutData(cut), storyboard: cut.storyboard, references });
+export function storyboardLayerHash(project: Project, episode: Episode, cut: Cut, layerId: string): string {
+  const layer = cut.storyboard?.elements.find((element) => element.id === layerId);
+  const character = layer?.characterId ? project.characters.find((item) => item.id === layer.characterId) : undefined;
+  return sourceHash({
+    renderer: "gemini-storyboard-layer-v1",
+    context: context(project),
+    episode: { number: episode.episodeNumber, title: episode.title, synopsis: episode.synopsis },
+    cut: { angle: cut.angle, description: cut.description, soundEffect: cut.soundEffect, aspectRatio: cut.aspectRatio },
+    layer: layer ? {
+      type: layer.type,
+      text: layer.text,
+      characterId: layer.characterId,
+      pose: layer.pose,
+      expression: layer.expression,
+      characterRig: layer.characterRig,
+    } : null,
+    characterReference: character ? { imageAssetId: character.imageAssetId, imageSourceHash: character.imageSourceHash } : null,
+  });
 }
 
-export async function requestStoryboardSketch(project: Project, episode: Episode, cut: Cut): Promise<{ blob: Blob; prompt: string; sourceHash: string }> {
-  if (!cut.storyboard) throw new Error("먼저 콘티 배치를 만들어주세요.");
+export async function requestStoryboardLayer(project: Project, episode: Episode, cut: Cut, layerId: string): Promise<{ blob: Blob; prompt: string; sourceHash: string }> {
+  if (!cut.storyboard) throw new Error("먼저 콘티 구성을 만들어주세요.");
+  const layer = cut.storyboard.elements.find((element) => element.id === layerId);
+  if (!layer) throw new Error("생성할 콘티 레이어를 찾지 못했습니다.");
+  if (layer.type === "character") {
+    const character = project.characters.find((item) => item.id === layer.characterId);
+    if (!character?.imageAssetId) throw new Error(`${character?.name || layer.text || "선택한 인물"}의 캐릭터 시트를 먼저 생성해주세요.`);
+  }
   const layoutBlob = await svgToPngBlob(cut.storyboard);
+  const references = await characterReferences(project, cut);
   const response = await postVisual<GeneratedImageResponse>({
-    action: "storyboard-sketch",
+    action: "storyboard-layer",
     context: context(project),
     episode: { number: episode.episodeNumber, title: episode.title, synopsis: episode.synopsis },
     cut: cutData(cut),
     storyboard: cut.storyboard,
+    layerId,
     layoutImage: { data: await blobToBase64(layoutBlob), mimeType: "image/png" },
-    references: await characterReferences(project, cut),
+    references: layer.type === "character" ? references.filter(({ character }) => character.id === layer.characterId) : [],
   });
   return {
     blob: base64ToBlob(response.data, response.mimeType),
     prompt: response.prompt,
-    sourceHash: storyboardSketchHash(project, episode, cut),
+    sourceHash: storyboardLayerHash(project, episode, cut, layerId),
   };
 }
 
@@ -132,9 +154,8 @@ export function sceneHash(project: Project, episode: Episode, cut: Cut): string 
 
 export async function requestSceneImage(project: Project, episode: Episode, cut: Cut): Promise<{ blob: Blob; prompt: string; sourceHash: string }> {
   if (!cut.storyboard) throw new Error("먼저 편집 가능한 콘티를 만들어주세요.");
-  const storyboardAsset = await getMediaAsset(cut.storyboardImageAssetId);
-  const layoutBlob = storyboardAsset?.blob ?? await svgToPngBlob(cut.storyboard);
-  const layoutMimeType = storyboardAsset?.mimeType ?? "image/png";
+  const layoutBlob = await composeStoryboardPng(cut.storyboard, { includeOverlays: false });
+  const layoutMimeType = "image/png";
   const references = await characterReferences(project, cut);
   const response = await postVisual<GeneratedImageResponse>({
     action: "scene-image",
