@@ -4,13 +4,14 @@ import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Input } from "@/components/ui/input";
+import { workflowProgress } from "@/lib/workflowProgress";
 import { STEPS, GENRES } from "@/lib/utils";
 import { Plus, ChevronRight, Sparkles, X, Trophy, Download, Upload, Trash2, User, Pencil, Search, Folder, FolderOpen } from "lucide-react";
 import { getProjects, createProject, deleteProject, updateProject, type Project } from "@/lib/storage";
 import { exportAllProjects, importProjects } from "@/lib/download";
 import { setSaveDirectory, getSaveDirectoryName } from "@/lib/fileSystemStorage";
 
-const STEP_ROUTES = ["idea", "story", "characters", "episodes", "script", "submit"];
+const STEP_ROUTES = STEPS.map(step => step.route);
 
 const GENRE_COLORS: Record<string, { border: string; bg: string; text: string }> = {
   판타지:      { border: "#7C3AED", bg: "#F3EEFF", text: "#6D28D9" },
@@ -64,8 +65,11 @@ export default function DashboardPage() {
   const importRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    setProjects(getProjects());
-    getSaveDirectoryName().then(setSaveDirName);
+    const timer = window.setTimeout(() => {
+      setProjects(getProjects());
+      getSaveDirectoryName().then(setSaveDirName);
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, []);
 
   const handleSetFolder = async () => {
@@ -135,7 +139,7 @@ export default function DashboardPage() {
   const filtered = projects
     .filter((p) => p.title.toLowerCase().includes(search.toLowerCase()))
     .sort((a, b) => {
-      if (sortBy === "progress") return b.currentStep - a.currentStep;
+      if (sortBy === "progress") return workflowProgress(b) - workflowProgress(a);
       if (sortBy === "deadline") {
         if (!a.deadline && !b.deadline) return 0;
         if (!a.deadline) return 1;
@@ -357,7 +361,7 @@ export default function DashboardPage() {
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             {filtered.map((p) => {
-              const progress = Math.round(((p.currentStep - 1) / 5) * 100);
+              const progress = workflowProgress(p);
               const dday = getDday(p.deadline);
               const genreColor = p.genre ? GENRE_COLORS[p.genre] : null;
               return (
@@ -419,7 +423,7 @@ export default function DashboardPage() {
                     <div className="mb-3.5">
                       <div className="flex justify-between text-xs mb-2">
                         <span className="text-[#7A7067]">{STEPS[p.currentStep - 1]?.label ?? "완료"}</span>
-                        <span className="font-semibold text-[#7C3AED]">{progress}%</span>
+                        <span className="font-semibold text-[#7C3AED]">작성 체크 {progress}%</span>
                       </div>
                       <div className="w-full bg-[#F4F1EC] rounded-full h-1.5">
                         <div

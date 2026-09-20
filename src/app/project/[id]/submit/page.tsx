@@ -2,6 +2,7 @@
 
 import { useState, useEffect, use } from "react";
 import Link from "next/link";
+import StageIntro from "@/components/creation/StageIntro";
 import { Textarea } from "@/components/ui/textarea";
 import StepIndicator from "@/components/progress-tracker/StepIndicator";
 import { Trophy, CheckCircle, Circle, ArrowLeft, Sparkles, Download } from "lucide-react";
@@ -19,6 +20,12 @@ const CHECKLIST = [
   { id: "authorNote", label: "작가 노트를 준비했나요?" },
   { id: "proofread", label: "오탈자와 문법 오류를 확인했나요?" },
   { id: "consistent", label: "캐릭터 외모와 이름이 전체적으로 일관되나요?" },
+  { id: "continuity", label: "스토리: 시간·장소·소지품과 세계관 규칙이 앞 장면과 이어지나요?" },
+  { id: "art", label: "그림: 모든 컷의 손·얼굴·인물 수·의상·배경을 직접 확인했나요?" },
+  { id: "lettering", label: "글자: 휴대폰 크기에서 대사가 읽히고 말풍선 순서와 화자가 명확한가요?" },
+  { id: "scroll", label: "연출: 세로로 읽을 때 컷 순서와 여백이 자연스러운가요?" },
+  { id: "privacy", label: "실제 사람의 개인정보와 허락받지 않은 민감한 내용이 없는지 확인했나요?" },
+  { id: "originality", label: "다른 작품을 그대로 복제하지 않았고 사용한 자료와 AI 이용 표기를 확인했나요?" },
 ];
 
 export default function SubmitPage({ params }: { params: Promise<{ id: string }> }) {
@@ -29,19 +36,31 @@ export default function SubmitPage({ params }: { params: Promise<{ id: string }>
   const [completed, setCompleted] = useState(false);
 
   useEffect(() => {
+    // Restore browser storage after hydration; cancel if the project changes.
+    const timer = window.setTimeout(() => {
     const p = getProject(id);
     if (p) {
       setProject(p);
       setAuthorNote(p.authorNote ?? "");
-      updateProject(id, { currentStep: Math.max(6, p.currentStep) });
+      setChecks(p.reviewChecks ?? {});
+      setCompleted(p.isCompleted);
+      updateProject(id, { currentStep: Math.max(7, p.currentStep) });
     }
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, [id]);
 
-  const toggle = (key: string) => setChecks((c) => ({ ...c, [key]: !c[key] }));
-  const checkedCount = Object.values(checks).filter(Boolean).length;
+  const toggle = (key: string) => {
+    const next = { ...checks, [key]: !checks[key] };
+    updateProject(id, { reviewChecks: next, isCompleted: false });
+    setChecks(next);
+    setCompleted(false);
+  };
+  const checkedCount = CHECKLIST.filter(item => checks[item.id]).length;
   const isReady = checkedCount === CHECKLIST.length;
 
   const markComplete = () => {
+    if (!isReady || !project) return;
     updateProject(id, { isCompleted: true });
     setCompleted(true);
   };
@@ -63,18 +82,19 @@ export default function SubmitPage({ params }: { params: Promise<{ id: string }>
         </div>
       </header>
 
-      <MobileStepBar currentStep={project?.currentStep ?? 6} activeStep={6} projectId={id} />
+      <MobileStepBar currentStep={project?.currentStep ?? 6} activeStep={7} projectId={id} />
 
       <div className="max-w-7xl mx-auto px-4 py-6 flex gap-5">
         <aside className="hidden lg:block w-52 flex-shrink-0">
           <div className="bg-white rounded-2xl border border-[#EBE7E0] p-4 sticky top-20 shadow-[0_2px_12px_rgba(0,0,0,0.04)]">
-            <StepIndicator currentStep={project?.currentStep ?? 6} activeStep={6} projectId={id} />
+            <StepIndicator currentStep={project?.currentStep ?? 6} activeStep={7} projectId={id} />
           </div>
         </aside>
 
         <main className="flex-1 min-w-0 space-y-4">
+          <StageIntro stage="submit" />
           <div>
-            <p className="text-[10px] font-medium text-[#7C3AED] uppercase tracking-widest mb-1">Step 06</p>
+            <p className="text-[10px] font-medium text-[#7C3AED] uppercase tracking-widest mb-1">Step 07</p>
             <h1 className="text-xl font-bold text-[#1A1A1A] tracking-tight flex items-center gap-2">
               제출 준비 <Trophy className="w-5 h-5 text-[#7C3AED]" />
             </h1>
@@ -112,6 +132,8 @@ export default function SubmitPage({ params }: { params: Promise<{ id: string }>
                 <button
                   key={item.id}
                   onClick={() => toggle(item.id)}
+                  role="checkbox"
+                  aria-checked={Boolean(checks[item.id])}
                   className="w-full flex items-center gap-3 px-3 py-3 rounded-xl hover:bg-[#F4F1EC] transition-colors text-left"
                 >
                   {checks[item.id] ? (
@@ -146,7 +168,7 @@ export default function SubmitPage({ params }: { params: Promise<{ id: string }>
             <div className="bg-[#F4F1EC] border border-[#EBE7E0] rounded-2xl p-6 text-center">
               <div className="text-3xl mb-2">🎉</div>
               <h3 className="text-base font-bold text-[#1A1A1A] mb-1">모든 준비가 완료됐어요!</h3>
-              <p className="text-xs text-[#7A7067] mb-4">훌륭한 웹툰을 만들었네요. 대회에 제출할 준비가 되었어요!</p>
+              <p className="text-xs text-[#7A7067] mb-4">직접 점검한 내용을 바탕으로 완성 표시를 할 수 있어요. 실제 제출은 대회 안내에 따라 진행해 주세요.</p>
               <button
                 onClick={markComplete}
                 className="bg-[#7C3AED] text-white text-sm font-semibold px-6 py-2.5 rounded-full hover:bg-[#6D28D9] transition-all duration-300 shadow-[0_4px_16px_rgba(124,58,237,0.25)]"
@@ -165,9 +187,9 @@ export default function SubmitPage({ params }: { params: Promise<{ id: string }>
           )}
 
           <div className="flex items-center justify-between">
-            <Link href={`/project/${id}/script`}>
+            <Link href={`/project/${id}/episodes`}>
               <button className="flex items-center gap-2 text-xs font-medium px-4 py-2.5 rounded-full border border-[#EBE7E0] text-[#7A7067] hover:bg-[#F4F1EC] transition-all duration-200">
-                <ArrowLeft className="w-3.5 h-3.5" /> 이전: 대본 작성
+                <ArrowLeft className="w-3.5 h-3.5" /> 이전: 콘티 · 작화
               </button>
             </Link>
             {project && (

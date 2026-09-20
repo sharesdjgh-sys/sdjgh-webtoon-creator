@@ -69,6 +69,12 @@ body {
   from { opacity: 0; transform: translateY(16px); }
   to   { opacity: 1; transform: translateY(0); }
 }
+
+@keyframes webtoon-progress {
+  0%   { transform: translateX(-115%); }
+  55%  { transform: translateX(95%); }
+  100% { transform: translateX(250%); }
+}
 .hero-enter   { animation: float-up 0.8s cubic-bezier(0.16, 1, 0.3, 1) 0s    both; }
 .hero-enter-2 { animation: float-up 0.8s cubic-bezier(0.16, 1, 0.3, 1) 0.12s both; }
 .hero-enter-3 { animation: float-up 0.8s cubic-bezier(0.16, 1, 0.3, 1) 0.24s both; }

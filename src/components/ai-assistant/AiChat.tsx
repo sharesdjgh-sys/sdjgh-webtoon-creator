@@ -3,6 +3,9 @@
 import { useState, useRef, useEffect, forwardRef, useImperativeHandle } from "react";
 import { Textarea } from "@/components/ui/textarea";
 import { Send, Sparkles, User, Mic, MicOff } from "lucide-react";
+import { useParams } from "next/navigation";
+import { getProject } from "@/lib/storage";
+import { buildProjectContext } from "@/lib/projectContext";
 
 type Message = { role: "user" | "assistant"; content: string };
 
@@ -38,6 +41,7 @@ const AiChat = forwardRef<AiChatHandle, AiChatProps>(function AiChat(
   { step, placeholder, initialMessage, initialMessages, onMessagesChange },
   ref
 ) {
+  const params = useParams<{ id?: string }>();
   const [messages, setMessages] = useState<Message[]>(() => {
     if (initialMessages && initialMessages.length > 0) return initialMessages;
     if (initialMessage) return [{ role: "assistant", content: initialMessage }];
@@ -45,8 +49,17 @@ const AiChat = forwardRef<AiChatHandle, AiChatProps>(function AiChat(
   });
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [loadingSeconds, setLoadingSeconds] = useState(0);
   const [isListening, setIsListening] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!loading) return;
+    const startedAt = Date.now();
+    const reset = window.setTimeout(() => setLoadingSeconds(0), 0);
+    const timer = window.setInterval(() => setLoadingSeconds(Math.floor((Date.now() - startedAt) / 1000)), 1000);
+    return () => { window.clearTimeout(reset); window.clearInterval(timer); };
+  }, [loading]);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const recognitionRef = useRef<any>(null);
@@ -128,17 +141,19 @@ const AiChat = forwardRef<AiChatHandle, AiChatProps>(function AiChat(
     setLoading(true);
 
     try {
+      const project = params.id ? getProject(params.id) : null;
       const res = await fetch("/api/ai/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: next, step }),
+        body: JSON.stringify({ messages: next.slice(-60), step, creationMode: project?.brief?.mode, context: project ? buildProjectContext(project) : undefined }),
       });
       const data = await res.json();
+      if (!res.ok || typeof data.reply !== "string") throw new Error(data.error || "답변을 받지 못했어요. 다시 시도해 주세요.");
       const newMessages = [...next, { role: "assistant" as const, content: stripMarkdown(data.reply) }];
       setMessages(newMessages);
       onMessagesChange?.(newMessages);
-    } catch {
-      const errMessages = [...next, { role: "assistant" as const, content: "오류가 발생했어요. 다시 시도해주세요." }];
+    } catch (error) {
+      const errMessages = [...next, { role: "assistant" as const, content: error instanceof Error ? error.message : "오류가 발생했어요. 다시 시도해주세요." }];
       setMessages(errMessages);
       onMessagesChange?.(errMessages);
     } finally {
@@ -186,7 +201,7 @@ const AiChat = forwardRef<AiChatHandle, AiChatProps>(function AiChat(
                 : <Sparkles className="w-3 h-3 text-white" />
               }
             </div>
-            <div className={`max-w-[82%] rounded-2xl px-3.5 py-2.5 text-xs leading-relaxed ${
+            <div className={`max-w-[82%] whitespace-pre-wrap rounded-2xl px-3.5 py-2.5 text-xs leading-relaxed ${
               msg.role === "user"
                 ? "bg-[#1A1A1A] text-white rounded-tr-sm"
                 : "bg-white text-[#1A1A1A] rounded-tl-sm border border-[#EBE7E0] shadow-[0_1px_4px_rgba(0,0,0,0.04)]"
@@ -201,6 +216,7 @@ const AiChat = forwardRef<AiChatHandle, AiChatProps>(function AiChat(
               <Sparkles className="w-3 h-3 text-white" />
             </div>
             <div className="bg-white border border-[#EBE7E0] rounded-2xl rounded-tl-sm px-3.5 py-3 shadow-[0_1px_4px_rgba(0,0,0,0.04)]">
+              <p className="mb-2 text-[10px] font-medium text-[#7C3AED]">답변 작성 중 · {loadingSeconds}초</p>
               <div className="flex gap-1 items-center">
                 <span className="w-1.5 h-1.5 bg-[#7C3AED] rounded-full animate-bounce [animation-delay:0ms] opacity-60" />
                 <span className="w-1.5 h-1.5 bg-[#7C3AED] rounded-full animate-bounce [animation-delay:150ms] opacity-60" />
@@ -218,6 +234,7 @@ const AiChat = forwardRef<AiChatHandle, AiChatProps>(function AiChat(
           <Textarea
             ref={inputRef}
             value={input}
+            maxLength={8000}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder={placeholder ?? "Enter로 전송, Shift+Enter로 줄바꿈"}

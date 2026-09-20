@@ -2,6 +2,10 @@
 
 import { useState, useEffect, use, useRef } from "react";
 import Link from "next/link";
+import SettingFields from "@/components/creation/SettingFields";
+import { CHARACTER_STORY_FIELDS } from "@/lib/creation";
+import { autofillPayload } from "@/lib/autofillContext";
+import StageIntro from "@/components/creation/StageIntro";
 import { useRouter } from "next/navigation";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -145,7 +149,7 @@ export default function CharactersPage({ params }: { params: Promise<{ id: strin
   useEffect(() => {
     const p = getProject(id);
     if (p) {
-      const updated = { ...p, currentStep: Math.max(3, p.currentStep) };
+      const updated = { ...p, currentStep: Math.max(2, p.currentStep) };
       if (updated.currentStep !== p.currentStep) updateProject(id, { currentStep: updated.currentStep });
       setProject(updated);
       if (p.characters.length > 0) setCharacters(p.characters);
@@ -213,7 +217,7 @@ export default function CharactersPage({ params }: { params: Promise<{ id: strin
     updateProject(id, {
       characters,
       artDirection: project?.artDirection,
-      currentStep: Math.max(3, project?.currentStep ?? 1),
+      currentStep: Math.max(2, project?.currentStep ?? 1),
     });
     setSaving(false);
     setSaved(true);
@@ -223,7 +227,7 @@ export default function CharactersPage({ params }: { params: Promise<{ id: strin
 
   const autofill = async () => {
     const p = getProject(id);
-    if (!p?.ideaChat || p.ideaChat.length === 0) {
+    if (!p) {
       setNoIdeaChat(true);
       setTimeout(() => setNoIdeaChat(false), 3000);
       return;
@@ -235,13 +239,13 @@ export default function CharactersPage({ params }: { params: Promise<{ id: strin
       const res = await fetch("/api/ai/autofill", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ideaChat: p.ideaChat, step: "character" }),
+        body: JSON.stringify(autofillPayload(p, "character")),
       });
       if (!res.ok) throw new Error("AI 자동채우기 요청에 실패했습니다.");
       setAutofillProgress((current) => current ? { ...current, stage: "applying" } : current);
       const data = await res.json();
       if (Array.isArray(data.characters) && data.characters.length > 0) {
-        setCharacters(data.characters.map((character: Partial<Character>) => createCharacter(character)));
+        setCharacters(current => [...current, ...data.characters.map((character: Partial<Character>) => createCharacter(character))]);
         setEditIdx(null);
         setIsDirty(true);
       }
@@ -353,7 +357,7 @@ export default function CharactersPage({ params }: { params: Promise<{ id: strin
       setShowEmptyModal(true);
     } else {
       save();
-      router.push(`/project/${id}/episodes`);
+      router.push(`/project/${id}/world`);
     }
   };
 
@@ -410,19 +414,20 @@ export default function CharactersPage({ params }: { params: Promise<{ id: strin
         </div>
       </header>
 
-      <MobileStepBar currentStep={project?.currentStep ?? 1} activeStep={3} projectId={id} isDirty={isDirty} />
+      <MobileStepBar currentStep={project?.currentStep ?? 1} activeStep={2} projectId={id} isDirty={isDirty} />
 
       <div className="max-w-7xl mx-auto px-4 py-6 flex gap-5">
         <aside className="hidden lg:block w-52 flex-shrink-0">
           <div className="bg-white rounded-2xl border border-[#EBE7E0] p-4 sticky top-20 shadow-[0_2px_12px_rgba(0,0,0,0.04)]">
-            <StepIndicator currentStep={project?.currentStep ?? 1} activeStep={3} projectId={id} isDirty={isDirty} />
+            <StepIndicator currentStep={project?.currentStep ?? 1} activeStep={2} projectId={id} isDirty={isDirty} />
           </div>
         </aside>
 
         <main className="flex-1 min-w-0 space-y-4">
+          <StageIntro stage="characters" />
           <div className="flex items-center justify-between mb-2">
             <div>
-              <p className="text-[10px] font-medium text-[#7C3AED] uppercase tracking-widest mb-1">Step 03</p>
+              <p className="text-[10px] font-medium text-[#7C3AED] uppercase tracking-widest mb-1">Step 02</p>
               <h1 className="text-xl font-bold text-[#1A1A1A] tracking-tight">캐릭터 설계</h1>
             </div>
             <button
@@ -436,7 +441,7 @@ export default function CharactersPage({ params }: { params: Promise<{ id: strin
           {noIdeaChat && (
             <div className="bg-orange-50 border border-orange-200 rounded-xl px-4 py-2.5 flex items-center gap-2">
               <Wand2 className="w-3.5 h-3.5 text-orange-500 flex-shrink-0" />
-              <span className="text-xs text-orange-600">먼저 1단계 아이디어 발굴에서 AI와 대화해주세요</span>
+              <span className="text-xs text-orange-600">작품을 불러오지 못했어요. 대시보드에서 다시 열어 주세요.</span>
             </div>
           )}
 
@@ -516,6 +521,7 @@ export default function CharactersPage({ params }: { params: Promise<{ id: strin
 
                   {editIdx === idx && (
                     <div className="px-5 pb-5 space-y-3 border-t border-[#EBE7E0] pt-4">
+                      <SettingFields fields={CHARACTER_STORY_FIELDS} values={Object.fromEntries(CHARACTER_STORY_FIELDS.map(field => [field.key, ch[field.key]]))} onChange={(key, value) => updateChar(idx, key as keyof Character, value)} />
                       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                         <div>
                           <label className="block text-xs font-semibold text-[#1A1A1A] mb-1.5">이름 *</label>
@@ -669,7 +675,7 @@ export default function CharactersPage({ params }: { params: Promise<{ id: strin
               onClick={handleNext}
               className={`${INTERACTIVE_BUTTON} flex items-center gap-2 text-xs font-semibold px-5 py-2.5 rounded-full bg-[#7C3AED] text-white hover:-translate-y-0.5 hover:bg-[#6D28D9] hover:shadow-md`}
             >
-              다음: 콘티 & 대본 <ArrowRight className="w-3.5 h-3.5" />
+              다음: 세계관 · 설정집 <ArrowRight className="w-3.5 h-3.5" />
             </button>
           </div>
         </main>
@@ -682,7 +688,7 @@ export default function CharactersPage({ params }: { params: Promise<{ id: strin
           description="아이디어 발굴 대화 내용을 바탕으로 AI가 주인공 등 주요 캐릭터를 자동으로 만들어드릴 수 있어요."
           onAutofill={() => { setShowEmptyModal(false); autofill(); }}
           onAskMentor={() => { setShowEmptyModal(false); mobileChatRef.current?.openAndFocus(); }}
-          onGoAnyway={() => { setShowEmptyModal(false); router.push(`/project/${id}/episodes`); }}
+          onGoAnyway={() => { setShowEmptyModal(false); router.push(`/project/${id}/world`); }}
           onClose={() => setShowEmptyModal(false)}
           autofilling={autofilling}
         />

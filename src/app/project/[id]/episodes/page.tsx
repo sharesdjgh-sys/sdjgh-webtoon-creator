@@ -2,6 +2,9 @@
 
 import { useState, useEffect, use, useRef } from "react";
 import Link from "next/link";
+import { autofillPayload } from "@/lib/autofillContext";
+import { buildProjectContext } from "@/lib/projectContext";
+import StageIntro from "@/components/creation/StageIntro";
 import { useRouter } from "next/navigation";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -10,17 +13,21 @@ import EmptyContentModal from "@/components/EmptyContentModal";
 import MobileChatSheet, { type MobileChatSheetHandle } from "@/components/mobile/MobileChatSheet";
 import MobileStepBar from "@/components/MobileStepBar";
 import { Plus, Trash2, Save, ArrowRight, CheckCircle, Sparkles, Check, Download, Film, Wand2, ImageIcon, RefreshCw, X } from "lucide-react";
-import { createCut, getProject, updateProject, type Episode, type Cut, type Project, type ChatMessage, type PanelAspectRatio, type StoryboardDocument } from "@/lib/storage";
+import { createCut, getProject, updateProject, type CharacterRig, type Episode, type Cut, type Project, type ChatMessage, type PanelAspectRatio, type StoryboardDocument } from "@/lib/storage";
 import { downloadEpisode, downloadAllEpisodes } from "@/lib/download";
 import ArtDirectionEditor from "@/components/visual/ArtDirectionEditor";
 import StoryboardEditor from "@/components/visual/StoryboardEditor";
+import ShotSelector from "@/components/visual/ShotSelector";
+import AspectRatioSelector from "@/components/visual/AspectRatioSelector";
+import WebtoonPreviewModal from "@/components/visual/WebtoonPreviewModal";
+import AiActivityBanner from "@/components/AiActivityBanner";
 import { BlobImage } from "@/components/visual/StoredImage";
-import { requestSceneImage, requestStoryboardLayer, requestStoryboardLayout, sceneHash, storyboardLayerHash } from "@/lib/visualClient";
+import { requestCharacterRig, requestSceneImage, requestStoryboardLayer, requestStoryboardLayout, sceneHash, storyboardLayerHash } from "@/lib/visualClient";
 import { deleteMediaAsset, deleteMediaByOwner, saveMediaAsset, whiteToTransparentPng } from "@/lib/mediaStorage";
 import { composeScenePng, storyboardDimensions } from "@/lib/storyboardSvg";
 import { hasGeneratedStoryboardLayers } from "@/lib/storyboardComposite";
+import { cleanCharacterMentions } from "@/lib/characterMentions";
 
-const ANGLES = ["풀샷", "미디엄샷", "클로즈업", "익스트림 클로즈업", "버드뷰", "웜뷰", "오버더숄더"];
 const INTERACTIVE_BUTTON = "transform-gpu transition-all duration-200 active:scale-[0.96] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#7C3AED]/30 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:active:scale-100";
 
 type AiCutProgress = {
@@ -68,6 +75,7 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
   const [activeEp, setActiveEp] = useState(0);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [previewOpen, setPreviewOpen] = useState(false);
   const [autofilling, setAutofilling] = useState(false);
   const [showEmptyModal, setShowEmptyModal] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
@@ -76,6 +84,7 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
   const [layerGeneratingIds, setLayerGeneratingIds] = useState<Set<string>>(new Set());
   const [layerGenerationProgress, setLayerGenerationProgress] = useState<Record<string, { completed: number; total: number }>>({});
   const [sceneGeneratingIds, setSceneGeneratingIds] = useState<Set<string>>(new Set());
+  const [poseDetectingIds, setPoseDetectingIds] = useState<Set<string>>(new Set());
   const [sceneCandidates, setSceneCandidates] = useState<Record<string, { blob: Blob; previewBlob: Blob; sourceHash: string }>>({});
   const [visualError, setVisualError] = useState("");
   const [bulkLayoutGenerating, setBulkLayoutGenerating] = useState(false);
@@ -86,12 +95,20 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
   useEffect(() => {
     const p = getProject(id);
     if (p) {
-      const updatedStep = Math.max(4, p.currentStep);
+      const updatedStep = Math.max(6, p.currentStep);
       if (updatedStep !== p.currentStep) updateProject(id, { currentStep: updatedStep });
       setProject({ ...p, currentStep: updatedStep });
       const totalEp = Math.max(1, parseInt(p.story.totalEpisodes) || 1);
       const existing = p.episodes.length > 0
-        ? p.episodes.map((ep) => ({ ...ep, cuts: ep.cuts ?? [] }))
+        ? p.episodes.map((ep) => ({
+            ...ep,
+            cuts: (ep.cuts ?? []).map((cut) => ({
+              ...cut,
+              description: cleanCharacterMentions(cut.description, p.characters),
+              dialogue: cleanCharacterMentions(cut.dialogue, p.characters),
+              soundEffect: cleanCharacterMentions(cut.soundEffect, p.characters),
+            })),
+          }))
         : [{ episodeNumber: 1, title: "", synopsis: "", cuts: [], script: "", isCompleted: false }];
 
       if (totalEp > existing.length) {
@@ -155,6 +172,7 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         mode,
+        context: buildProjectContext({ ...project, episodes }),
         currentCutIndex,
         project: {
           title: project.title,
@@ -333,23 +351,23 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
       const draftCut = { ...cut, storyboard };
       const targets = storyboard.elements.filter((element) => ["background", "character", "prop"].includes(element.type));
       setLayerGenerationProgress((current) => ({ ...current, [cut.id]: { completed: 0, total: targets.length } }));
-      const generated = new Map<string, { assetId: string; sourceHash: string }>();
+      const generated = new Map<string, { assetId: string; sourceHash: string; characterRig?: CharacterRig }>();
       for (let index = 0; index < targets.length; index += 2) {
         const batch = targets.slice(index, index + 2);
         const results = await Promise.all(batch.map(async (layer) => {
           const result = await requestStoryboardLayer(currentProject, episode, draftCut, layer.id);
           const blob = layer.type === "background" ? result.blob : await whiteToTransparentPng(result.blob);
           const asset = await saveMediaAsset({ projectId: id, ownerId: layer.id, ownerType: "storyboard-layer", mimeType: blob.type || "image/png", blob });
-          return { layerId: layer.id, assetId: asset.id, sourceHash: result.sourceHash };
+          return { layerId: layer.id, assetId: asset.id, sourceHash: result.sourceHash, characterRig: result.characterRig };
         }));
-        results.forEach((result) => generated.set(result.layerId, { assetId: result.assetId, sourceHash: result.sourceHash }));
+        results.forEach((result) => generated.set(result.layerId, { assetId: result.assetId, sourceHash: result.sourceHash, characterRig: result.characterRig }));
         setLayerGenerationProgress((current) => ({ ...current, [cut.id]: { completed: Math.min(index + batch.length, targets.length), total: targets.length } }));
       }
       const layeredStoryboard: StoryboardDocument = {
         ...storyboard,
         elements: storyboard.elements.map((element) => {
           const result = generated.get(element.id);
-          return result ? { ...element, assetId: result.assetId, assetSourceHash: result.sourceHash } : element;
+          return result ? { ...element, assetId: result.assetId, assetSourceHash: result.sourceHash, characterRig: result.characterRig ?? element.characterRig } : element;
         }),
       };
       replaceCut(cutIdx, (current) => ({
@@ -386,7 +404,13 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
         ...current,
         storyboard: current.storyboard ? {
           ...current.storyboard,
-          elements: current.storyboard.elements.map((element) => element.id === layer.id ? { ...element, assetId: asset.id, assetSourceHash: result.sourceHash, visible: true } : element),
+          elements: current.storyboard.elements.map((element) => element.id === layer.id ? {
+            ...element,
+            assetId: asset.id,
+            assetSourceHash: result.sourceHash,
+            characterRig: result.characterRig ?? element.characterRig,
+            visible: true,
+          } : element),
         } : current.storyboard,
       }));
       setVisualError(`${layer.text || "선택 레이어"} 수정사항을 반영했습니다.`);
@@ -394,6 +418,87 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
       setVisualError(error instanceof Error ? error.message : "선택한 콘티 레이어를 다시 그리지 못했습니다.");
     } finally {
       setLoadingId(setLayerGeneratingIds, layer.id, false);
+    }
+  };
+
+  const detectAllCharacterPoses = async (cutIdx: number) => {
+    if (!project) return;
+    const episode = episodes[activeEp];
+    const cut = episode?.cuts[cutIdx];
+    const targets = cut?.storyboard?.elements.filter((element) => element.type === "character" && element.visible !== false && element.assetId) ?? [];
+    if (!episode || !cut?.storyboard || targets.length === 0) return;
+    setVisualError("");
+    setLoadingId(setPoseDetectingIds, cut.id, true);
+    targets.forEach((element) => setLoadingId(setLayerGeneratingIds, element.id, true));
+    try {
+      const detected = await Promise.all(targets.map(async (element) => ({
+        id: element.id,
+        rig: await requestCharacterRig(element.assetId!),
+      })));
+      const rigs = new Map(detected.map(({ id: layerId, rig }) => [layerId, rig]));
+      replaceCut(cutIdx, (current) => {
+        if (!current.storyboard) return current;
+        const storyboardWithRigs: StoryboardDocument = {
+          ...current.storyboard,
+          elements: current.storyboard.elements.map((element) => ({
+            ...element,
+            characterRig: rigs.get(element.id) ?? element.characterRig,
+          })),
+        };
+        const cutWithRigs = { ...current, storyboard: storyboardWithRigs };
+        return {
+          ...cutWithRigs,
+          storyboard: {
+            ...storyboardWithRigs,
+            elements: storyboardWithRigs.elements.map((element) => rigs.has(element.id) ? {
+              ...element,
+              assetSourceHash: storyboardLayerHash({ ...project, episodes }, episode, cutWithRigs, element.id),
+            } : element),
+          },
+        };
+      });
+      setVisualError(`캐릭터 ${targets.length}명의 포즈 핸들을 실제 그림에 맞췄습니다.`);
+    } catch (error) {
+      setVisualError(error instanceof Error ? error.message : "캐릭터 포즈를 분석하지 못했습니다.");
+    } finally {
+      targets.forEach((element) => setLoadingId(setLayerGeneratingIds, element.id, false));
+      setLoadingId(setPoseDetectingIds, cut.id, false);
+    }
+  };
+
+  const setPoseReference = async (cutIdx: number, layerId: string, file: File | null) => {
+    const layer = episodes[activeEp]?.cuts[cutIdx]?.storyboard?.elements.find((element) => element.id === layerId);
+    if (!layer) return;
+    try {
+      if (!file) {
+        await deleteMediaAsset(layer.poseReferenceAssetId);
+        replaceCut(cutIdx, (current) => ({
+          ...current,
+          storyboard: current.storyboard ? {
+            ...current.storyboard,
+            elements: current.storyboard.elements.map((element) => element.id === layerId ? { ...element, poseReferenceAssetId: undefined } : element),
+          } : current.storyboard,
+        }));
+        return;
+      }
+      if (!file.type.match(/^image\/(png|jpeg|webp)$/)) throw new Error("PNG, JPG, WEBP 이미지만 사용할 수 있습니다.");
+      if (file.size > 10 * 1024 * 1024) throw new Error("포즈 참고 이미지는 10MB 이하로 올려주세요.");
+      const asset = await saveMediaAsset({ projectId: id, ownerId: layerId, ownerType: "pose-reference", mimeType: file.type, blob: file });
+      await deleteMediaAsset(layer.poseReferenceAssetId);
+      replaceCut(cutIdx, (current) => ({
+        ...current,
+        storyboard: current.storyboard ? {
+          ...current.storyboard,
+          elements: current.storyboard.elements.map((element) => element.id === layerId ? {
+            ...element,
+            poseReferenceAssetId: asset.id,
+            pose: "업로드한 참고 이미지의 자세를 정확히 따르기",
+          } : element),
+        } : current.storyboard,
+      }));
+      setVisualError("포즈 참고 이미지를 연결했습니다. ‘이 설명으로 다시 그리기’를 누르면 적용됩니다.");
+    } catch (error) {
+      setVisualError(error instanceof Error ? error.message : "포즈 참고 이미지를 저장하지 못했습니다.");
     }
   };
 
@@ -463,7 +568,7 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
     setSaving(true);
     updateProject(id, {
       episodes,
-      currentStep: Math.max(4, project?.currentStep ?? 1),
+      currentStep: Math.max(6, project?.currentStep ?? 1),
     });
     setSaving(false);
     setSaved(true);
@@ -473,7 +578,7 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
 
   const autofill = async () => {
     const p = getProject(id);
-    if (!p?.ideaChat || p.ideaChat.length === 0) {
+    if (!p) {
       setNoIdeaChat(true);
       setTimeout(() => setNoIdeaChat(false), 3000);
       return;
@@ -483,7 +588,7 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
       const res = await fetch("/api/ai/autofill", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ideaChat: p.ideaChat, step: "episodes" }),
+        body: JSON.stringify(autofillPayload(p, "episodes")),
       });
       const data = await res.json();
       if (Array.isArray(data.episodes) && data.episodes.length > 0) {
@@ -507,14 +612,11 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
       setShowEmptyModal(true);
     } else {
       save();
-      router.push(`/project/${id}/script`);
+      router.push(`/project/${id}/submit`);
     }
   };
 
   const ep = episodes[activeEp];
-
-  const selectClass =
-    "flex h-9 w-full rounded-xl border border-[#EBE7E0] bg-white px-3 py-1.5 text-xs text-[#1A1A1A] focus:outline-none focus:ring-2 focus:ring-[#7C3AED]/20 focus:border-[#7C3AED]/40 transition-all duration-200";
 
   return (
     <div className="min-h-screen bg-[#FBF9F6]">
@@ -552,15 +654,23 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
               disabled={bulkLayoutGenerating || !ep?.cuts?.length}
               className="hidden md:flex items-center gap-1.5 text-xs font-medium px-4 py-2 rounded-full border border-[#7C3AED]/20 bg-[#7C3AED]/5 text-[#7C3AED] hover:bg-[#7C3AED]/10 transition-all disabled:opacity-50"
             >
-              <ImageIcon className="w-3.5 h-3.5" /> {bulkLayoutGenerating ? "콘티 생성 중..." : "미생성 콘티 만들기"}
+              {bulkLayoutGenerating ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <ImageIcon className="h-3.5 w-3.5" />} {bulkLayoutGenerating ? "콘티 생성 중" : "미생성 콘티 만들기"}
+            </button>
+            <button
+              type="button"
+              onClick={() => setPreviewOpen(true)}
+              disabled={!ep?.cuts?.length}
+              className="inline-flex items-center gap-1.5 rounded-full border border-[#DDD6FE] bg-[#F5F3FF] px-3 py-2 text-xs font-semibold text-[#7C3AED] transition hover:bg-[#EDE9FE] disabled:opacity-40"
+            >
+              <Film className="h-3.5 w-3.5" /> <span className="hidden sm:inline">웹툰 미리보기</span>
             </button>
             <button
               onClick={autofill}
               disabled={autofilling}
               className="flex items-center gap-1.5 text-xs font-medium px-4 py-2 rounded-full border border-[#EBE7E0] text-[#7A7067] hover:bg-[#F4F1EC] transition-all duration-200 disabled:opacity-50"
             >
-              <Wand2 className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">{autofilling ? "채우는 중..." : "AI 자동채우기"}</span>
+              {autofilling ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Wand2 className="h-3.5 w-3.5" />}
+              <span className="hidden sm:inline">{autofilling ? "에피소드 작성 중" : "AI 자동채우기"}</span>
             </button>
             <button
               onClick={save}
@@ -573,13 +683,13 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
         </div>
       </header>
 
-      <MobileStepBar currentStep={project?.currentStep ?? 1} activeStep={4} projectId={id} isDirty={isDirty} />
+      <MobileStepBar currentStep={project?.currentStep ?? 1} activeStep={6} projectId={id} isDirty={isDirty} />
 
       <div className="max-w-7xl mx-auto px-4 py-6 flex gap-5">
         {/* Left sidebar */}
         <aside className="hidden lg:block w-52 flex-shrink-0 space-y-3 sticky top-20 self-start">
           <div className="bg-white rounded-2xl border border-[#EBE7E0] p-4 shadow-[0_2px_12px_rgba(0,0,0,0.04)]">
-            <StepIndicator currentStep={project?.currentStep ?? 1} activeStep={4} projectId={id} isDirty={isDirty} />
+            <StepIndicator currentStep={project?.currentStep ?? 1} activeStep={6} projectId={id} isDirty={isDirty} />
           </div>
 
           <div className="bg-white rounded-2xl border border-[#EBE7E0] p-4 shadow-[0_2px_12px_rgba(0,0,0,0.04)]">
@@ -609,9 +719,11 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
         </aside>
 
         <main className="flex-1 min-w-0 space-y-4">
+          <StageIntro stage="episodes" />
+          {ep && !ep.script.trim() && <p className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-xs leading-6">아직 이 화의 대본이 없어요. 회차 · 대본에서 장면의 흐름을 먼저 정하면 컷을 나누기 쉬워요.</p>}
           <div className="flex items-center justify-between mb-2">
             <div>
-              <p className="text-[10px] font-medium text-[#7C3AED] uppercase tracking-widest mb-1">Step 04</p>
+              <p className="text-[10px] font-medium text-[#7C3AED] uppercase tracking-widest mb-1">Step 06</p>
               <h1 className="text-xl font-bold text-[#1A1A1A] tracking-tight">{ep?.episodeNumber}화 콘티 제작</h1>
             </div>
             <label className="flex items-center gap-2 text-xs text-[#7A7067] cursor-pointer">
@@ -625,10 +737,18 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
             </label>
           </div>
 
+          <AiActivityBanner
+            active={autofilling || bulkLayoutGenerating || layoutGeneratingIds.size > 0}
+            title={bulkLayoutGenerating ? "AI가 여러 컷의 콘티를 만들고 있어요" : layoutGeneratingIds.size > 0 ? "AI가 컷의 구도와 레이어를 만들고 있어요" : "AI가 에피소드 내용을 채우고 있어요"}
+            messages={bulkLayoutGenerating || layoutGeneratingIds.size > 0
+              ? ["각 컷의 장면 설명과 등장인물을 확인하고 있어요.", "카메라 구도와 캐릭터 배치를 설계하고 있어요.", "배경·캐릭터·소품 레이어를 순서대로 그리고 있어요.", "생성된 레이어와 실제 포즈를 맞추고 있어요."]
+              : ["아이디어 대화와 전체 줄거리를 읽고 있어요.", "각 화의 제목과 줄거리를 구성하고 있어요.", "에피소드 흐름을 입력란에 반영하고 있어요."]}
+          />
+
           {noIdeaChat && (
             <div className="bg-orange-50 border border-orange-200 rounded-xl px-4 py-2.5 flex items-center gap-2">
               <Wand2 className="w-3.5 h-3.5 text-orange-500 flex-shrink-0" />
-              <span className="text-xs text-orange-600">먼저 1단계 아이디어 발굴에서 AI와 대화해주세요</span>
+              <span className="text-xs text-orange-600">작품을 불러오지 못했어요. 대시보드에서 다시 열어 주세요.</span>
             </div>
           )}
 
@@ -748,28 +868,18 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
               ) : (
                 <div className="space-y-3">
                   {ep.cuts.map((cut, cutIdx) => (
-                    <div key={cut.id} className="border border-[#EBE7E0] rounded-xl overflow-hidden">
+                    <div key={cut.id} className="relative rounded-xl border border-[#EBE7E0] bg-white">
                       <div className="flex flex-col gap-2 px-4 py-2.5 bg-[#FBF9F6] border-b border-[#EBE7E0] sm:flex-row sm:items-center sm:justify-between">
                         <div className="flex flex-wrap items-center gap-2 sm:gap-3">
                           <span className="text-xs font-bold text-[#7C3AED] w-10">컷 {cutIdx + 1}</span>
-                          <select
+                          <ShotSelector
                             value={cut.angle}
-                            onChange={(e) => updateCut(cutIdx, "angle", e.target.value)}
-                            className={selectClass + " w-36"}
-                          >
-                            {ANGLES.map((a) => <option key={a} value={a}>{a}</option>)}
-                          </select>
-                          <select
+                            onChange={(angle) => updateCut(cutIdx, "angle", angle)}
+                          />
+                          <AspectRatioSelector
                             value={cut.aspectRatio}
-                            onChange={(e) => changeAspectRatio(cutIdx, e.target.value as PanelAspectRatio)}
-                            className={selectClass + " w-24"}
-                            title="컷 비율"
-                          >
-                            <option value="4:3">가로 4:3</option>
-                            <option value="3:4">세로 3:4</option>
-                            <option value="1:1">정사각형</option>
-                            <option value="9:16">세로 9:16</option>
-                          </select>
+                            onChange={(aspectRatio) => changeAspectRatio(cutIdx, aspectRatio)}
+                          />
                         </div>
                         <div className="flex items-center justify-end gap-2">
                           <button
@@ -794,6 +904,10 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
                       </div>
 
                       <div className="p-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <label className="text-xs font-semibold">이 컷의 목적<Input className="mt-2" value={cut.purpose ?? ""} onChange={e => updateCut(cutIdx, "purpose", e.target.value)} placeholder="정보 / 감정 / 행동 / 반전 준비" /></label>
+                        <label className="text-xs font-semibold">전할 감정<Input className="mt-2" value={cut.emotion ?? ""} onChange={e => updateCut(cutIdx, "emotion", e.target.value)} placeholder="호기심 → 긴장" /></label>
+                        <label className="text-xs font-semibold">다음 컷까지 여백<select value={cut.scrollGap ?? "normal"} onChange={e => updateCut(cutIdx, "scrollGap", e.target.value)} className="mt-2 block w-full rounded-lg border border-[#EBE7E0] bg-white p-2"><option value="short">짧게 · 빠른 행동 / 대화</option><option value="normal">보통 · 자연스러운 흐름</option><option value="long">길게 · 침묵 / 긴장 / 전환</option></select></label>
+                        <label className="text-xs font-semibold">이어져야 하는 설정<Input className="mt-2" value={cut.continuityNotes ?? ""} onChange={e => updateCut(cutIdx, "continuityNotes", e.target.value)} placeholder="남색 가디건, 왼손의 일기장, 비 오는 오후" /></label>
                         <div className="col-span-2">
                           <label className="block text-xs font-semibold text-[#7A7067] mb-1.5">장면 묘사</label>
                           <Textarea
@@ -896,11 +1010,14 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
                                 .filter((layer) => ["background", "character", "prop"].includes(layer.type) && Boolean(layer.assetId) && layer.assetSourceHash !== storyboardLayerHash({ ...project!, episodes }, ep, cut, layer.id))
                                 .map((layer) => layer.id))}
                               generatingLayerIds={layerGeneratingIds}
+                              detectingAllPoses={poseDetectingIds.has(cut.id)}
                               sceneAssetId={cut.sceneImageAssetId}
                               sceneStale={Boolean(cut.sceneImageAssetId && project && cut.sceneSourceHash !== sceneHash({ ...project, episodes }, ep, cut))}
                               generatingScene={sceneGeneratingIds.has(cut.id)}
                               onChange={(storyboard: StoryboardDocument) => replaceCut(cutIdx, (current) => ({ ...current, storyboard }))}
                               onRegenerateLayer={(layerId) => regenerateStoryboardLayer(cutIdx, layerId)}
+                              onDetectAllPoses={() => detectAllCharacterPoses(cutIdx)}
+                              onSetPoseReference={(layerId, file) => setPoseReference(cutIdx, layerId, file)}
                               onGenerateScene={() => generateScene(cutIdx)}
                             />
                           ) : (
@@ -947,7 +1064,7 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
               onClick={handleNext}
               className="flex items-center gap-2 text-xs font-semibold px-5 py-2.5 rounded-full bg-[#7C3AED] text-white hover:bg-[#6D28D9] transition-all duration-300"
             >
-              다음: 대본 작성 <ArrowRight className="w-3.5 h-3.5" />
+              다음: 검수 · 완성 <ArrowRight className="w-3.5 h-3.5" />
             </button>
           </div>
         </main>
@@ -960,11 +1077,18 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
           description="아이디어 발굴 대화 내용을 바탕으로 AI가 각 화의 제목과 줄거리를 자동으로 채워드릴 수 있어요."
           onAutofill={() => { setShowEmptyModal(false); autofill(); }}
           onAskMentor={() => { setShowEmptyModal(false); mobileChatRef.current?.openAndFocus(); }}
-          onGoAnyway={() => { setShowEmptyModal(false); router.push(`/project/${id}/script`); }}
+          onGoAnyway={() => { setShowEmptyModal(false); router.push(`/project/${id}/submit`); }}
           onClose={() => setShowEmptyModal(false)}
           autofilling={autofilling}
         />
       )}
+
+      <WebtoonPreviewModal
+        open={previewOpen}
+        title={`${ep?.episodeNumber ?? 1}화${ep?.title ? ` · ${ep.title}` : ""}`}
+        cuts={ep?.cuts ?? []}
+        onClose={() => setPreviewOpen(false)}
+      />
 
       <MobileChatSheet
         ref={mobileChatRef}

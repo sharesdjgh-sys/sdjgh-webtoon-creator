@@ -13,13 +13,13 @@ interface StepIndicatorProps {
 
 export default function StepIndicator({ currentStep, activeStep, projectId, isDirty }: StepIndicatorProps) {
   const active = activeStep ?? currentStep;
-  const progress = Math.round(((currentStep - 1) / (STEPS.length - 1)) * 100);
+  const progress = Math.round((active / STEPS.length) * 100);
 
   return (
     <div className="w-full">
       <div className="flex items-center justify-between mb-3">
-        <span className="text-[10px] font-medium text-[#ADA8A0] uppercase tracking-wider">진행률</span>
-        <span className="text-xs font-bold text-[#7C3AED]">{progress}%</span>
+        <span className="text-[10px] font-medium text-[#ADA8A0] uppercase tracking-wider">제작 순서</span>
+        <span className="text-xs font-bold text-[#7C3AED]">{active} / {STEPS.length}</span>
       </div>
       <div className="w-full bg-[#F4F1EC] rounded-full h-1.5 mb-5">
         <div
@@ -30,9 +30,9 @@ export default function StepIndicator({ currentStep, activeStep, projectId, isDi
 
       <div className="space-y-1">
         {STEPS.map((step) => {
-          const isDone = step.id < active;
+          const isDone = false; // Visiting a page does not complete its work.
           const isCurrent = step.id === active;
-          const isClickable = step.id <= currentStep && !!projectId;
+          const isClickable = !!projectId;
           const href = `/project/${projectId}/${step.route}`;
 
           const inner = (

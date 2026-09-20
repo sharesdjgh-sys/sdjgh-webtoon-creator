@@ -18,9 +18,9 @@ export default function MobileStepBar({ currentStep, activeStep, projectId, isDi
     <div className="lg:hidden bg-white border-b border-[#EBE7E0] px-4 py-2.5 sticky top-[57px] z-30">
       <div className="flex items-center gap-2 overflow-x-auto scrollbar-none">
         {STEPS.map((step) => {
-          const isDone = step.id < active;
+          const isDone = false; // Visiting a page does not complete its work.
           const isCurrent = step.id === active;
-          const isClickable = step.id <= currentStep;
+          const isClickable = true;
           const href = `/project/${projectId}/${step.route}`;
 
           const inner = (

@@ -1,6 +1,6 @@
 "use client";
 
-import { Wand2, Sparkles, ArrowRight, X } from "lucide-react";
+import { Wand2, Sparkles, ArrowRight, RefreshCw, X } from "lucide-react";
 
 interface EmptyContentModalProps {
   title: string;
@@ -48,10 +48,10 @@ export default function EmptyContentModal({
             disabled={autofilling}
             className="w-full flex items-center gap-3 px-4 py-3 rounded-2xl bg-[#7C3AED] text-white hover:bg-[#6D28D9] transition-all duration-200 disabled:opacity-60 text-left"
           >
-            <Wand2 className="w-4 h-4 flex-shrink-0" />
+            {autofilling ? <RefreshCw className="h-4 w-4 flex-shrink-0 animate-spin" /> : <Wand2 className="w-4 h-4 flex-shrink-0" />}
             <div>
-              <p className="text-xs font-semibold">{autofilling ? "AI가 채우는 중..." : "AI 자동채우기"}</p>
-              <p className="text-[10px] text-white/70">아이디어 발굴 대화를 바탕으로 자동 작성</p>
+              <p className="text-xs font-semibold">{autofilling ? "AI가 내용을 작성하고 있어요" : "AI 자동채우기"}</p>
+              <p className="text-[10px] text-white/70">{autofilling ? "응답이 올 때까지 창을 닫지 마세요" : "아이디어 발굴 대화를 바탕으로 자동 작성"}</p>
             </div>
           </button>
 

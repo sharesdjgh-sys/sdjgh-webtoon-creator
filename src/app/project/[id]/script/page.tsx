@@ -2,14 +2,20 @@
 
 import { useState, useEffect, use, useRef } from "react";
 import Link from "next/link";
+import SettingFields from "@/components/creation/SettingFields";
+import { EPISODE_FIELDS } from "@/lib/creation";
+import { Input } from "@/components/ui/input";
+import { autofillPayload } from "@/lib/autofillContext";
+import StageIntro from "@/components/creation/StageIntro";
 import { Textarea } from "@/components/ui/textarea";
 import StepIndicator from "@/components/progress-tracker/StepIndicator";
 import MobileChatSheet, { type MobileChatSheetHandle } from "@/components/mobile/MobileChatSheet";
 import MobileStepBar from "@/components/MobileStepBar";
-import { Save, ArrowRight, ArrowLeft, CheckCircle, Sparkles, Check, Download, FileText, Plus, ChevronDown, ChevronUp, Users, Wand2, Eye, PenLine } from "lucide-react";
+import { Save, ArrowRight, ArrowLeft, CheckCircle, Sparkles, Check, Download, FileText, Plus, ChevronDown, ChevronUp, Users, Wand2, Eye, PenLine, RefreshCw } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import { getProject, updateProject, type Episode, type Cut, type Project, type Character, type ChatMessage } from "@/lib/storage";
 import { downloadEpisode, downloadAllEpisodes } from "@/lib/download";
+import AiActivityBanner from "@/components/AiActivityBanner";
 
 function CharacterPanel({ characters }: { characters: Character[] }) {
   const [open, setOpen] = useState(true);
@@ -56,6 +62,7 @@ export default function ScriptPage({ params }: { params: Promise<{ id: string }>
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [autofilling, setAutofilling] = useState(false);
+  const [aiError, setAiError] = useState("");
   const [isDirty, setIsDirty] = useState(false);
   const [noIdeaChat, setNoIdeaChat] = useState(false);
   const [previewMode, setPreviewMode] = useState(false);
@@ -89,6 +96,7 @@ export default function ScriptPage({ params }: { params: Promise<{ id: string }>
     };
     setEpisodes((e) => [...e, newEp]);
     setActiveEp(episodes.length);
+    setIsDirty(true);
   };
 
   const save = () => {
@@ -105,23 +113,28 @@ export default function ScriptPage({ params }: { params: Promise<{ id: string }>
 
   const autofill = async () => {
     const p = getProject(id);
-    if (!p?.ideaChat || p.ideaChat.length === 0) {
+    if (!p) {
       setNoIdeaChat(true);
       setTimeout(() => setNoIdeaChat(false), 3000);
       return;
     }
+    const targetEpisodeIndex = activeEp;
     setAutofilling(true);
+    setAiError("");
     try {
       const res = await fetch("/api/ai/autofill", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ideaChat: p.ideaChat, step: "script" }),
+        body: JSON.stringify(autofillPayload({ ...p, episodes }, "script", episodes[activeEp])),
       });
       const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "AI 초안 생성에 실패했어요.");
       if (data.script) {
-        const existing = episodes[activeEp]?.script ?? "";
-        updateEp("script", existing ? `${existing}\n\n---\n\n${data.script}` : data.script);
+        setEpisodes(current => current.map((episode, index) => index === targetEpisodeIndex ? { ...episode, script: episode.script ? `${episode.script}\n\n---\n\n${data.script}` : data.script } : episode));
+        setIsDirty(true);
       }
+    } catch (error) {
+      setAiError(error instanceof Error ? error.message : "AI 초안 생성에 실패했어요.");
     } finally {
       setAutofilling(false);
     }
@@ -210,6 +223,8 @@ export default function ScriptPage({ params }: { params: Promise<{ id: string }>
         </aside>
 
         <main className="flex-1 min-w-0 space-y-4">
+          <StageIntro stage="script" />
+          {aiError && <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-xs text-red-700">{aiError}</p>}
           <div className="flex items-center justify-between mb-2">
             <div>
               <p className="text-[10px] font-medium text-[#7C3AED] uppercase tracking-widest mb-1">Step 05</p>
@@ -222,14 +237,20 @@ export default function ScriptPage({ params }: { params: Promise<{ id: string }>
                 onChange={(e) => updateEp("isCompleted", e.target.checked)}
                 className="rounded accent-[#7C3AED]"
               />
-              이 화 완료됨
+              대본 초안 완료
             </label>
           </div>
+
+          <AiActivityBanner
+            active={autofilling}
+            title="AI가 대본을 작성하고 있어요"
+            messages={["회차 줄거리와 등장인물을 확인하고 있어요.", "장면 순서와 감정 흐름을 구성하고 있어요.", "대사와 행동 지문을 작성하고 있어요.", "완성된 대본을 편집기에 반영하고 있어요."]}
+          />
 
           {noIdeaChat && (
             <div className="bg-orange-50 border border-orange-200 rounded-xl px-4 py-2.5 flex items-center gap-2">
               <Wand2 className="w-3.5 h-3.5 text-orange-500 flex-shrink-0" />
-              <span className="text-xs text-orange-600">먼저 1단계 아이디어 발굴에서 AI와 대화해주세요</span>
+              <span className="text-xs text-orange-600">작품을 불러오지 못했어요. 대시보드에서 다시 열어 주세요.</span>
             </div>
           )}
 
@@ -257,6 +278,12 @@ export default function ScriptPage({ params }: { params: Promise<{ id: string }>
             </button>
           </div>
 
+          <section className="rounded-2xl border border-[#EBE7E0] bg-white p-5 space-y-4">
+            <h2 className="text-sm font-bold">대본 전에 정하는 회차 설계</h2>
+            <label className="block text-xs font-semibold">회차 제목<Input className="mt-2" value={ep?.title ?? ""} onChange={event => updateEp("title", event.target.value)} /></label>
+            <label className="block text-xs font-semibold">회차 시놉시스<Textarea className="mt-2" rows={4} value={ep?.synopsis ?? ""} onChange={event => updateEp("synopsis", event.target.value)} placeholder="시작 → 주요 사건 → 최고조 → 마지막 장면" /></label>
+            <SettingFields fields={EPISODE_FIELDS} values={Object.fromEntries(EPISODE_FIELDS.map(field => [field.key, ep?.[field.key]]))} onChange={(key, value) => updateEp(key as keyof Episode, value)} />
+          </section>
           {/* 화 정보 */}
           {ep?.title && (
             <div className="bg-[#F4F1EC] rounded-2xl border border-[#EBE7E0] px-5 py-3 flex items-center gap-3">
@@ -301,7 +328,7 @@ export default function ScriptPage({ params }: { params: Promise<{ id: string }>
                   disabled={autofilling}
                   className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-full border border-[#EBE7E0] text-[#7A7067] hover:bg-[#F4F1EC] transition-all duration-200 disabled:opacity-50"
                 >
-                  <Wand2 className="w-3.5 h-3.5" /> {autofilling ? "작성 중..." : "AI 자동채우기"}
+                  {autofilling ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Wand2 className="h-3.5 w-3.5" />} {autofilling ? "대본 작성 중" : "AI 자동채우기"}
                 </button>
               </div>
             </div>
@@ -348,9 +375,9 @@ export default function ScriptPage({ params }: { params: Promise<{ id: string }>
           </div>
 
           <div className="flex justify-between gap-3">
-            <Link href={`/project/${id}/episodes`}>
+            <Link href={`/project/${id}/story`} onClick={event => { if (isDirty && !confirm("저장하지 않은 변경사항이 있어요. 이동하시겠어요?")) event.preventDefault(); }}>
               <button className="flex items-center gap-2 text-xs font-medium px-4 py-2.5 rounded-full border border-[#EBE7E0] text-[#7A7067] hover:bg-[#F4F1EC] transition-all duration-200">
-                <ArrowLeft className="w-3.5 h-3.5" /> 이전: 콘티 제작
+                <ArrowLeft className="w-3.5 h-3.5" /> 이전: 스토리 구조
               </button>
             </Link>
             <div className="flex gap-3">
@@ -361,9 +388,9 @@ export default function ScriptPage({ params }: { params: Promise<{ id: string }>
               >
                 저장
               </button>
-              <Link href={`/project/${id}/submit`}>
+              <Link href={`/project/${id}/episodes`} onClick={save}>
                 <button className="flex items-center gap-2 text-xs font-semibold px-5 py-2.5 rounded-full bg-[#7C3AED] text-white hover:bg-[#6D28D9] transition-all duration-300">
-                  다음: 제출 준비 <ArrowRight className="w-3.5 h-3.5" />
+                  다음: 콘티 · 작화 <ArrowRight className="w-3.5 h-3.5" />
                 </button>
               </Link>
             </div>

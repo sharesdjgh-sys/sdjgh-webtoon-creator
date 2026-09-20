@@ -2,6 +2,10 @@
 
 import { useState, useEffect, use, useRef } from "react";
 import Link from "next/link";
+import SettingFields from "@/components/creation/SettingFields";
+import { STORY_FIELDS } from "@/lib/creation";
+import { autofillPayload } from "@/lib/autofillContext";
+import StageIntro from "@/components/creation/StageIntro";
 import { useRouter } from "next/navigation";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
@@ -9,18 +13,20 @@ import StepIndicator from "@/components/progress-tracker/StepIndicator";
 import EmptyContentModal from "@/components/EmptyContentModal";
 import MobileChatSheet, { type MobileChatSheetHandle } from "@/components/mobile/MobileChatSheet";
 import MobileStepBar from "@/components/MobileStepBar";
-import { Save, ArrowRight, Sparkles, Check, Download, Wand2 } from "lucide-react";
+import { Save, ArrowRight, Sparkles, Check, Download, Wand2, RefreshCw } from "lucide-react";
 import { getProject, updateProject, type Project, type ChatMessage } from "@/lib/storage";
 import { downloadStory } from "@/lib/download";
+import AiActivityBanner from "@/components/AiActivityBanner";
 
 export default function StoryPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const router = useRouter();
   const [project, setProject] = useState<Project | null>(null);
-  const [story, setStory] = useState({ logline: "", theme: "", setting: "", plotOutline: "", totalEpisodes: "1" });
+  const [story, setStory] = useState<Project["story"]>({ logline: "", theme: "", setting: "", plotOutline: "", totalEpisodes: "1" });
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [autofilling, setAutofilling] = useState(false);
+  const [aiError, setAiError] = useState("");
   const [noIdeaChat, setNoIdeaChat] = useState(false);
   const [showEmptyModal, setShowEmptyModal] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
@@ -29,7 +35,7 @@ export default function StoryPage({ params }: { params: Promise<{ id: string }> 
   useEffect(() => {
     const p = getProject(id);
     if (p) {
-      const updated = { ...p, currentStep: Math.max(2, p.currentStep) };
+      const updated = { ...p, currentStep: Math.max(4, p.currentStep) };
       if (updated.currentStep !== p.currentStep) updateProject(id, { currentStep: updated.currentStep });
       setProject(updated);
       setStory(p.story);
@@ -40,7 +46,7 @@ export default function StoryPage({ params }: { params: Promise<{ id: string }> 
     setSaving(true);
     updateProject(id, {
       story: { ...story },
-      currentStep: Math.max(2, project?.currentStep ?? 1),
+      currentStep: Math.max(4, project?.currentStep ?? 1),
     });
     setSaving(false); setSaved(true); setIsDirty(false);
     setTimeout(() => setSaved(false), 2000);
@@ -48,29 +54,35 @@ export default function StoryPage({ params }: { params: Promise<{ id: string }> 
 
   const autofill = async () => {
     const p = getProject(id);
-    if (!p?.ideaChat || p.ideaChat.length === 0) {
+    if (!p) {
       setNoIdeaChat(true);
       setTimeout(() => setNoIdeaChat(false), 3000);
       return;
     }
     setAutofilling(true);
+    setAiError("");
     try {
       const res = await fetch("/api/ai/autofill", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ideaChat: p.ideaChat, step: "story" }),
+        body: JSON.stringify(autofillPayload({ ...p, story }, "story")),
       });
       const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "AI 초안 생성에 실패했어요.");
       if (data.logline !== undefined) {
-        setStory({
+        setStory(current => ({
+          ...current,
           logline: data.logline ?? "",
           theme: data.theme ?? "",
           setting: data.setting ?? "",
           plotOutline: data.plotOutline ?? "",
           totalEpisodes: data.totalEpisodes ?? "1",
-        });
+          ...Object.fromEntries(STORY_FIELDS.map(field => [field.key, data[field.key] ?? current[field.key] ?? ""])),
+        }));
         setIsDirty(true);
       }
+    } catch (error) {
+      setAiError(error instanceof Error ? error.message : "AI 초안 생성에 실패했어요.");
     } finally {
       setAutofilling(false);
     }
@@ -82,7 +94,7 @@ export default function StoryPage({ params }: { params: Promise<{ id: string }> 
       setShowEmptyModal(true);
     } else {
       save();
-      router.push(`/project/${id}/characters`);
+      router.push(`/project/${id}/script`);
     }
   };
 
@@ -111,8 +123,8 @@ export default function StoryPage({ params }: { params: Promise<{ id: string }> 
               disabled={autofilling}
               className="flex items-center gap-1.5 text-xs font-medium px-4 py-2 rounded-full border border-[#EBE7E0] text-[#7A7067] hover:bg-[#F4F1EC] transition-all duration-200 disabled:opacity-50"
             >
-              <Wand2 className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">{autofilling ? "채우는 중..." : "AI 자동채우기"}</span>
+              {autofilling ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Wand2 className="h-3.5 w-3.5" />}
+              <span className="hidden sm:inline">{autofilling ? "스토리 작성 중" : "AI 자동채우기"}</span>
             </button>
             <button
               onClick={save}
@@ -125,25 +137,33 @@ export default function StoryPage({ params }: { params: Promise<{ id: string }> 
         </div>
       </header>
 
-      <MobileStepBar currentStep={project?.currentStep ?? 1} activeStep={2} projectId={id} isDirty={isDirty} />
+      <MobileStepBar currentStep={project?.currentStep ?? 1} activeStep={4} projectId={id} isDirty={isDirty} />
 
       <div className="max-w-7xl mx-auto px-4 py-6 flex gap-5">
         <aside className="hidden lg:block w-52 flex-shrink-0">
           <div className="bg-white rounded-2xl border border-[#EBE7E0] p-4 sticky top-20 shadow-[0_2px_12px_rgba(0,0,0,0.04)]">
-            <StepIndicator currentStep={project?.currentStep ?? 1} activeStep={2} projectId={id} isDirty={isDirty} />
+            <StepIndicator currentStep={project?.currentStep ?? 1} activeStep={4} projectId={id} isDirty={isDirty} />
           </div>
         </aside>
 
         <main className="flex-1 min-w-0 space-y-4">
+          <StageIntro stage="story" />
+          {aiError && <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-xs text-red-700">{aiError}</p>}
           <div className="mb-2">
-            <p className="text-[10px] font-medium text-[#7C3AED] uppercase tracking-widest mb-1">Step 02</p>
+            <p className="text-[10px] font-medium text-[#7C3AED] uppercase tracking-widest mb-1">Step 04</p>
             <h1 className="text-xl font-bold text-[#1A1A1A] tracking-tight">스토리 구성</h1>
           </div>
+
+          <AiActivityBanner
+            active={autofilling}
+            title="AI가 스토리를 구성하고 있어요"
+            messages={["아이디어 대화를 읽고 핵심 소재를 찾고 있어요.", "로그라인과 주제를 정리하고 있어요.", "세계관과 전체 줄거리를 연결하고 있어요.", "작성한 내용을 입력란에 반영할 준비를 하고 있어요."]}
+          />
 
           {noIdeaChat && (
             <div className="bg-orange-50 border border-orange-200 rounded-xl px-4 py-2.5 flex items-center gap-2">
               <Wand2 className="w-3.5 h-3.5 text-orange-500 flex-shrink-0" />
-              <span className="text-xs text-orange-600">먼저 1단계 아이디어 발굴에서 AI와 대화해주세요</span>
+              <span className="text-xs text-orange-600">작품을 불러오지 못했어요. 대시보드에서 다시 열어 주세요.</span>
             </div>
           )}
 
@@ -167,10 +187,10 @@ export default function StoryPage({ params }: { params: Promise<{ id: string }> 
           </div>
 
           <div className="bg-white rounded-2xl border border-[#EBE7E0] p-5 shadow-[0_2px_12px_rgba(0,0,0,0.04)]">
-            <label className="block text-xs font-bold text-[#1A1A1A] mb-1">전체 줄거리 (기승전결)</label>
-            <p className="text-xs text-[#ADA8A0] mb-3">이야기의 흐름을 4단계로 정리해보세요</p>
+            <label className="block text-xs font-bold text-[#1A1A1A] mb-1">전체 줄거리 요약</label>
+            <p className="text-xs text-[#ADA8A0] mb-3">아래 다섯 단계 설계를 바탕으로 전체 이야기를 연결해요</p>
             <Textarea
-              placeholder={`기: 주인공 소개와 사건의 발단\n승: 갈등이 심화되는 과정\n전: 가장 큰 위기와 반전\n결: 결말과 해결`}
+              placeholder="일상 → 사건 → 문제 확대 → 가장 큰 선택 → 결과와 변화"
               value={story.plotOutline}
               onChange={(e) => { setStory((s) => ({ ...s, plotOutline: e.target.value })); setIsDirty(true); }}
               rows={10}
@@ -182,6 +202,7 @@ export default function StoryPage({ params }: { params: Promise<{ id: string }> 
             </div>
           </div>
 
+          <section className="rounded-2xl border border-[#EBE7E0] bg-white p-5"><h2 className="mb-4 text-sm font-bold">갈등과 다섯 단계 이야기</h2><SettingFields fields={STORY_FIELDS} values={story} onChange={(key, value) => { setStory(current => ({ ...current, [key]: value })); setIsDirty(true); }} /></section>
           <div className="flex justify-end gap-3">
             <button onClick={save} disabled={saving} className="text-xs font-medium px-4 py-2.5 rounded-full border border-[#EBE7E0] text-[#7A7067] hover:bg-[#F4F1EC] transition-all duration-200 disabled:opacity-50">
               저장
@@ -190,7 +211,7 @@ export default function StoryPage({ params }: { params: Promise<{ id: string }> 
               onClick={handleNext}
               className="flex items-center gap-2 text-xs font-semibold px-5 py-2.5 rounded-full bg-[#7C3AED] text-white hover:bg-[#6D28D9] transition-all duration-300"
             >
-              다음: 캐릭터 설계 <ArrowRight className="w-3.5 h-3.5" />
+              다음: 회차 · 대본 <ArrowRight className="w-3.5 h-3.5" />
             </button>
           </div>
         </main>
@@ -203,7 +224,7 @@ export default function StoryPage({ params }: { params: Promise<{ id: string }> 
           description="아이디어 발굴 대화 내용을 바탕으로 AI가 로그라인, 주제, 배경, 줄거리를 자동으로 채워드릴 수 있어요."
           onAutofill={() => { setShowEmptyModal(false); autofill(); }}
           onAskMentor={() => { setShowEmptyModal(false); mobileChatRef.current?.openAndFocus(); }}
-          onGoAnyway={() => { setShowEmptyModal(false); router.push(`/project/${id}/characters`); }}
+          onGoAnyway={() => { setShowEmptyModal(false); router.push(`/project/${id}/script`); }}
           onClose={() => setShowEmptyModal(false)}
           autofilling={autofilling}
         />

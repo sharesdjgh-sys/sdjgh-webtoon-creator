@@ -1,7 +1,10 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { ChevronLeft, ChevronRight, Lightbulb, BookOpen, Users, Film, PenLine, Trophy } from "lucide-react";
+import { ChevronLeft, ChevronRight, Lightbulb, BookOpen, Users, Film, PenLine, Trophy, Globe } from "lucide-react";
+
+import { STEPS } from "@/lib/utils";
+import { CREATION_GUIDE } from "@/lib/creationGuide";
 
 const STEP_COLORS = [
   "#E8924A",
@@ -10,22 +13,14 @@ const STEP_COLORS = [
   "#D4845A",
   "#7C3AED",
   "#5B8FCA",
+  "#598875",
 ];
 
-const GUIDE_STEPS = [
-  { icon: Lightbulb, step: 1, title: "아이디어 발굴", time: "1~2일", desc: "웹툰의 주제, 장르, 소재를 정하는 단계예요.",
-    tips: ["좋아하는 것, 관심 있는 것에서 시작해요", "일상 속 감동이나 불편함을 소재로 삼아봐요", "대회 주제와 연결될 수 있는 아이디어를 찾아봐요", "AI 멘토와 대화하며 아이디어를 발전시켜봐요"] },
-  { icon: BookOpen, step: 2, title: "스토리 구성", time: "2~3일", desc: "기승전결 구조로 전체 이야기의 뼈대를 세워요.",
-    tips: ["한 줄 소개(로그라인)를 먼저 써봐요", "주인공의 목표가 무엇인지 명확히 해요", "갈등과 위기가 있어야 재미있는 이야기가 돼요", "결말은 주인공이 성장하는 모습을 담아요"] },
-  { icon: Users, step: 3, title: "캐릭터 설계", time: "2일", desc: "독자가 사랑할 입체적인 캐릭터를 만들어요.",
-    tips: ["주인공에게 장점과 단점을 모두 부여해요", "각 캐릭터의 목표와 동기를 명확히 해요", "외모 묘사는 특징적인 요소를 중심으로 구체적으로", "캐릭터 간 관계가 이야기를 더 풍부하게 해요"] },
-  { icon: Film, step: 4, title: "콘티 제작", time: "3~5일", desc: "장면 배치와 연출을 계획하는 단계예요.",
-    tips: ["각 장면의 앵글을 다양하게 활용해요", "클로즈업은 감정 표현, 풀샷은 상황 설명에 효과적", "여백도 연출의 일부예요", "말풍선 위치와 크기가 가독성에 영향을 줘요"] },
-  { icon: PenLine, step: 5, title: "대본 작성", time: "3~5일", desc: "각 장면의 대사와 지문을 완성해요.",
-    tips: ["대사는 자연스럽게, 소리내어 읽어봐요", "나레이션은 꼭 필요한 것만 간결하게", "효과음은 분위기를 살려주는 중요한 요소예요", "각 화는 다음 화가 궁금하게 끝나면 좋아요"] },
-  { icon: Trophy, step: 6, title: "제출 준비", time: "1~2일", desc: "작품을 다듬고 대회 규정에 맞게 준비해요.",
-    tips: ["전체를 처음부터 끝까지 다시 읽어봐요", "오탈자와 문법 오류를 꼼꼼히 확인해요", "대회 파일 형식과 페이지 수 규정을 꼭 확인해요", "작가 노트에 진심을 담아 써봐요"] },
-];
+const ICONS = [Lightbulb, Users, Globe, BookOpen, PenLine, Film, Trophy];
+const GUIDE_STEPS = STEPS.map((step, index) => ({
+  icon: ICONS[index], step: step.id, title: step.label, time: "내 속도로",
+  ...CREATION_GUIDE[step.route],
+}));
 
 export default function GuideCarousel() {
   const [current, setCurrent] = useState(0);
@@ -130,7 +125,7 @@ export default function GuideCarousel() {
                         className="inline-flex items-center gap-1.5 w-fit text-[11px] font-medium px-3 py-1 rounded-full border"
                         style={{ color: c, borderColor: c + "40", backgroundColor: c + "12" }}
                       >
-                        예상 {s.time}
+                        {s.time}
                       </span>
                     </div>
 
