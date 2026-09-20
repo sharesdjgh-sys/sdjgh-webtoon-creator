@@ -74,9 +74,67 @@ assert.ok(payload.ideaChat.length > 0, "manual creators do not need an idea chat
 async function main() {
   const req = body => new Request("http://localhost/api/ai", { method: "POST", body: JSON.stringify(body), headers: { "Content-Type": "application/json" } });
   const autofill = load("src/app/api/ai/autofill/route.ts");
-  assert.equal((await autofill.POST(req(payload))).status, 200);
+  const plan = { title: "문 앞의 단서", synopsis: "일기장의 비밀을 찾는다", goal: "친구 구하기", obstacle: "잠긴 문", turningPoint: "열쇠 발견", endingHook: "문이 열린다" };
+  generated = { ...plan, script: "선택 회차 대본" };
+  const scriptResponse = await autofill.POST(req(payload));
+  assert.equal(scriptResponse.status, 200);
+  const scriptDraft = await scriptResponse.json();
+  assert.equal(scriptDraft.goal, plan.goal);
+  assert.equal(scriptDraft.script, generated.script);
   assert.ok(captured.prompt.includes("3화 대본") && captured.prompt.includes("비밀 찾기") && captured.prompt.includes("확정 단서"));
   assert.equal((await autofill.POST(req({}))).status, 400);
+  const { mergeAiFields, textFields } = load("src/lib/aiFill.ts");
+  const emptyStory = { logline: "", theme: "", setting: "", plotOutline: "", totalEpisodes: "1" };
+  const storyKeys = ["logline", "theme", "setting", "plotOutline", "totalEpisodes", ...load("src/lib/creation.ts").STORY_FIELDS.map(field => field.key)];
+  const snapshot = textFields(emptyStory, storyKeys);
+  assert.equal(snapshot.conflict, "", "legacy/new projects must include missing optional fields in snapshot");
+  assert.equal(mergeAiFields(emptyStory, snapshot, { conflict: "새 갈등", ending: "새 결말" }, "missing").conflict, "새 갈등");
+  const merged = mergeAiFields({ hair: "사용자 수정", eyes: "", outfit: "기존 교복", imageAssetId: "keep" }, { hair: "", eyes: "", outfit: "기존 교복" }, { hair: "AI 머리", eyes: "갈색", outfit: "AI 의상", imageAssetId: "bad" }, "missing");
+  assert.equal(merged.hair, "사용자 수정");
+  assert.equal(merged.eyes, "갈색");
+  assert.equal(merged.outfit, "기존 교복");
+  assert.equal(merged.imageAssetId, "keep");
+  assert.equal(mergeAiFields({ hair: "현재" }, { hair: "현재" }, { hair: "새 초안" }, "replace").hair, "새 초안");
+  assert.equal(mergeAiFields({ hair: "편집 중" }, { hair: "이전" }, { hair: "새 초안" }, "replace").hair, "편집 중");
+
+  const fields = load("src/lib/autofillFields.ts");
+  const profile = Object.fromEntries(Object.keys(fields.visualProfileSchema.shape).map(key => [key, key + " 외형"]));
+  const selected = data.createCharacter({ name: "선택한 인물", appearance: "은색 단발", personality: "호기심", imageInstructions: "왼손 검은 장갑" });
+  const profilePayload = autofillPayload({ ...current, characters: [selected] }, "visualProfile", undefined, selected);
+  generated = profile;
+  const profileResponse = await autofill.POST(req(profilePayload));
+  assert.equal(profileResponse.status, 200);
+  assert.equal(Object.keys((await profileResponse.json()).visualProfile).length, 12);
+  assert.ok(captured.prompt.includes("선택한 인물") && captured.prompt.includes("은색 단발") && captured.prompt.includes("왼손 검은 장갑"));
+  assert.equal((await autofill.POST(req({ ...profilePayload, character: undefined }))).status, 400);
+  generated = { hair: "불완전한 응답" };
+  assert.equal((await autofill.POST(req(profilePayload))).status, 500, "partial visual profile must be rejected");
+
+  generated = Object.fromEntries(Object.keys(fields.worldDraftSchema.shape).map(key => [key, key + " 설정"]));
+  generated.confirmed = "AI가 확정했다고 주장";
+  const worldResponse = await autofill.POST(req(autofillPayload(current, "world")));
+  assert.equal(worldResponse.status, 200);
+  const worldDraft = (await worldResponse.json()).world;
+  assert.equal(worldDraft.era, "era 설정");
+  assert.ok(!Object.hasOwn(worldDraft, "confirmed"), "AI must never overwrite user-confirmed facts");
+  assert.ok(captured.prompt.includes("새로운 아이디어") && captured.prompt.includes("확정 단서"));
+
+  generated = plan;
+  assert.equal((await autofill.POST(req({ ...payload, step: "episodePlan" }))).status, 200);
+  generated = { authorNote: "이 작품은 우정을 이야기합니다.", isCompleted: true, reviewChecks: { art: true } };
+  const noteResponse = await autofill.POST(req(autofillPayload(current, "authorNote")));
+  assert.deepEqual(Object.keys(await noteResponse.json()), ["authorNote"]);
+  generated = { characters: [{ name: "초안 인물", role: "주인공", age: "17", appearance: "은색 단발", personality: "호기심", backstory: "마을에서 자랐다", goal: "탐험", fear: "고립", weakness: "성급함", growth: "협력", speechStyle: "짧고 명랑함", relationships: "친구와 동행", visualProfile: profile }] };
+  const castResponse = await autofill.POST(req(autofillPayload(current, "character")));
+  assert.equal(castResponse.status, 200);
+  assert.equal((await castResponse.json()).characters[0].visualProfile.hair, profile.hair);
+  generated = { episodes: [plan] };
+  const episodesResponse = await autofill.POST(req(autofillPayload(current, "episodes")));
+  assert.equal(episodesResponse.status, 200);
+  assert.equal((await episodesResponse.json()).episodes[0].endingHook, plan.endingHook);
+  assert.equal((await autofill.POST(req({ ...payload, step: "not-a-stage" }))).status, 400);
+  console.log("PASS: world, selected visual profile, complete character profiles, episode planning, script metadata, author note; preserve edits/images/confirmed facts; reject incomplete AI output");
+
   const chat = load("src/app/api/ai/chat/route.ts");
   assert.equal((await chat.POST(req({ messages: [{ role: "user", content: "피드백" }], step: "story", creationMode: "manual", context: packed }))).status, 200);
   assert.ok(captured.system.includes("직접 만들기:"));

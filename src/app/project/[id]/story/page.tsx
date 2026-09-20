@@ -4,6 +4,7 @@ import { useState, useEffect, use, useRef } from "react";
 import Link from "next/link";
 import SettingFields from "@/components/creation/SettingFields";
 import { STORY_FIELDS } from "@/lib/creation";
+import { mergeAiFields, textFields } from "@/lib/aiFill";
 import { autofillPayload } from "@/lib/autofillContext";
 import StageIntro from "@/components/creation/StageIntro";
 import { useRouter } from "next/navigation";
@@ -59,6 +60,9 @@ export default function StoryPage({ params }: { params: Promise<{ id: string }> 
       setTimeout(() => setNoIdeaChat(false), 3000);
       return;
     }
+    const before = textFields(story, ["logline", "theme", "setting", "plotOutline", "totalEpisodes", ...STORY_FIELDS.map(field => field.key)]);
+    const replace = Boolean(story.logline.trim() || story.plotOutline.trim() || STORY_FIELDS.some(field => story[field.key]?.trim()));
+    if (replace && !window.confirm("스토리 설정을 AI의 새 초안으로 바꿀까요? 요청 중 수정한 항목은 유지됩니다.")) return;
     setAutofilling(true);
     setAiError("");
     try {
@@ -70,15 +74,7 @@ export default function StoryPage({ params }: { params: Promise<{ id: string }> 
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "AI 초안 생성에 실패했어요.");
       if (data.logline !== undefined) {
-        setStory(current => ({
-          ...current,
-          logline: data.logline ?? "",
-          theme: data.theme ?? "",
-          setting: data.setting ?? "",
-          plotOutline: data.plotOutline ?? "",
-          totalEpisodes: data.totalEpisodes ?? "1",
-          ...Object.fromEntries(STORY_FIELDS.map(field => [field.key, data[field.key] ?? current[field.key] ?? ""])),
-        }));
+        setStory(current => mergeAiFields(current, before, data, replace ? "replace" : "missing"));
         setIsDirty(true);
       }
     } catch (error) {

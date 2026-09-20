@@ -2,6 +2,8 @@
 
 import { useState, useEffect, use, useRef } from "react";
 import Link from "next/link";
+import AiFillButton from "@/components/creation/AiFillButton";
+import { mergeAiFields } from "@/lib/aiFill";
 import SettingFields from "@/components/creation/SettingFields";
 import { CHARACTER_STORY_FIELDS } from "@/lib/creation";
 import { autofillPayload } from "@/lib/autofillContext";
@@ -239,11 +241,11 @@ export default function CharactersPage({ params }: { params: Promise<{ id: strin
       const res = await fetch("/api/ai/autofill", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(autofillPayload(p, "character")),
+        body: JSON.stringify(autofillPayload({ ...p, characters, artDirection: project?.artDirection ?? p.artDirection }, "character")),
       });
-      if (!res.ok) throw new Error("AI 자동채우기 요청에 실패했습니다.");
-      setAutofillProgress((current) => current ? { ...current, stage: "applying" } : current);
       const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "AI 자동채우기 요청에 실패했습니다.");
+      setAutofillProgress((current) => current ? { ...current, stage: "applying" } : current);
       if (Array.isArray(data.characters) && data.characters.length > 0) {
         setCharacters(current => [...current, ...data.characters.map((character: Partial<Character>) => createCharacter(character))]);
         setEditIdx(null);
@@ -587,6 +589,20 @@ export default function CharactersPage({ params }: { params: Promise<{ id: strin
                           {ch.imageAssetId && ch.imageSourceHash !== characterSheetHash({ ...project!, characters } as Project, ch) && (
                             <span className="text-[10px] text-orange-600 bg-orange-100 px-2 py-1 rounded-full flex-shrink-0">설정 변경됨</span>
                           )}
+                        </div>
+                        <div className="mb-4 space-y-2">
+                          <p className="text-[11px] leading-6 text-[#7A7067]">위에서 입력한 이름·나이·외모·성격·배경과 기획을 바탕으로 AI가 외형 고정 정보를 구체화해요. 이미지는 별도로 생성합니다.</p>
+                          <AiFillButton label="외형 고정 정보 AI 채우기" resultKey="visualProfile" disabled={autofilling || generatingIds.has(ch.id)}
+                            getSnapshot={() => {
+                              const latest = getProject(id);
+                              if (!latest) throw new Error("작품을 다시 열어 주세요.");
+                              return { fields: { ...ch.visualProfile }, payload: autofillPayload({ ...latest, characters, artDirection: project?.artDirection ?? latest.artDirection }, "visualProfile", undefined, ch) };
+                            }}
+                            onApply={(draft, before, mode) => {
+                              setCharacters(current => current.map(character => character.id === ch.id
+                                ? { ...character, visualProfile: mergeAiFields(character.visualProfile, before, draft, mode) } : character));
+                              setIsDirty(true);
+                            }} />
                         </div>
                         <details className="rounded-xl border border-[#E4DDF8] bg-white mb-3" open>
                           <summary className="cursor-pointer select-none px-3 py-2.5 text-[11px] font-bold text-[#5B21B6]">

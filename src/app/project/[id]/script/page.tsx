@@ -2,6 +2,8 @@
 
 import { useState, useEffect, use, useRef } from "react";
 import Link from "next/link";
+import AiFillButton from "@/components/creation/AiFillButton";
+import { mergeAiFields } from "@/lib/aiFill";
 import SettingFields from "@/components/creation/SettingFields";
 import { EPISODE_FIELDS } from "@/lib/creation";
 import { Input } from "@/components/ui/input";
@@ -119,6 +121,9 @@ export default function ScriptPage({ params }: { params: Promise<{ id: string }>
       return;
     }
     const targetEpisodeIndex = activeEp;
+    const before = Object.fromEntries(["title", "synopsis", ...EPISODE_FIELDS.map(field => field.key), "script"].map(key => [key, String((episodes[activeEp] as unknown as Record<string, unknown>)[key] ?? "")]));
+    const replaceScript = Boolean(before.script.trim());
+    if (replaceScript && !window.confirm("현재 대본을 AI의 새 초안으로 바꿀까요? 기존 회차 설정과 콘티는 유지됩니다.")) return;
     setAutofilling(true);
     setAiError("");
     try {
@@ -130,7 +135,11 @@ export default function ScriptPage({ params }: { params: Promise<{ id: string }>
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "AI 초안 생성에 실패했어요.");
       if (data.script) {
-        setEpisodes(current => current.map((episode, index) => index === targetEpisodeIndex ? { ...episode, script: episode.script ? `${episode.script}\n\n---\n\n${data.script}` : data.script } : episode));
+        setEpisodes(current => current.map((episode, index) => {
+          if (index !== targetEpisodeIndex) return episode;
+          const next = mergeAiFields(episode, before, data, "missing");
+          return replaceScript ? mergeAiFields(next, { script: before.script }, data, "replace") : next;
+        }));
         setIsDirty(true);
       }
     } catch (error) {
@@ -280,6 +289,15 @@ export default function ScriptPage({ params }: { params: Promise<{ id: string }>
 
           <section className="rounded-2xl border border-[#EBE7E0] bg-white p-5 space-y-4">
             <h2 className="text-sm font-bold">대본 전에 정하는 회차 설계</h2>
+            <p className="text-xs leading-6 text-[#7A7067]">기획만 있어도 AI가 회차 설계부터 채워줘요. 아래 대본 AI 자동채우기는 비어 있는 회차 설계와 대본을 함께 작성해요.</p>
+            <AiFillButton key={ep?.episodeNumber} label="회차 설계 AI 채우기" resultKey="episodePlan" disabled={!project || !ep || autofilling}
+              getSnapshot={() => {
+                const latest = getProject(id);
+                if (!latest || !ep) throw new Error("회차를 다시 열어 주세요.");
+                return { fields: { title: ep.title, synopsis: ep.synopsis, goal: ep.goal ?? "", obstacle: ep.obstacle ?? "", turningPoint: ep.turningPoint ?? "", endingHook: ep.endingHook ?? "" },
+                  payload: autofillPayload({ ...latest, episodes }, "episodePlan", ep) };
+              }}
+              onApply={(draft, before, mode) => { setEpisodes(current => current.map((episode, index) => index === activeEp ? mergeAiFields(episode, before, draft, mode) : episode)); setIsDirty(true); }} />
             <label className="block text-xs font-semibold">회차 제목<Input className="mt-2" value={ep?.title ?? ""} onChange={event => updateEp("title", event.target.value)} /></label>
             <label className="block text-xs font-semibold">회차 시놉시스<Textarea className="mt-2" rows={4} value={ep?.synopsis ?? ""} onChange={event => updateEp("synopsis", event.target.value)} placeholder="시작 → 주요 사건 → 최고조 → 마지막 장면" /></label>
             <SettingFields fields={EPISODE_FIELDS} values={Object.fromEntries(EPISODE_FIELDS.map(field => [field.key, ep?.[field.key]]))} onChange={(key, value) => updateEp(key as keyof Episode, value)} />

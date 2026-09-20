@@ -2,6 +2,7 @@
 
 import { useState, useEffect, use, useRef } from "react";
 import Link from "next/link";
+import { mergeAiFields } from "@/lib/aiFill";
 import { autofillPayload } from "@/lib/autofillContext";
 import { buildProjectContext } from "@/lib/projectContext";
 import StageIntro from "@/components/creation/StageIntro";
@@ -583,24 +584,30 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
       setTimeout(() => setNoIdeaChat(false), 3000);
       return;
     }
+    const fields = ["title", "synopsis", "goal", "obstacle", "turningPoint", "endingHook"];
+    const before = episodes.map(ep => Object.fromEntries(fields.map(key => [key, String((ep as unknown as Record<string, unknown>)[key] ?? "")])));
+    setVisualError("");
     setAutofilling(true);
     try {
       const res = await fetch("/api/ai/autofill", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(autofillPayload(p, "episodes")),
+        body: JSON.stringify(autofillPayload({ ...p, episodes }, "episodes")),
       });
       const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "회차 자동 채우기에 실패했어요.");
       if (Array.isArray(data.episodes) && data.episodes.length > 0) {
         setEpisodes((prev) =>
           prev.map((ep, i) => {
             const filled = data.episodes[i];
             if (!filled) return ep;
-            return { ...ep, title: filled.title ?? ep.title, synopsis: filled.synopsis ?? ep.synopsis };
+            return mergeAiFields(ep, before[i] ?? {}, filled, "missing");
           })
         );
         setIsDirty(true);
       }
+    } catch (error) {
+      setVisualError(error instanceof Error ? error.message : "회차 자동 채우기에 실패했어요.");
     } finally {
       setAutofilling(false);
     }

@@ -2,6 +2,9 @@
 
 import { useState, useEffect, use } from "react";
 import Link from "next/link";
+import { autofillPayload } from "@/lib/autofillContext";
+import AiFillButton from "@/components/creation/AiFillButton";
+import { mergeAiFields } from "@/lib/aiFill";
 import StageIntro from "@/components/creation/StageIntro";
 import { Textarea } from "@/components/ui/textarea";
 import StepIndicator from "@/components/progress-tracker/StepIndicator";
@@ -153,6 +156,20 @@ export default function SubmitPage({ params }: { params: Promise<{ id: string }>
           <div className="bg-white rounded-2xl border border-[#EBE7E0] p-5 shadow-[0_2px_12px_rgba(0,0,0,0.04)]">
             <label className="block text-xs font-bold text-[#1A1A1A] mb-1">작가 노트 (선택)</label>
             <p className="text-xs text-[#ADA8A0] mb-3">작품에 대한 소개, 제작 동기, 독자에게 하고 싶은 말을 써봐요.</p>
+            <AiFillButton label="작가 노트 AI 채우기" disabled={!project}
+              getSnapshot={() => {
+                const latest = getProject(id);
+                if (!latest) throw new Error("작품을 다시 열어 주세요.");
+                return { fields: { authorNote }, payload: autofillPayload({ ...latest, authorNote }, "authorNote") };
+              }}
+              onApply={(draft, before, mode) => {
+                const latest = getProject(id);
+                if (!latest) return;
+                const next = mergeAiFields({ authorNote: latest.authorNote ?? "" }, before, draft, mode).authorNote;
+                updateProject(id, { authorNote: next, isCompleted: false, reviewChecks: { ...(latest.reviewChecks ?? {}), authorNote: false } });
+                setAuthorNote(next); setCompleted(false); setChecks(current => ({ ...current, authorNote: false }));
+              }} />
+            <p className="my-3 text-xs text-[#82798B]">작가 노트는 AI 초안으로 채울 수 있어요. 실제 경험과 AI 사용 내역은 직접 확인해 주세요. 검수 체크와 완성 표시는 자동으로 처리하지 않아요.</p>
             <Textarea
               placeholder="작품 소개나 제작 동기를 자유롭게 써보세요."
               value={authorNote}

@@ -7,8 +7,10 @@ async function main() {
     assert.equal(response.status, 200, route);
     const html = await response.text();
     assert.ok(!html.includes('id="__next_error__"'), route);
-    if (route === "/guide") assert.ok(html.includes("7단계") && html.includes("대본을 먼저"));
-    if (route.endsWith("/world")) assert.ok(html.includes("세계관 · 설정집") && html.includes("복선 기록"));
+    if (route === "/guide") assert.ok(html.includes("AI 채우기") && html.includes("대본을 먼저"));
+    if (route.endsWith("/world")) assert.ok(html.includes("세계관 · 설정집") && html.includes("복선 기록") && html.includes("세계관 AI 채우기"));
+    if (route.endsWith("/script")) assert.ok(html.includes("회차 설계 AI 채우기"));
+    if (route.endsWith("/submit")) assert.ok(html.includes("작가 노트 AI 채우기"));
   }
   for (const endpoint of ["chat", "autofill", "cuts"]) {
     const response = await fetch(base + "/api/ai/" + endpoint, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });

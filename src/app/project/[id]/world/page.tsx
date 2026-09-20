@@ -1,6 +1,9 @@
 "use client";
 import { use, useEffect, useState } from "react";
 import Link from "next/link";
+import { autofillPayload } from "@/lib/autofillContext";
+import AiFillButton from "@/components/creation/AiFillButton";
+import { mergeAiFields } from "@/lib/aiFill";
 import { getProject, updateProject, type Project } from "@/lib/storage";
 import { DEFAULT_WORLD } from "@/lib/creation";
 import StepIndicator from "@/components/progress-tracker/StepIndicator";
@@ -35,6 +38,17 @@ export default function WorldPage({ params }: { params: Promise<{ id: string }> 
       <main className="min-w-0 flex-1 space-y-5">
         <div><p className="text-xs text-[#7C3AED]">Step 03</p><h1 className="mt-1 text-xl font-bold">세계관 · 설정집</h1></div>
         <StageIntro stage="world" />
+        <section className="space-y-3 rounded-2xl border border-[#DCCCF5] bg-[#FAF8FF] p-5">
+          <h2 className="text-sm font-bold">아이디어로 세계관 AI 채우기</h2>
+          <p className="text-xs leading-6 text-[#82798B]">기획만 있어도 시대·장소·규칙·소품·복선의 초안을 만들어요. 직접 확정한 설정은 바꾸지 않으며, 생성 후 자유롭게 수정하고 저장할 수 있어요.</p>
+          <AiFillButton label="세계관 AI 채우기" resultKey="world" disabled={!project}
+            getSnapshot={() => {
+              const latest = getProject(id);
+              if (!latest) throw new Error("작품을 다시 열어 주세요.");
+              return { fields: Object.fromEntries(Object.entries(world).filter(([key]) => key !== "confirmed")), payload: autofillPayload({ ...latest, world }, "world") };
+            }}
+            onApply={(draft, before, mode) => { setWorld(current => mergeAiFields(current, before, draft, mode)); setDirty(true); setStatus("AI 초안을 채웠어요. 검토 후 저장해 주세요."); }} />
+        </section>
         {project?.story.setting && <div className="rounded-xl border border-[#EBE7E0] p-4 text-xs"><p className="mb-2 font-bold">기존 배경 설정</p><p className="whitespace-pre-wrap leading-6">{project.story.setting}</p></div>}
         <section className="rounded-2xl border border-[#EBE7E0] bg-white p-5"><h2 className="mb-4 text-sm font-bold">세계의 기본 규칙</h2><SettingFields values={world} onChange={change} fields={[
           { key: "era", label: "시간과 시대", hint: "현대, 가까운 미래, 계절과 시간대" },
@@ -45,7 +59,7 @@ export default function WorldPage({ params }: { params: Promise<{ id: string }> 
           { key: "locations", label: "반복 등장 장소", hint: "장소별 창문·문·가구 위치와 대표 색" },
           { key: "props", label: "중요한 물건", hint: "생김새, 소유자, 현재 위치와 역할" },
         ]} /></section>
-        <section className="rounded-2xl border border-[#EBE7E0] bg-white p-5"><h2 className="mb-2 text-sm font-bold">작품의 기억</h2><p className="mb-4 text-xs leading-6 text-[#82798B]">AI 후보는 미정에 적고, 내가 결정한 내용만 확정 설정에 옮겨요. 회차가 바뀌면 물건·관계·알게 된 정보도 갱신해요.</p><SettingFields values={world} onChange={change} fields={[
+        <section className="rounded-2xl border border-[#EBE7E0] bg-white p-5"><h2 className="mb-2 text-sm font-bold">작품의 기억</h2><p className="mb-4 text-xs leading-6 text-[#82798B]">AI가 기본 설정의 초안을 채워줘요. 검토가 필요한 후보는 미정에, 내가 검토한 사실만 확정 설정에 기록해요. 회차가 바뀌면 물건·관계·알게 된 정보도 갱신해요.</p><SettingFields values={world} onChange={change} fields={[
           { key: "confirmed", label: "내가 확정한 설정", hint: "예: 1화에서 민서는 아직 일기장의 비밀을 모른다." },
           { key: "undecided", label: "미정 / AI 제안 후보", hint: "아직 고르지 않은 이름·관계·반전" },
           { key: "foreshadowing", label: "복선 기록", hint: "단서 / 심은 회차 / 회수할 회차 / 계획·등장·회수 상태" },
