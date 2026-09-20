@@ -7,11 +7,12 @@ import type { PanelAspectRatio } from "@/lib/storage";
 import { WEBTOON_ASPECTS } from "@/lib/webtoonAspects";
 
 type Props = {
+  disabled?: boolean;
   value: PanelAspectRatio;
   onChange: (value: PanelAspectRatio) => void;
 };
 
-export default function AspectRatioSelector({ value, onChange }: Props) {
+export default function AspectRatioSelector({ value, onChange, disabled = false }: Props) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const selected = WEBTOON_ASPECTS.find((aspect) => aspect.value === value) ?? WEBTOON_ASPECTS[1];
@@ -36,13 +37,16 @@ export default function AspectRatioSelector({ value, onChange }: Props) {
     <div ref={rootRef} className={`relative ${open ? "z-50" : "z-10"}`}>
       <button
         type="button"
+        disabled={disabled}
         aria-haspopup="dialog"
         aria-expanded={open}
         onClick={() => setOpen((current) => !current)}
         className="flex h-12 min-w-32 items-center gap-2 rounded-xl border border-[#EBE7E0] bg-white px-2 text-left shadow-sm transition hover:border-[#A78BFA] hover:bg-[#FAF8FF] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#7C3AED]/30"
       >
-        <span className="relative h-9 w-12 flex-none overflow-hidden rounded-md bg-[#F4F1EC]">
+        <span className="flex h-9 w-12 flex-none items-center justify-center">
+          <span className="relative block overflow-hidden rounded-md bg-[#F4F1EC]" style={{ aspectRatio: value.replace(":", "/"), height: 32, maxWidth: 48 }}>
           <Image src={selected.imageSrc} alt="" fill sizes="48px" className="object-cover" />
+          </span>
         </span>
         <span className="min-w-0 flex-1">
           <span className="block text-[11px] font-bold text-[#1A1A1A]">{selected.value}</span>
@@ -51,7 +55,7 @@ export default function AspectRatioSelector({ value, onChange }: Props) {
         <ChevronDown className={`h-3.5 w-3.5 text-[#7C3AED] transition ${open ? "rotate-180" : ""}`} />
       </button>
 
-      {open && (
+      {open && !disabled && (
         <div role="dialog" aria-label="컷 비율 선택" className="fixed inset-x-4 top-1/2 max-h-[85vh] -translate-y-1/2 overflow-y-auto rounded-2xl border border-[#DDD6FE] bg-white p-3 shadow-[0_18px_50px_rgba(55,48,107,0.2)] sm:absolute sm:inset-x-auto sm:left-0 sm:top-[calc(100%+8px)] sm:w-[36rem] sm:max-w-[calc(100vw-3rem)] sm:translate-y-0 sm:overflow-visible sm:p-4">
           <div className="mb-3 flex items-start justify-between gap-3">
             <div>

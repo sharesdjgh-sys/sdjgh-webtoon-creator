@@ -1,4 +1,5 @@
 import type { PanelAspectRatio, StoryboardDocument, StoryboardElement, StoryboardElementType, WebtoonFontFamily } from "@/lib/storage";
+import { fitImageRect } from "@/lib/panelGeometry";
 import { resolveCharacterRig } from "@/lib/storyboardRig";
 
 export const WEBTOON_FONT_OPTIONS: Array<{ value: WebtoonFontFamily; label: string; description: string }> = [
@@ -241,11 +242,29 @@ export async function composeScenePng(storyboard: StoryboardDocument, sceneBlob:
     canvas.height = storyboard.height;
     const context = canvas.getContext("2d");
     if (!context) throw new Error("캔버스를 생성하지 못했습니다.");
-    context.drawImage(scene, 0, 0, canvas.width, canvas.height);
+    const rect = fitImageRect(scene.naturalWidth, scene.naturalHeight, canvas.width, canvas.height);
+    context.fillStyle = "#ffffff";
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    context.drawImage(scene, rect.x, rect.y, rect.width, rect.height);
     context.drawImage(overlay, 0, 0, canvas.width, canvas.height);
     return await new Promise<Blob>((resolve, reject) => canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error("최종 이미지 합성에 실패했습니다.")), "image/png"));
   } finally {
     URL.revokeObjectURL(sceneUrl);
     URL.revokeObjectURL(overlayUrl);
   }
+}
+
+export function resizeStoryboard(document: StoryboardDocument, aspectRatio: PanelAspectRatio): StoryboardDocument {
+  const dimensions = storyboardDimensions(aspectRatio);
+  const rect = fitImageRect(document.width, document.height, dimensions.width, dimensions.height);
+  const scale = rect.width / document.width;
+  return {
+    ...document, aspectRatio, ...dimensions,
+    elements: document.elements.map((element) => ({
+      ...element,
+      x: rect.x + element.x * scale, y: rect.y + element.y * scale,
+      width: element.width * scale, height: element.height * scale,
+      ...(element.fontSize !== undefined ? { fontSize: element.fontSize * scale } : {}),
+    })),
+  };
 }

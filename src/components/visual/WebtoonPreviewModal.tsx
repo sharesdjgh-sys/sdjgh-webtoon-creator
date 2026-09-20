@@ -117,7 +117,7 @@ export default function WebtoonPreviewModal({ open, title, cuts, onClose }: Prop
                   {preview?.state === "ready" && preview.url ? (
                     // Generated local Blob URLs do not benefit from Next image optimization.
                     // eslint-disable-next-line @next/next/no-img-element
-                    <img src={preview.url} alt={`컷 ${index + 1}`} className="h-full w-full object-cover" draggable={false} />
+                    <img src={preview.url} alt={`컷 ${index + 1}`} className="absolute inset-0 h-full w-full object-contain" draggable={false} />
                   ) : preview?.state === "loading" || !preview ? (
                     <div className="flex h-full items-center justify-center bg-[#F7F5FF] text-[#7C3AED]"><LoaderCircle className="h-5 w-5 animate-spin" /></div>
                   ) : (

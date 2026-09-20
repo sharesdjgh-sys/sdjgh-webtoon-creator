@@ -25,7 +25,7 @@ import AiActivityBanner from "@/components/AiActivityBanner";
 import { BlobImage } from "@/components/visual/StoredImage";
 import { requestCharacterRig, requestSceneImage, requestStoryboardLayer, requestStoryboardLayout, sceneHash, storyboardLayerHash } from "@/lib/visualClient";
 import { deleteMediaAsset, deleteMediaByOwner, saveMediaAsset, whiteToTransparentPng } from "@/lib/mediaStorage";
-import { composeScenePng, storyboardDimensions } from "@/lib/storyboardSvg";
+import { composeScenePng, resizeStoryboard } from "@/lib/storyboardSvg";
 import { hasGeneratedStoryboardLayers } from "@/lib/storyboardComposite";
 import { cleanCharacterMentions } from "@/lib/characterMentions";
 
@@ -251,21 +251,7 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
             if (index !== cutIdx) return cut;
             let storyboard = cut.storyboard;
             if (storyboard && aspectRatio !== cut.aspectRatio) {
-              const dimensions = storyboardDimensions(aspectRatio);
-              const scaleX = dimensions.width / storyboard.width;
-              const scaleY = dimensions.height / storyboard.height;
-              storyboard = {
-                ...storyboard,
-                aspectRatio,
-                ...dimensions,
-                elements: storyboard.elements.map((element) => ({
-                  ...element,
-                  x: element.x * scaleX,
-                  y: element.y * scaleY,
-                  width: element.width * scaleX,
-                  height: element.height * scaleY,
-                })),
-              };
+              storyboard = resizeStoryboard(storyboard, aspectRatio);
             }
             return { ...cut, ...suggestion, id: cut.id, aspectRatio, storyboard };
           }) }
@@ -307,28 +293,17 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
   };
 
   const changeAspectRatio = (cutIdx: number, aspectRatio: PanelAspectRatio) => {
-    replaceCut(cutIdx, (cut) => {
-      if (!cut.storyboard) return { ...cut, aspectRatio };
-      const dimensions = storyboardDimensions(aspectRatio);
-      const scaleX = dimensions.width / cut.storyboard.width;
-      const scaleY = dimensions.height / cut.storyboard.height;
-      return {
-        ...cut,
-        aspectRatio,
-        storyboard: {
-          ...cut.storyboard,
-          aspectRatio,
-          ...dimensions,
-          elements: cut.storyboard.elements.map((element) => ({
-            ...element,
-            x: element.x * scaleX,
-            y: element.y * scaleY,
-            width: element.width * scaleX,
-            height: element.height * scaleY,
-          })),
-        },
-      };
+    const selectedCut = episodes[activeEp]?.cuts[cutIdx];
+    if (!selectedCut || selectedCut.aspectRatio === aspectRatio) return;
+    setSceneCandidates((current) => {
+      const next = { ...current };
+      delete next[selectedCut.id];
+      return next;
     });
+    replaceCut(cutIdx, (cut) => ({
+      ...cut, aspectRatio,
+      storyboard: cut.storyboard ? resizeStoryboard(cut.storyboard, aspectRatio) : undefined,
+    }));
   };
 
   const setLoadingId = (setter: React.Dispatch<React.SetStateAction<Set<string>>>, id: string, active: boolean) => {
@@ -536,6 +511,10 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
     if (!cut) return;
     const candidate = sceneCandidates[cut.id];
     if (!candidate) return;
+    if (!project || candidate.sourceHash !== sceneHash({ ...project, episodes }, episodes[activeEp], cut)) {
+      setVisualError("컷 비율이나 구도가 변경되었습니다. 현재 설정으로 장면을 다시 생성해주세요.");
+      return;
+    }
     try {
       const asset = await saveMediaAsset({ projectId: id, ownerId: cut.id, ownerType: "scene", mimeType: candidate.blob.type || "image/jpeg", blob: candidate.blob });
       await deleteMediaAsset(cut.sceneImageAssetId);
@@ -884,6 +863,7 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
                             onChange={(angle) => updateCut(cutIdx, "angle", angle)}
                           />
                           <AspectRatioSelector
+                            disabled={Boolean(aiCutProgress) || layoutGeneratingIds.has(cut.id) || sceneGeneratingIds.has(cut.id) || Boolean(cut.storyboard?.elements.some((element) => layerGeneratingIds.has(element.id) || poseDetectingIds.has(element.id)))}
                             value={cut.aspectRatio}
                             onChange={(aspectRatio) => changeAspectRatio(cutIdx, aspectRatio)}
                           />

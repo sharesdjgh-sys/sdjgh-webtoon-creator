@@ -574,10 +574,10 @@ export default function StoryboardEditor({ document, characters, staleLayerIds =
           : ["콘티의 위치와 포즈 지시를 확인하고 있어요.", "캐릭터 시트와 참고 포즈를 비교하고 있어요.", "Gemini가 새 레이어를 그리고 있어요.", "생성된 그림에서 실제 관절 위치를 분석하고 있어요."]}
       />
 
-      <div className={`grid gap-3 ${expanded ? "lg:grid-cols-[1fr_280px]" : "xl:grid-cols-[1fr_240px]"}`}>
+      <div className={`grid gap-3 ${expanded ? "lg:grid-cols-[minmax(0,1fr)_280px]" : "xl:grid-cols-[minmax(0,1fr)_240px]"}`}>
         <div className="relative bg-[#E9E4DC] rounded-xl p-3 min-h-[260px] flex items-center justify-center overflow-hidden">
-          <div className="relative w-full max-h-[76vh] shadow-xl bg-white" style={{ aspectRatio: `${document.width}/${document.height}` }}>
-            {sceneAssetId && finalView && <StoredImage assetId={sceneAssetId} alt="생성된 웹툰 장면" className="absolute inset-0 w-full h-full object-cover" />}
+          <div className="relative w-full shrink-0 shadow-xl bg-white" style={{ aspectRatio: `${document.width}/${document.height}`, maxWidth: `${76 * document.width / document.height}vh` }}>
+            {sceneAssetId && finalView && <StoredImage assetId={sceneAssetId} alt="생성된 웹툰 장면" className="absolute inset-0 w-full h-full object-contain" />}
             <svg
               ref={svgRef}
               viewBox={`0 0 ${document.width} ${document.height}`}
@@ -890,7 +890,7 @@ export default function StoryboardEditor({ document, characters, staleLayerIds =
         </div>
         <div className="flex items-center gap-2">
           {staleLayerIds.size > 0 && <span className="text-[10px] text-orange-600 bg-orange-50 px-2 py-1 rounded-full">수정 적용이 필요한 레이어 {staleLayerIds.size}개</span>}
-          {sceneStale && sceneAssetId && <span className="text-[10px] text-orange-600 bg-orange-50 px-2 py-1 rounded-full">구도가 변경되어 재생성이 필요해요</span>}
+          {sceneStale && sceneAssetId && <span className="text-[10px] text-orange-600 bg-orange-50 px-2 py-1 rounded-full">비율·구도가 변경되었습니다. 기존 그림은 여백을 두고 표시되며, 새 구도는 재생성해주세요.</span>}
           <button type="button" disabled={generatingScene} onClick={onGenerateScene} className="inline-flex items-center gap-1.5 rounded-full bg-[#1A1A1A] text-white text-xs font-semibold px-4 py-2 hover:bg-black disabled:cursor-wait disabled:opacity-80">
             {generatingScene ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />} {generatingScene ? `장면 생성 중 · ${generationSeconds}초` : sceneAssetId ? "이 콘티로 다시 생성" : "이 콘티 고정으로 장면 생성"}
           </button>

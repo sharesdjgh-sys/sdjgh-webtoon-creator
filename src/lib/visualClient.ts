@@ -1,3 +1,4 @@
+import { validatePanelImage } from "@/lib/panelGeometry";
 import type { Character, CharacterRig, Cut, Episode, Project, StoryboardDocument } from "@/lib/storage";
 import { base64ToBlob, blobToBase64, cropImageBlob, getMediaAsset, sourceHash } from "@/lib/mediaStorage";
 import { svgToPngBlob } from "@/lib/storyboardSvg";
@@ -192,8 +193,10 @@ export async function requestSceneImage(project: Project, episode: Episode, cut:
     layoutImage: { data: await blobToBase64(layoutBlob), mimeType: layoutMimeType },
     references,
   });
+  const blob = base64ToBlob(response.data, response.mimeType);
+  await validatePanelImage(blob, cut.aspectRatio);
   return {
-    blob: base64ToBlob(response.data, response.mimeType),
+    blob,
     prompt: response.prompt,
     sourceHash: sceneHash(project, episode, cut),
   };

@@ -1,5 +1,6 @@
 "use client";
 
+import { fitImageRect } from "@/lib/panelGeometry";
 import type { StoryboardDocument } from "@/lib/storage";
 import { getMediaAsset } from "@/lib/mediaStorage";
 import { isOverlayElement, storyboardToSvg } from "@/lib/storyboardSvg";
@@ -16,7 +17,7 @@ function loadImage(source: string): Promise<HTMLImageElement> {
 async function drawBlob(
   context: CanvasRenderingContext2D,
   blob: Blob,
-  transform: { x: number; y: number; width: number; height: number; rotation: number; opacity?: number; flipX?: boolean },
+  transform: { x: number; y: number; width: number; height: number; rotation: number; opacity?: number; flipX?: boolean; type?: string },
 ): Promise<void> {
   const url = URL.createObjectURL(blob);
   try {
@@ -26,7 +27,11 @@ async function drawBlob(
     context.translate(transform.x + transform.width / 2, transform.y + transform.height / 2);
     context.rotate(transform.rotation * Math.PI / 180);
     context.scale(transform.flipX ? -1 : 1, 1);
-    context.drawImage(image, -transform.width / 2, -transform.height / 2, transform.width, transform.height);
+    const rect = fitImageRect(image.naturalWidth, image.naturalHeight, transform.width, transform.height, transform.type === "background" ? "cover" : "contain");
+    context.beginPath();
+    context.rect(-transform.width / 2, -transform.height / 2, transform.width, transform.height);
+    context.clip();
+    context.drawImage(image, rect.x - transform.width / 2, rect.y - transform.height / 2, rect.width, rect.height);
     context.restore();
   } finally {
     URL.revokeObjectURL(url);
