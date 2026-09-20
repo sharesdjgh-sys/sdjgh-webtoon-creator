@@ -1,4 +1,5 @@
-import { type Project, getProjects, saveProjects } from "./storage";
+import { type Project, type Episode, type Cut, getProjects, saveProjects } from "./storage";
+import { CHARACTER_STORY_FIELDS, STORY_FIELDS, EPISODE_FIELDS } from "./creation";
 
 function triggerDownload(filename: string, content: string, mimeType: string) {
   const blob = new Blob([content], { type: mimeType });
@@ -57,6 +58,7 @@ export function downloadStory(project: Project) {
     s.plotOutline || "(미작성)",
     "",
     `총 화 수: ${s.totalEpisodes}화`,
+    ...STORY_FIELDS.map(field => `${field.label}: ${s[field.key] || "(미작성)"}`),
   ];
   triggerDownload(`${project.title}_스토리.txt`, lines.join("\n"), "text/plain;charset=utf-8");
 }
@@ -77,122 +79,38 @@ export function downloadCharacters(project: Project) {
       if (ch.appearance) lines.push(`외모: ${ch.appearance}`);
       if (ch.personality) lines.push(`성격: ${ch.personality}`);
       if (ch.backstory) lines.push(`배경 이야기: ${ch.backstory}`);
+      lines.push(...CHARACTER_STORY_FIELDS.map(field => `${field.label}: ${ch[field.key] || "(미작성)"}`));
       lines.push("");
     });
   }
   triggerDownload(`${project.title}_캐릭터.txt`, lines.join("\n"), "text/plain;charset=utf-8");
 }
 
+function cutLines(cut: Cut, index: number): string[] {
+  return [`컷 ${index + 1} (${cut.angle})`, `목적: ${cut.purpose || ""} / 감정: ${cut.emotion || ""}`,
+    `장면: ${cut.description}`, `대사: ${cut.dialogue}`, `효과음: ${cut.soundEffect}`,
+    `연속성: ${cut.continuityNotes || ""}`, `여백: ${cut.scrollGap || "normal"}`, ""];
+}
+function episodeLines(ep: Episode): string[] {
+  return [`[ ${ep.episodeNumber}화: ${ep.title || "제목 없음"} ]`, "=== 시놉시스 ===", ep.synopsis || "(미작성)",
+    ...EPISODE_FIELDS.map(field => `${field.label}: ${ep[field.key] || "(미작성)"}`),
+    "", "=== 대본 ===", ep.script || "(미작성)", "", "=== 콘티 ===",
+    ...ep.cuts.flatMap(cutLines), ""];
+}
 export function downloadEpisode(project: Project, episodeIndex: number) {
-  const ep = project.episodes[episodeIndex];
-  if (!ep) return;
-  const lines = [
-    `[ ${project.title} — ${ep.episodeNumber}화 ]`,
-    `작성일: ${new Date().toLocaleDateString("ko-KR")}`,
-    "",
-    `제목: ${ep.title || "(미입력)"}`,
-    "",
-    "=== 줄거리 ===",
-    ep.synopsis || "(미작성)",
-  ];
-
-  const cuts = ep.cuts ?? [];
-  if (cuts.length > 0) {
-    lines.push("", "=== 콘티 ===");
-    cuts.forEach((cut, i) => {
-      lines.push(``, `[ 컷 ${i + 1} — ${cut.angle} ]`);
-      if (cut.description) lines.push(`장면: ${cut.description}`);
-      if (cut.dialogue) lines.push(`대사: ${cut.dialogue}`);
-      if (cut.soundEffect) lines.push(`효과음: ${cut.soundEffect}`);
-    });
-  }
-
-  lines.push("", "=== 대본 ===", ep.script || "(미작성)");
-
-  triggerDownload(
-    `${project.title}_${ep.episodeNumber}화.txt`,
-    lines.join("\n"),
-    "text/plain;charset=utf-8"
-  );
+  const episode = project.episodes[episodeIndex]; if (!episode) return;
+  triggerDownload(`${project.title}_${episode.episodeNumber}화.txt`, episodeLines(episode).join("\n"), "text/plain;charset=utf-8");
 }
-
 export function downloadAllEpisodes(project: Project) {
-  const lines = [
-    `[ ${project.title} — 전체 콘티 & 대본 ]`,
-    `작성일: ${new Date().toLocaleDateString("ko-KR")}`,
-    "",
-  ];
-  project.episodes.forEach((ep) => {
-    lines.push(`${"═".repeat(40)}`);
-    lines.push(`${ep.episodeNumber}화: ${ep.title || "(제목 없음)"}`);
-    lines.push(`${"═".repeat(40)}`);
-    if (ep.synopsis) { lines.push("[ 줄거리 ]"); lines.push(ep.synopsis); lines.push(""); }
-
-    const cuts = ep.cuts ?? [];
-    if (cuts.length > 0) {
-      lines.push("[ 콘티 ]");
-      cuts.forEach((cut, i) => {
-        lines.push(`컷 ${i + 1} (${cut.angle})${cut.description ? ` — ${cut.description}` : ""}`);
-        if (cut.dialogue) lines.push(`  대사: ${cut.dialogue}`);
-        if (cut.soundEffect) lines.push(`  효과음: ${cut.soundEffect}`);
-      });
-      lines.push("");
-    }
-
-    lines.push("[ 대본 ]");
-    lines.push(ep.script || "(미작성)");
-    lines.push("");
-  });
-  triggerDownload(`${project.title}_전체.txt`, lines.join("\n"), "text/plain;charset=utf-8");
+  triggerDownload(`${project.title}_전체.txt`, [project.title, ...project.episodes.flatMap(episodeLines)].join("\n"), "text/plain;charset=utf-8");
 }
-
 export function downloadFullSummary(project: Project) {
-  const s = project.story;
-  const lines = [
-    `[ ${project.title} — 최종 제출 요약 ]`,
-    project.author ? `작가: ${project.author}` : "",
-    `작성일: ${new Date().toLocaleDateString("ko-KR")}`,
-    project.targetCompetition ? `대상 대회: ${project.targetCompetition}` : "",
-    "",
-    "═══ 스토리 ═══",
-    `로그라인: ${s.logline || "(미작성)"}`,
-    `주제: ${s.theme || "(미작성)"}`,
-    `배경: ${s.setting || "(미작성)"}`,
-    "",
-    "줄거리:",
-    s.plotOutline || "(미작성)",
-    "",
-    "═══ 캐릭터 ═══",
-    ...project.characters.flatMap((ch) => [
-      `▸ ${ch.name} (${ch.role}${ch.age ? `, ${ch.age}` : ""})`,
-      ch.appearance ? `  외모: ${ch.appearance}` : "",
-      ch.personality ? `  성격: ${ch.personality}` : "",
-      ch.backstory ? `  배경: ${ch.backstory}` : "",
-      "",
-    ]),
-    "═══ 콘티 & 대본 ═══",
-    ...project.episodes.flatMap((ep) => {
-      const cutLines: string[] = [];
-      const cuts = ep.cuts ?? [];
-      if (cuts.length > 0) {
-        cutLines.push("  [ 콘티 ]");
-        cuts.forEach((cut, i) => {
-          cutLines.push(`  컷 ${i + 1} (${cut.angle})${cut.description ? ` — ${cut.description}` : ""}`);
-          if (cut.dialogue) cutLines.push(`    대사: ${cut.dialogue}`);
-          if (cut.soundEffect) cutLines.push(`    효과음: ${cut.soundEffect}`);
-        });
-        cutLines.push("");
-      }
-      return [
-        `[ ${ep.episodeNumber}화: ${ep.title || "제목 없음"} ]`,
-        ep.synopsis ? `줄거리: ${ep.synopsis}` : "",
-        "",
-        ...cutLines,
-        "  [ 대본 ]",
-        ep.script || "(미작성)",
-        "",
-      ];
-    }),
-  ].filter((l) => l !== undefined);
+  const labels: Record<string, string> = { idea: "아이디어", tone: "분위기", audience: "독자", feeling: "독자 감정", format: "작품 형태", mode: "제작 방식", targetCuts: "목표 컷 수", purpose: "제작 목표", mustKeep: "꼭 지킬 아이디어", era: "시대", mainLocation: "주요 무대", possible: "가능한 것", forbidden: "금지 규칙", cost: "대가", locations: "반복 장소", props: "주요 물건", confirmed: "확정 설정", undecided: "미정 후보", foreshadowing: "복선" };
+  const settings = (values: Record<string, string>) => Object.entries(values).map(([key, value]) => `${labels[key] ?? key}: ${value || "(미작성)"}`);
+  const lines = [`[ ${project.title} — 작품 설정과 제작 기록 ]`, `작가: ${project.author || "(미입력)"}`, `작성일: ${new Date().toLocaleDateString("ko-KR")}`, `대상 대회: ${project.targetCompetition || "(없음)"}`, "=== 기획 ===", ...settings(project.brief ?? {}),
+    "", "=== 캐릭터 ===", ...project.characters.flatMap(c => [c.name, `역할: ${c.role} / 나이: ${c.age}`, `배경 이야기: ${c.backstory}`, `외모: ${c.appearance}`, `성격: ${c.personality}`, ...CHARACTER_STORY_FIELDS.map(f => `${f.label}: ${c[f.key] || ""}`), ""]),
+    "", "=== 세계관 · 설정집 ===", ...settings(project.world ?? {}), "", "=== 스토리 ===", project.story.logline, project.story.theme, project.story.setting, project.story.plotOutline,
+    ...STORY_FIELDS.map(f => `${f.label}: ${project.story[f.key] || ""}`), "", ...project.episodes.flatMap(episodeLines),
+    "=== 작가 노트 ===", project.authorNote || ""];
   triggerDownload(`${project.title}_최종요약.txt`, lines.join("\n"), "text/plain;charset=utf-8");
 }

@@ -1,3 +1,6 @@
+import { normalizeWebtoonShot } from "@/lib/webtoonShots";
+import { DEFAULT_BRIEF, DEFAULT_WORLD, type CreativeBrief, type WorldBible } from "@/lib/creation";
+
 export type ChatMessage = {
   role: "user" | "assistant";
   content: string;
@@ -53,6 +56,7 @@ export type StoryboardElement = {
   characterId?: string;
   shape?: "rect" | "ellipse";
   pose?: string;
+  poseReferenceAssetId?: string;
   expression?: string;
   fontFamily?: WebtoonFontFamily;
   fontSize?: number;
@@ -135,6 +139,12 @@ export type Character = {
   appearance: string;
   personality: string;
   backstory: string;
+  goal?: string;
+  fear?: string;
+  weakness?: string;
+  growth?: string;
+  speechStyle?: string;
+  relationships?: string;
   visualProfile: CharacterVisualProfile;
   imageInstructions?: string;
   imageAssetId?: string;
@@ -143,6 +153,10 @@ export type Character = {
 
 export type Cut = {
   id: string;
+  purpose?: string;
+  emotion?: string;
+  continuityNotes?: string;
+  scrollGap?: "short" | "normal" | "long";
   angle: string;
   description: string;
   dialogue: string;
@@ -158,6 +172,10 @@ export type Cut = {
 
 export type Episode = {
   episodeNumber: number;
+  goal?: string;
+  obstacle?: string;
+  turningPoint?: string;
+  endingHook?: string;
   title: string;
   synopsis: string;
   cuts: Cut[];
@@ -167,6 +185,10 @@ export type Episode = {
 
 export type Project = {
   id: string;
+  workflowVersion?: number;
+  brief: CreativeBrief;
+  world: WorldBible;
+  worldChat?: ChatMessage[];
   title: string;
   author: string;
   genre: string;
@@ -175,6 +197,7 @@ export type Project = {
   currentStep: number;
   isCompleted: boolean;
   authorNote: string;
+  reviewChecks?: Record<string, boolean>;
   createdAt: string;
   story: {
     logline: string;
@@ -182,6 +205,13 @@ export type Project = {
     setting: string;
     plotOutline: string;
     totalEpisodes: string;
+    conflict?: string;
+    stakes?: string;
+    ordinary?: string;
+    incident?: string;
+    escalation?: string;
+    choice?: string;
+    ending?: string;
   };
   artDirection: ArtDirection;
   characters: Character[];
@@ -244,13 +274,13 @@ export function createCharacter(overrides: Partial<Character> = {}): Character {
 export function createCut(overrides: Partial<Cut> = {}): Cut {
   return {
     id: makeId("cut"),
-    angle: "미디엄샷",
     description: "",
     dialogue: "",
     soundEffect: "",
     characterIds: [],
     aspectRatio: "3:4",
     ...overrides,
+    angle: normalizeWebtoonShot(overrides.angle ?? "미디엄샷"),
   };
 }
 
@@ -278,6 +308,11 @@ function normalizeProject(raw: Project): Project {
 
   return {
     ...raw,
+    workflowVersion: 2,
+    currentStep: raw.workflowVersion === 2 ? Math.min(7, Math.max(1, raw.currentStep || 1))
+      : (new Map([[1, 1], [2, 4], [3, 2], [4, 6], [5, 5], [6, 7]]).get(raw.currentStep) ?? 1),
+    brief: { ...DEFAULT_BRIEF, ...(raw.brief ?? {}) },
+    world: { ...DEFAULT_WORLD, ...(raw.world ?? {}) },
     artDirection: {
       ...DEFAULT_ART_DIRECTION,
       ...(raw.artDirection ?? {}),
@@ -322,7 +357,9 @@ export function updateProject(id: string, updates: Partial<Project>): void {
   const projects = getProjects();
   const idx = projects.findIndex((p) => p.id === id);
   if (idx !== -1) {
-    projects[idx] = { ...projects[idx], ...updates };
+    const creativeKeys = ["brief", "world", "story", "characters", "episodes", "artDirection"] as const;
+    const changed = creativeKeys.some(key => key in updates && JSON.stringify(updates[key]) !== JSON.stringify(projects[idx][key]));
+    projects[idx] = { ...projects[idx], ...updates, ...(changed ? { isCompleted: false, reviewChecks: {} } : {}) };
     saveProjects(projects);
     autoSaveToFile(projects[idx]);
   }
@@ -337,6 +374,9 @@ export function createProject(data: {
 }): Project {
   const project: Project = {
     ...data,
+    workflowVersion: 2,
+    brief: { ...DEFAULT_BRIEF },
+    world: { ...DEFAULT_WORLD },
     id: crypto.randomUUID(),
     createdAt: new Date().toISOString(),
     currentStep: 1,
