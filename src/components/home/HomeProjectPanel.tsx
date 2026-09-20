@@ -66,7 +66,7 @@ export default function HomeProjectPanel() {
   const episodeCount = project?.episodes.filter(episode => episode.title || episode.synopsis || episode.script || episode.cuts.length).length ?? 0;
   const destination = project ? `/project/${project.id}/${stage.route}` : "/dashboard";
 
-  return <section aria-label="내 작품 작업실" aria-busy={!loaded} className={`${styles.projectCard} overflow-hidden rounded-[24px] bg-white`}>
+  return <section aria-label="내 작품 작업실" aria-busy={!loaded} className={`${styles.projectCard} overflow-hidden bg-white`}>
     <div className="flex items-center justify-between gap-3 border-b-2 border-[#302342] bg-[#F2EAFF] px-5 py-4 sm:px-6">
       <span className="flex items-center gap-2 text-xs font-semibold tracking-wide text-[#713DE3]"><BookOpen className="h-4 w-4" /> 나의 작업실</span>
       <Link href="/dashboard" className="flex items-center gap-1 text-xs text-[#625B72] underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#713DE3]">모든 작품 <ArrowRight className="h-3 w-3" /></Link>
