@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Black_Han_Sans, Gaegu, Instrument_Serif, Jua, Nanum_Myeongjo, Nanum_Pen_Script, Noto_Sans_KR } from "next/font/google";
 import "./globals.css";
+import DesktopAccessGate from "@/components/DesktopAccessGate";
 
 const instrumentSerif = Instrument_Serif({
   weight: "400",
@@ -19,7 +20,7 @@ const blackHanSans = Black_Han_Sans({ weight: "400", variable: "--font-webtoon-i
 
 export const metadata: Metadata = {
   title: "웹툰 메이커 AI — AI와 함께 완성하는 나만의 웹툰",
-  description: "AI 멘토와 함께 웹툰 창작 대회를 준비하세요. 아이디어 발굴부터 대회 제출까지 6단계로 완성합니다.",
+  description: "PC 전용 웹툰 창작 작업실. AI 멘토와 함께 웹툰 창작 대회를 준비하세요. 아이디어·캐릭터·세계관·스토리·대본·콘티·검수의 7단계로 완성합니다.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -31,7 +32,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css"
         />
       </head>
-      <body className="min-h-full flex flex-col">{children}</body>
+      <body className="min-h-full flex flex-col"><DesktopAccessGate>{children}</DesktopAccessGate></body>
     </html>
   );
 }

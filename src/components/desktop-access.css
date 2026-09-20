@@ -1,0 +1,17 @@
+.desktop-app { min-height: 100vh; }
+.desktop-access-screen { display: none; }
+@media (max-width: 1023px), (hover: none) and (pointer: coarse) {
+  .desktop-app { display: none !important; }
+  .desktop-access-screen { display: flex; min-height: 100dvh; align-items: center; justify-content: center; padding: 36px 24px; background: #fffefc; color: #302342; word-break: keep-all; }
+  .desktop-access-card { max-width: 420px; text-align: center; }
+  .desktop-access-brand { font-size: 13px; font-weight: 600; color: #625b72; }
+  .desktop-access-icon { display: flex; align-items: center; justify-content: center; width: 84px; height: 84px; margin: 40px auto 24px; border: 1px solid #d7ded0; border-radius: 24px; background: #edf1e8; color: #713de3; }
+  .desktop-access-kicker { font-size: 12px; font-weight: 600; color: #713de3; }
+  .desktop-access-card h1 { margin: 12px 0 18px; font-size: 29px; line-height: 1.4; font-weight: 700; letter-spacing: -1px; }
+  .desktop-access-card > p:not(.desktop-access-kicker) { font-size: 14px; line-height: 1.9; color: #625b72; }
+  .desktop-access-tip { display: flex; align-items: center; justify-content: center; gap: 10px; margin: 26px 0 20px; padding: 17px 12px; border-radius: 12px; background: #edf1e8; font-size: 12px; line-height: 1.8; }
+  .desktop-access-card > .desktop-access-note { font-size: 11px !important; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .desktop-app .hero-enter, .desktop-app .hero-enter-2, .desktop-app .hero-enter-3 { animation: none; }
+}
