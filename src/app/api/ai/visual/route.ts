@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import {
   characterInputSchema,
+  detectCharacterRig,
   generateSceneImage,
   generateStoryboardLayout,
   generateStoryboardLayer,
@@ -14,6 +15,13 @@ export const maxDuration = 120;
 const imagePayloadSchema = z.object({
   data: z.string().min(1).max(12_000_000),
   mimeType: z.enum(["image/png", "image/jpeg", "image/webp"]),
+});
+
+const characterReferenceSchema = z.object({
+  character: characterInputSchema,
+  ...imagePayloadSchema.shape,
+  heroData: z.string().min(1).max(12_000_000),
+  heroMimeType: z.enum(["image/png", "image/jpeg", "image/webp"]),
 });
 
 const episodeSchema = z.object({
@@ -70,6 +78,7 @@ const storyboardSchema = z.object({
     characterId: z.string().max(120).optional(),
     shape: z.enum(["rect", "ellipse"]).optional(),
     pose: z.string().max(300).optional(),
+    poseReferenceAssetId: z.string().max(200).optional(),
     expression: z.string().max(300).optional(),
     fontFamily: z.enum(["clean", "serif", "handwritten", "cute", "comic", "impact"]).optional(),
     fontSize: z.number().positive().max(300).optional(),
@@ -90,6 +99,10 @@ const storyboardSchema = z.object({
 
 const requestSchema = z.discriminatedUnion("action", [
   z.object({
+    action: z.literal("detect-character-rig"),
+    image: imagePayloadSchema,
+  }),
+  z.object({
     action: z.literal("storyboard-layer"),
     context: projectVisualContextSchema,
     episode: episodeSchema,
@@ -97,7 +110,8 @@ const requestSchema = z.discriminatedUnion("action", [
     storyboard: storyboardSchema,
     layerId: z.string().max(100),
     layoutImage: imagePayloadSchema,
-    references: z.array(z.object({ character: characterInputSchema, ...imagePayloadSchema.shape })).max(4),
+    references: z.array(characterReferenceSchema).max(4),
+    poseReference: imagePayloadSchema.optional(),
   }),
   z.object({
     action: z.literal("character-sheet"),
@@ -118,7 +132,7 @@ const requestSchema = z.discriminatedUnion("action", [
     cut: cutSchema,
     storyboard: storyboardSchema,
     layoutImage: imagePayloadSchema,
-    references: z.array(z.object({ character: characterInputSchema, ...imagePayloadSchema.shape })).max(4),
+    references: z.array(characterReferenceSchema).max(4),
   }),
 ]);
 
@@ -150,6 +164,9 @@ export async function POST(request: Request) {
     }
     if (body.action === "storyboard-layout") {
       return NextResponse.json({ storyboard: await generateStoryboardLayout(body) });
+    }
+    if (body.action === "detect-character-rig") {
+      return NextResponse.json({ characterRig: await detectCharacterRig(body.image) });
     }
     if (body.action === "storyboard-layer") {
       return NextResponse.json(await generateStoryboardLayer(body));

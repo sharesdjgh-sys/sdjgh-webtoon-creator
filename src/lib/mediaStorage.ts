@@ -4,7 +4,7 @@ const DB_NAME = "webtoon_creator_media";
 const STORE_NAME = "assets";
 const DB_VERSION = 1;
 
-export type MediaOwnerType = "character" | "storyboard" | "storyboard-layer" | "scene";
+export type MediaOwnerType = "character" | "storyboard" | "storyboard-layer" | "pose-reference" | "scene";
 
 export type MediaAsset = {
   id: string;
@@ -111,6 +111,39 @@ export function blobToBase64(blob: Blob): Promise<string> {
     reader.onerror = () => reject(reader.error);
     reader.readAsDataURL(blob);
   });
+}
+
+export async function cropImageBlob(
+  blob: Blob,
+  crop: { x: number; y: number; width: number; height: number },
+): Promise<Blob> {
+  const url = URL.createObjectURL(blob);
+  try {
+    const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+      const element = new Image();
+      element.onload = () => resolve(element);
+      element.onerror = () => reject(new Error("캐릭터 참조 이미지를 불러오지 못했습니다."));
+      element.src = url;
+    });
+    const sourceX = Math.round(Math.max(0, Math.min(1, crop.x)) * image.naturalWidth);
+    const sourceY = Math.round(Math.max(0, Math.min(1, crop.y)) * image.naturalHeight);
+    const sourceWidth = Math.max(1, Math.round(Math.min(crop.width, 1 - crop.x) * image.naturalWidth));
+    const sourceHeight = Math.max(1, Math.round(Math.min(crop.height, 1 - crop.y) * image.naturalHeight));
+    const scale = Math.min(1, 1024 / Math.max(sourceWidth, sourceHeight));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(sourceWidth * scale));
+    canvas.height = Math.max(1, Math.round(sourceHeight * scale));
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("캐릭터 참조 이미지를 자를 수 없습니다.");
+    context.drawImage(image, sourceX, sourceY, sourceWidth, sourceHeight, 0, 0, canvas.width, canvas.height);
+    return await new Promise<Blob>((resolve, reject) => canvas.toBlob(
+      (result) => result ? resolve(result) : reject(new Error("캐릭터 참조 확대본을 만들지 못했습니다.")),
+      "image/jpeg",
+      0.94,
+    ));
+  } finally {
+    URL.revokeObjectURL(url);
+  }
 }
 
 export function downloadBlob(blob: Blob, filename: string): void {

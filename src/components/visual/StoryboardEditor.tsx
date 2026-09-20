@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import Image from "next/image";
 import {
   ArrowDown,
   ArrowUp,
@@ -25,6 +26,7 @@ import {
   Type,
   Undo2,
   Unlock,
+  Upload,
   User,
   X,
 } from "lucide-react";
@@ -34,6 +36,7 @@ import { CHARACTER_POSE_PRESETS, resolveCharacterRig } from "@/lib/storyboardRig
 import { downloadBlob, getMediaAsset } from "@/lib/mediaStorage";
 import StoredImage from "@/components/visual/StoredImage";
 import { composeStoryboardPng } from "@/lib/storyboardComposite";
+import AiActivityBanner from "@/components/AiActivityBanner";
 
 type Props = {
   document: StoryboardDocument;
@@ -43,8 +46,11 @@ type Props = {
   sceneAssetId?: string;
   sceneStale?: boolean;
   generatingScene?: boolean;
+  detectingAllPoses?: boolean;
   onChange: (document: StoryboardDocument) => void;
   onRegenerateLayer: (layerId: string) => void;
+  onDetectAllPoses: () => void;
+  onSetPoseReference: (layerId: string, file: File | null) => void;
   onGenerateScene: () => void;
 };
 
@@ -231,11 +237,13 @@ function LayoutControlOverlay({
   element,
   label,
   selected,
+  flipped,
   onJointPointerDown,
 }: {
   element: StoryboardElement;
   label: string;
   selected: boolean;
+  flipped?: boolean;
   onJointPointerDown: (event: React.PointerEvent, jointKey: CharacterJointKey) => void;
 }) {
   if (element.type !== "character") {
@@ -248,7 +256,10 @@ function LayoutControlOverlay({
     );
   }
   const rig = resolveCharacterRig(element);
-  const point = (key: CharacterJointKey) => ({ x: rig[key].x * element.width, y: rig[key].y * element.height });
+  const point = (key: CharacterJointKey) => ({
+    x: (flipped ? 1 - rig[key].x : rig[key].x) * element.width,
+    y: rig[key].y * element.height,
+  });
   const segments: Array<[CharacterJointKey, CharacterJointKey]> = [
     ["head", "neck"], ["neck", "leftShoulder"], ["neck", "rightShoulder"],
     ["leftShoulder", "leftElbow"], ["leftElbow", "leftHand"],
@@ -275,22 +286,43 @@ function LayoutControlOverlay({
   );
 }
 
-export default function StoryboardEditor({ document, characters, staleLayerIds = new Set(), generatingLayerIds = new Set(), sceneAssetId, sceneStale, generatingScene, onChange, onRegenerateLayer, onGenerateScene }: Props) {
+export default function StoryboardEditor({ document, characters, staleLayerIds = new Set(), generatingLayerIds = new Set(), sceneAssetId, sceneStale, generatingScene, detectingAllPoses, onChange, onRegenerateLayer, onDetectAllPoses, onSetPoseReference, onGenerateScene }: Props) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
   const [finalView, setFinalView] = useState(Boolean(sceneAssetId));
   const [showBlocking, setShowBlocking] = useState(false);
+  const [showAdvancedPose, setShowAdvancedPose] = useState(false);
+  const [generationSeconds, setGenerationSeconds] = useState(0);
   const undoStack = useRef<StoryboardDocument[]>([]);
   const redoStack = useRef<StoryboardDocument[]>([]);
   const pointerAction = useRef<PointerAction | null>(null);
   const svgRef = useRef<SVGSVGElement>(null);
 
   const selected = document.elements.find((element) => element.id === selectedId);
+  const selectedCharacter = selected?.type === "character"
+    ? characters.find((character) => character.id === selected.characterId)
+    : undefined;
   const characterNames = useMemo(() => new Map(characters.map((character) => [character.id, character.name])), [characters]);
   const visibleElements = document.elements
     .filter((element) => element.visible !== false && (!finalView || !sceneAssetId || isOverlayElement(element)))
     .sort((left, right) => left.zIndex - right.zIndex);
-  const imageLayers = visibleElements.filter((element) => ["background", "character", "prop"].includes(element.type) && element.assetId);
+  const hasImageLayers = visibleElements.some((element) => ["background", "character", "prop"].includes(element.type) && element.assetId);
+  const generatingThisStoryboard = document.elements.some((element) => generatingLayerIds.has(element.id));
+  const generationStep = generationSeconds < 8
+    ? "콘티의 구도와 레이어를 확인하고 있어요"
+    : generationSeconds < 22
+      ? "캐릭터 시트와 표정을 장면에 맞추고 있어요"
+      : "Gemini가 완성 장면을 그리고 있어요";
+
+  useEffect(() => {
+    if (!generatingScene) {
+      setGenerationSeconds(0);
+      return;
+    }
+    const startedAt = Date.now();
+    const timer = window.setInterval(() => setGenerationSeconds(Math.floor((Date.now() - startedAt) / 1000)), 1000);
+    return () => window.clearInterval(timer);
+  }, [generatingScene]);
 
   const apply = (next: StoryboardDocument, remember = true) => {
     if (remember) {
@@ -311,6 +343,22 @@ export default function StoryboardEditor({ document, characters, staleLayerIds =
       x: ((event.clientX - rect.left) / rect.width) * document.width,
       y: ((event.clientY - rect.top) / rect.height) * document.height,
     };
+  };
+
+  const elementLocalPoint = (event: React.PointerEvent, element: StoryboardElement) => {
+    const rect = svgRef.current?.getBoundingClientRect();
+    if (!rect) return { x: 0, y: 0 };
+    const canvasX = ((event.clientX - rect.left) / rect.width) * document.width;
+    const canvasY = ((event.clientY - rect.top) / rect.height) * document.height;
+    const centerX = element.x + element.width / 2;
+    const centerY = element.y + element.height / 2;
+    const radians = -element.rotation * Math.PI / 180;
+    const dx = canvasX - centerX;
+    const dy = canvasY - centerY;
+    let localX = dx * Math.cos(radians) - dy * Math.sin(radians) + element.width / 2;
+    const localY = dx * Math.sin(radians) + dy * Math.cos(radians) + element.height / 2;
+    if (element.flipX) localX = element.width - localX;
+    return { x: localX, y: localY };
   };
 
   const startPointer = (event: React.PointerEvent, element: StoryboardElement, mode: "drag" | "resize") => {
@@ -379,12 +427,13 @@ export default function StoryboardEditor({ document, characters, staleLayerIds =
     const dy = current.y - action.startY;
     if (action.mode === "joint" && action.jointKey) {
       const baseRig = resolveCharacterRig(action.original);
+      const local = elementLocalPoint(event, action.original);
       updateElement(action.elementId, {
         characterRig: {
           ...baseRig,
           [action.jointKey]: {
-            x: Math.min(1, Math.max(0, (current.x - action.original.x) / action.original.width)),
-            y: Math.min(1, Math.max(0, (current.y - action.original.y) / action.original.height)),
+            x: Math.min(1, Math.max(0, local.x / action.original.width)),
+            y: Math.min(1, Math.max(0, local.y / action.original.height)),
           },
         },
       }, false);
@@ -506,35 +555,29 @@ export default function StoryboardEditor({ document, characters, staleLayerIds =
           <button type="button" onClick={() => addElement("sfx")} className="editor-tool"><Type className="w-3.5 h-3.5" /> 효과음</button>
         </div>
         <div className="flex items-center gap-1.5">
-          {selected?.type === "character" && !finalView && <button type="button" onClick={() => setShowBlocking((value) => !value)} className={`editor-tool ${showBlocking ? "border-[#7C3AED] bg-[#F5F3FF] text-[#5B21B6]" : ""}`}><User className="w-3.5 h-3.5" /> {showBlocking ? "포즈 핸들 닫기" : "포즈 수정"}</button>}
+          {!finalView && visibleElements.some((element) => element.type === "character") && <button type="button" onClick={() => setShowBlocking((value) => !value)} className={`editor-tool ${showBlocking ? "border-[#7C3AED] bg-[#F5F3FF] text-[#5B21B6]" : ""}`}><User className="w-3.5 h-3.5" /> {showBlocking ? "전체 포즈 닫기" : "전체 포즈 보기"}</button>}
+          {!finalView && visibleElements.some((element) => element.type === "character" && element.assetId) && (
+            <button type="button" disabled={detectingAllPoses} onClick={onDetectAllPoses} className="editor-tool">
+              <RefreshCw className={`h-3.5 w-3.5 ${detectingAllPoses ? "animate-spin" : ""}`} /> {detectingAllPoses ? "모두 맞추는 중..." : "그림에 포즈 모두 맞추기"}
+            </button>
+          )}
           {sceneAssetId && <button type="button" onClick={() => setFinalView((value) => !value)} className="editor-tool"><MousePointer2 className="w-3.5 h-3.5" /> {finalView ? "구도 편집" : "완성 보기"}</button>}
           <button type="button" onClick={() => setExpanded((value) => !value)} className="editor-tool">{expanded ? <X className="w-3.5 h-3.5" /> : <Expand className="w-3.5 h-3.5" />}</button>
         </div>
       </div>
 
+      <AiActivityBanner
+        active={generatingThisStoryboard || Boolean(detectingAllPoses)}
+        title={detectingAllPoses ? "AI가 모든 캐릭터의 포즈를 맞추고 있어요" : "AI가 선택한 레이어를 다시 그리고 있어요"}
+        messages={detectingAllPoses
+          ? ["캐릭터 그림을 한 명씩 확인하고 있어요.", "머리·어깨·손·무릎·발 위치를 찾고 있어요.", "찾은 관절을 콘티 좌표에 맞춰 저장하고 있어요."]
+          : ["콘티의 위치와 포즈 지시를 확인하고 있어요.", "캐릭터 시트와 참고 포즈를 비교하고 있어요.", "Gemini가 새 레이어를 그리고 있어요.", "생성된 그림에서 실제 관절 위치를 분석하고 있어요."]}
+      />
+
       <div className={`grid gap-3 ${expanded ? "lg:grid-cols-[1fr_280px]" : "xl:grid-cols-[1fr_240px]"}`}>
         <div className="relative bg-[#E9E4DC] rounded-xl p-3 min-h-[260px] flex items-center justify-center overflow-hidden">
           <div className="relative w-full max-h-[76vh] shadow-xl bg-white" style={{ aspectRatio: `${document.width}/${document.height}` }}>
             {sceneAssetId && finalView && <StoredImage assetId={sceneAssetId} alt="생성된 웹툰 장면" className="absolute inset-0 w-full h-full object-cover" />}
-            {!finalView && imageLayers.map((layer) => (
-              <StoredImage
-                key={layer.id}
-                assetId={layer.assetId}
-                alt={`${layer.text || labelForType(layer.type)} 콘티 레이어`}
-                className="absolute pointer-events-none select-none"
-                style={{
-                  left: `${layer.x / document.width * 100}%`,
-                  top: `${layer.y / document.height * 100}%`,
-                  width: `${layer.width / document.width * 100}%`,
-                  height: `${layer.height / document.height * 100}%`,
-                  objectFit: layer.type === "background" ? "cover" : "contain",
-                  transform: `rotate(${layer.rotation}deg) scaleX(${layer.flipX ? -1 : 1})`,
-                  transformOrigin: "center",
-                  opacity: layer.opacity ?? 1,
-                  zIndex: layer.zIndex + 100,
-                }}
-              />
-            ))}
             <svg
               ref={svgRef}
               viewBox={`0 0 ${document.width} ${document.height}`}
@@ -544,7 +587,7 @@ export default function StoryboardEditor({ document, characters, staleLayerIds =
               onPointerCancel={() => { pointerAction.current = null; }}
               onPointerDown={() => setSelectedId(null)}
             >
-              {!finalView && imageLayers.length === 0 && <rect width={document.width} height={document.height} fill="#FBF9F6" />}
+              {!finalView && !hasImageLayers && <rect width={document.width} height={document.height} fill="#FBF9F6" />}
               {visibleElements.map((element) => (
                 <g
                   key={element.id}
@@ -553,12 +596,27 @@ export default function StoryboardEditor({ document, characters, staleLayerIds =
                   onPointerDown={(event) => startPointer(event, element, "drag")}
                   className={element.locked ? "cursor-not-allowed" : "cursor-move"}
                 >
+                  {!finalView && element.assetId && ["background", "character", "prop"].includes(element.type) && (
+                    <g transform={element.flipX ? `translate(${element.width} 0) scale(-1 1)` : undefined} pointerEvents="none">
+                      <foreignObject width={element.width} height={element.height}>
+                        <div className="h-full w-full overflow-hidden" style={{ opacity: showBlocking && selectedId === element.id && element.type === "character" ? 0.42 : 1 }}>
+                          <StoredImage
+                            assetId={element.assetId}
+                            alt={`${element.text || labelForType(element.type)} 콘티 레이어`}
+                            className="h-full w-full select-none"
+                            style={{ objectFit: element.type === "background" ? "cover" : "contain" }}
+                          />
+                        </div>
+                      </foreignObject>
+                    </g>
+                  )}
                   {!finalView && ["background", "character", "prop"].includes(element.type) ? (
-                    !element.assetId || (showBlocking && element.type === "character" && selectedId === element.id) ? (
+                    !element.assetId || (showBlocking && element.type === "character") ? (
                       <LayoutControlOverlay
                         element={element}
                         label={element.characterId ? characterNames.get(element.characterId) ?? element.text : element.text || labelForType(element.type)}
                         selected={selectedId === element.id}
+                        flipped={element.flipX}
                         onJointPointerDown={(event, jointKey) => startJointPointer(event, element, jointKey)}
                       />
                     ) : <rect width={element.width} height={element.height} fill="transparent" />
@@ -580,6 +638,22 @@ export default function StoryboardEditor({ document, characters, staleLayerIds =
                 </g>
               ))}
             </svg>
+            {generatingScene && (
+              <div className="absolute inset-0 z-[2000] flex items-center justify-center bg-[#17131F]/70 p-5 backdrop-blur-[2px]" role="status" aria-live="polite">
+                <div className="w-full max-w-[320px] rounded-2xl border border-white/20 bg-white p-5 text-center shadow-2xl">
+                  <div className="mx-auto mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-[#F5F3FF] text-[#7C3AED]">
+                    <RefreshCw className="h-6 w-6 animate-spin" />
+                  </div>
+                  <p className="text-sm font-bold text-[#1A1A1A]">웹툰 장면을 생성하고 있어요</p>
+                  <p className="mt-1.5 text-[11px] leading-relaxed text-[#6B625C]">{generationStep}</p>
+                  <div className="mt-4 h-2 overflow-hidden rounded-full bg-[#EDE9FE]">
+                    <div className="h-full w-2/5 animate-[webtoon-progress_1.4s_ease-in-out_infinite] rounded-full bg-gradient-to-r from-[#A78BFA] to-[#7C3AED]" />
+                  </div>
+                  <p className="mt-3 text-[10px] font-medium text-[#8C837A]">{generationSeconds}초 경과 · 보통 30초~2분 정도 걸려요</p>
+                  <p className="mt-1 text-[10px] text-[#ADA8A0]">완료될 때까지 이 화면을 닫지 마세요.</p>
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
@@ -640,24 +714,59 @@ export default function StoryboardEditor({ document, characters, staleLayerIds =
                     <option value="">캐릭터 선택</option>
                     {characters.map((character) => <option key={character.id} value={character.id}>{character.name || "이름 없음"}</option>)}
                   </select>
-                  <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5">
-                    <p className="text-[11px] font-bold text-amber-800">포즈를 직접 수정할 수 있어요</p>
-                    <p className="mt-0.5 text-[10px] leading-relaxed text-amber-700">캔버스의 노란 관절점을 드래그하면 머리, 팔꿈치, 손, 무릎, 발이 각각 움직입니다.</p>
+                  <div className={`flex items-center justify-between rounded-lg border px-2.5 py-2 text-[10px] ${selectedCharacter?.imageAssetId ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-red-200 bg-red-50 text-red-700"}`}>
+                    <span className="font-semibold">{selectedCharacter?.imageAssetId ? "캐릭터 시트 연결됨" : "캐릭터 시트가 필요해요"}</span>
+                    <span>{selectedCharacter?.imageAssetId ? "전체 시트 + 전신 확대 참조" : "캐릭터 메뉴에서 먼저 생성"}</span>
                   </div>
                   <div>
-                    <label className="visual-label">포즈 프리셋</label>
-                    <div className="mt-1.5 grid grid-cols-3 gap-1.5">
+                    <div className="flex items-center justify-between">
+                      <label className="visual-label">1. 그림으로 자세 선택</label>
+                      <span className="text-[9px] text-[#9A8F86]">선택 후 위 버튼으로 적용</span>
+                    </div>
+                    <div className="mt-1.5 grid grid-cols-3 gap-2">
                       {CHARACTER_POSE_PRESETS.map((preset) => (
                         <button
                           key={preset.id}
                           type="button"
-                          onClick={() => updateElement(selected.id, { pose: preset.label, characterRig: structuredClone(preset.rig) })}
-                          className="rounded-lg border border-[#E4DDF8] bg-white px-2 py-1.5 text-[10px] font-medium text-[#5B21B6] transition hover:border-[#A78BFA] hover:bg-[#F5F3FF] active:scale-95"
+                          onClick={() => { updateElement(selected.id, { pose: preset.label, characterRig: structuredClone(preset.rig), poseReferenceAssetId: undefined }); setShowBlocking(false); }}
+                          className={`overflow-hidden rounded-xl border bg-white text-left transition hover:-translate-y-0.5 hover:shadow-md active:scale-95 ${selected.pose === preset.label && !selected.poseReferenceAssetId ? "border-[#7C3AED] ring-2 ring-[#7C3AED]/15" : "border-[#E4DDF8]"}`}
                         >
-                          {preset.label}
+                          <span className="relative block aspect-[4/3] bg-[#F4F1EC]"><Image src={`/pose-guides/${preset.id}.jpg`} alt={`${preset.label} 자세`} fill sizes="100px" className="object-cover" /></span>
+                          <span className="block px-2 py-1.5 text-center text-[10px] font-semibold text-[#5B21B6]">{preset.label}</span>
                         </button>
                       ))}
                     </div>
+                  </div>
+                  <div className="rounded-xl border border-[#E4DDF8] bg-[#FAF8FF] p-3">
+                    <label className="visual-label">2. 말로 원하는 자세 설명</label>
+                    <textarea value={selected.pose ?? ""} onChange={(event) => updateElement(selected.id, { pose: event.target.value, poseReferenceAssetId: undefined })} placeholder="예: 오른손에 사진을 들고 복도 안쪽으로 반걸음 먼저 내딛기" className="visual-input mt-1.5 min-h-20 resize-none" />
+                    <input value={selected.expression ?? ""} onChange={(event) => updateElement(selected.id, { expression: event.target.value })} placeholder="표정: 무심한 척하지만 날카로운 눈빛" className="visual-input mt-2" />
+                    <button type="button" disabled={generatingLayerIds.has(selected.id)} onClick={() => onRegenerateLayer(selected.id)} className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-lg bg-[#7C3AED] px-3 py-2 text-[11px] font-semibold text-white disabled:opacity-50">
+                      <Sparkles className="h-3.5 w-3.5" /> 이 설명으로 다시 그리기
+                    </button>
+                  </div>
+                  <div className="rounded-xl border border-[#DDE7F5] bg-[#F8FBFF] p-3">
+                    <label className="visual-label">3. 참고할 포즈 사진</label>
+                    {selected.poseReferenceAssetId ? (
+                      <div className="mt-2 flex gap-2">
+                        <StoredImage assetId={selected.poseReferenceAssetId} alt="사용자가 올린 포즈 참고 이미지" className="h-24 w-20 rounded-lg border border-[#DDE7F5] bg-white object-contain" />
+                        <div className="flex flex-1 flex-col justify-center gap-1.5">
+                          <p className="text-[10px] leading-relaxed text-[#58708D]">이 사진에서는 자세만 가져오고 캐릭터 외형은 시트를 유지합니다.</p>
+                          <button type="button" onClick={() => onSetPoseReference(selected.id, null)} className="editor-tool justify-center">참고 사진 제거</button>
+                        </div>
+                      </div>
+                    ) : (
+                      <label className="mt-2 flex cursor-pointer items-center justify-center gap-1.5 rounded-lg border border-dashed border-[#AFC6E3] bg-white px-3 py-3 text-[11px] font-semibold text-[#4B6F97] hover:bg-[#F2F7FC]">
+                        <Upload className="h-3.5 w-3.5" /> 사진 또는 포즈 이미지 올리기
+                        <input type="file" accept="image/png,image/jpeg,image/webp" className="hidden" onChange={(event) => { const file = event.target.files?.[0]; if (file) onSetPoseReference(selected.id, file); event.currentTarget.value = ""; }} />
+                      </label>
+                    )}
+                  </div>
+                  <div className="rounded-xl border border-[#EBE7E0] bg-[#FBF9F6] p-3">
+                    <button type="button" onClick={() => { setShowAdvancedPose((value) => !value); setShowBlocking(true); }} className="flex w-full items-center justify-between text-[11px] font-bold text-[#514A45]">
+                      <span>4. 고급 조정 · 관절 직접 수정</span><span>{showAdvancedPose ? "접기" : "열기"}</span>
+                    </button>
+                    {showAdvancedPose && <p className="mt-2 text-[10px] leading-relaxed text-[#7A7067]">그림 위 노란 관절을 움직여 미세 조정합니다. 보라색 박스 안쪽을 끌면 캐릭터 전체가 이동합니다.</p>}
                   </div>
                 </div>
               )}
@@ -749,12 +858,6 @@ export default function StoryboardEditor({ document, characters, staleLayerIds =
                   </select>
                 </div>
               )}
-              {selected.type === "character" && (
-                <div className="grid grid-cols-2 gap-2">
-                  <input value={selected.pose ?? ""} onChange={(event) => updateElement(selected.id, { pose: event.target.value })} placeholder="포즈 메모" className="visual-input" />
-                  <input value={selected.expression ?? ""} onChange={(event) => updateElement(selected.id, { expression: event.target.value })} placeholder="표정 메모" className="visual-input" />
-                </div>
-              )}
               <label className="visual-label">회전 {Math.round(selected.rotation)}°</label>
               <input type="range" min="-180" max="180" value={selected.rotation} onChange={(event) => updateElement(selected.id, { rotation: Number(event.target.value) })} className="w-full accent-[#7C3AED]" />
               <div className="grid grid-cols-2 gap-2">
@@ -788,8 +891,8 @@ export default function StoryboardEditor({ document, characters, staleLayerIds =
         <div className="flex items-center gap-2">
           {staleLayerIds.size > 0 && <span className="text-[10px] text-orange-600 bg-orange-50 px-2 py-1 rounded-full">수정 적용이 필요한 레이어 {staleLayerIds.size}개</span>}
           {sceneStale && sceneAssetId && <span className="text-[10px] text-orange-600 bg-orange-50 px-2 py-1 rounded-full">구도가 변경되어 재생성이 필요해요</span>}
-          <button type="button" disabled={generatingScene} onClick={onGenerateScene} className="inline-flex items-center gap-1.5 rounded-full bg-[#1A1A1A] text-white text-xs font-semibold px-4 py-2 hover:bg-black disabled:opacity-50">
-            <Sparkles className="w-3.5 h-3.5" /> {generatingScene ? "콘티 좌표를 고정해 생성 중..." : sceneAssetId ? "이 콘티로 다시 생성" : "이 콘티 고정으로 장면 생성"}
+          <button type="button" disabled={generatingScene} onClick={onGenerateScene} className="inline-flex items-center gap-1.5 rounded-full bg-[#1A1A1A] text-white text-xs font-semibold px-4 py-2 hover:bg-black disabled:cursor-wait disabled:opacity-80">
+            {generatingScene ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />} {generatingScene ? `장면 생성 중 · ${generationSeconds}초` : sceneAssetId ? "이 콘티로 다시 생성" : "이 콘티 고정으로 장면 생성"}
           </button>
         </div>
       </div>

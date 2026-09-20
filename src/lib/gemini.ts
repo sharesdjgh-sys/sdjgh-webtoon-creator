@@ -2,8 +2,10 @@ import "server-only";
 
 import { GoogleGenAI } from "@google/genai";
 import { z } from "zod";
-import type { PanelAspectRatio, StoryboardDocument, StoryboardElement } from "@/lib/storage";
+import type { CharacterRig, PanelAspectRatio, StoryboardDocument, StoryboardElement } from "@/lib/storage";
 import { resolveCharacterRig } from "@/lib/storyboardRig";
+import { webtoonShotPrompt } from "@/lib/webtoonShots";
+import { cleanCharacterMentions } from "@/lib/characterMentions";
 
 const IMAGE_MODEL = process.env.GEMINI_IMAGE_MODEL ?? "gemini-3.1-flash-image";
 const LAYOUT_MODEL = process.env.GEMINI_LAYOUT_MODEL ?? "gemini-3.8-flash";
@@ -62,6 +64,22 @@ const generatedRigSchema = z.object({
   rightKnee: generatedJointSchema,
   rightFoot: generatedJointSchema,
 });
+
+const CHARACTER_RIG_JSON_SCHEMA = {
+  type: "object",
+  properties: Object.fromEntries([
+    "head", "neck", "leftShoulder", "leftElbow", "leftHand", "rightShoulder", "rightElbow", "rightHand",
+    "leftHip", "rightHip", "leftKnee", "leftFoot", "rightKnee", "rightFoot",
+  ].map((joint) => [joint, {
+    type: "object",
+    properties: { x: { type: "number" }, y: { type: "number" } },
+    required: ["x", "y"],
+  }])),
+  required: [
+    "head", "neck", "leftShoulder", "leftElbow", "leftHand", "rightShoulder", "rightElbow", "rightHand",
+    "leftHip", "rightHip", "leftKnee", "leftFoot", "rightKnee", "rightFoot",
+  ],
+} as const;
 
 const generatedElementSchema = z.object({
   id: z.string().max(100).optional(),
@@ -139,6 +157,13 @@ const STORYBOARD_JSON_SCHEMA = {
 
 export type CharacterVisualInput = z.infer<typeof characterInputSchema>;
 export type ProjectVisualContext = z.infer<typeof projectVisualContextSchema>;
+type CharacterReferenceInput = {
+  character: CharacterVisualInput;
+  data: string;
+  mimeType: string;
+  heroData: string;
+  heroMimeType: string;
+};
 
 const STYLE_DESCRIPTIONS: Record<z.infer<typeof artDirectionSchema>["preset"], string> = {
   "clean-webtoon": "clean Korean webtoon line art, polished cel shading, readable silhouette, contemporary digital comic finish",
@@ -159,10 +184,42 @@ function artStyle(context: ProjectVisualContext): string {
   return context.artDirection.custom ? `${base}. Additional art direction: ${context.artDirection.custom}` : base;
 }
 
+function identityLock(character: CharacterVisualInput): string {
+  const profile = character.visualProfile;
+  return `IMMUTABLE IDENTITY for ${character.name}:
+- overall approved appearance=${character.appearance || "exactly as shown on the sheet"}
+- apparent age=${character.age || "unspecified"}; gender/presentation=${profile.gender || "as shown on the sheet"}; height/build=${profile.heightBuild || "exactly as shown"}
+- face/jaw=${profile.faceShape || "exactly as shown"}; eyes=${profile.eyes || "exactly as shown"}; nose/mouth=${profile.noseMouth || "exactly as shown"}; skin=${profile.skinTone || "exactly as shown"}
+- hair silhouette/fringe/length/color=${profile.hair || "exactly as shown"}
+- fixed distinguishing marks=${profile.distinctiveFeatures || "none beyond the sheet"}
+- fixed outfit=${profile.outfit || "the approved sheet outfit"}; shoes=${profile.shoes || "as shown"}; accessories=${profile.accessories || "as shown"}
+- fixed palette=${profile.colorPalette || "sample colors directly from the sheet"}
+- additional lock=${character.imageInstructions || "none"}`;
+}
+
 function imageResult(interaction: { output_image?: { data?: string; mime_type?: string } }): { data: string; mimeType: string } {
   const data = interaction.output_image?.data;
   if (!data) throw new Error("Gemini가 이미지 결과를 반환하지 않았습니다.");
   return { data, mimeType: interaction.output_image?.mime_type ?? "image/jpeg" };
+}
+
+export async function detectCharacterRig(image: { data: string; mimeType: string }): Promise<CharacterRig> {
+  const interaction = await client().interactions.create({
+    model: LAYOUT_MODEL,
+    input: [
+      { type: "image" as const, mime_type: image.mimeType, data: image.data },
+      { type: "text" as const, text: `Analyze the single character in this isolated image and locate the character's actual visible anatomy.
+Return all 14 joints as normalized coordinates from 0 to 1 relative to the ENTIRE image: x=0 is the left image edge, x=1 the right edge, y=0 the top edge, y=1 the bottom edge.
+Use the character's anatomical left/right, not the viewer's left/right. Put head at the center of the skull/face, neck at its base, shoulders at arm attachment points, hips at leg attachment points, and hands/feet at their visible centers. Infer covered joints from the body silhouette. Follow the artwork exactly; do not return an idealized standing skeleton.` },
+    ],
+    response_format: {
+      type: "text",
+      mime_type: "application/json",
+      schema: CHARACTER_RIG_JSON_SCHEMA,
+    },
+  });
+  if (!interaction.output_text) throw new Error("생성된 캐릭터의 실제 포즈를 분석하지 못했습니다.");
+  return generatedRigSchema.parse(JSON.parse(interaction.output_text));
 }
 
 export function buildCharacterSheetPrompt(
@@ -250,7 +307,7 @@ function clampElement(
   index: number,
   width: number,
   height: number,
-  characterIds: Set<string>,
+  characters: Map<string, string>,
 ): StoryboardElement {
   const elementWidth = Math.min(Math.max(element.width, 50), width);
   const elementHeight = Math.min(Math.max(element.height, 40), height);
@@ -263,11 +320,12 @@ function clampElement(
     height: elementHeight,
     rotation: Math.min(Math.max(element.rotation, -180), 180),
     zIndex: index,
-    characterId: element.characterId && characterIds.has(element.characterId) ? element.characterId : undefined,
+    text: cleanCharacterMentions(element.text, [...characters].map(([id, name]) => ({ id, name }))),
+    characterId: element.characterId && characters.has(element.characterId) ? element.characterId : undefined,
     balloonStyle: element.type === "speech" ? (element.balloonStyle ?? "normal") : undefined,
     tailX: element.type === "speech" ? Math.min(2, Math.max(-1, element.tailX ?? 0.25)) : undefined,
     tailY: element.type === "speech" ? Math.min(2, Math.max(-1, element.tailY ?? 1.22)) : undefined,
-    speakerCharacterId: element.type === "speech" && element.speakerCharacterId && characterIds.has(element.speakerCharacterId)
+    speakerCharacterId: element.type === "speech" && element.speakerCharacterId && characters.has(element.speakerCharacterId)
       ? element.speakerCharacterId
       : undefined,
     visible: true,
@@ -292,7 +350,7 @@ export async function generateStoryboardLayout(input: {
 Canvas viewBox: 0 0 ${width} ${height} (${input.cut.aspectRatio})
 Episode ${input.episode.number}: ${input.episode.title}
 Episode context: ${input.episode.synopsis}
-Camera angle: ${input.cut.angle}
+Camera angle: ${input.cut.angle} — ${webtoonShotPrompt(input.cut.angle)}
 Scene: ${input.cut.description || "Infer a clear beat from the episode context"}
 Dialogue: ${input.cut.dialogue || "None"}
 Sound effect: ${input.cut.soundEffect || "None"}
@@ -321,7 +379,7 @@ Return a practical SVG scene graph using only the supplied JSON schema.
   });
   if (!interaction.output_text) throw new Error("Gemini가 콘티 구성을 반환하지 않았습니다.");
   const parsed = generatedDocumentSchema.parse(JSON.parse(interaction.output_text));
-  const ids = new Set(input.characters.map((character) => character.id));
+  const characterNames = new Map(input.characters.map((character) => [character.id, character.name]));
   return {
     version: 2,
     aspectRatio: input.cut.aspectRatio,
@@ -343,7 +401,7 @@ Return a practical SVG scene graph using only the supplied JSON schema.
         opacity: 1,
         flipX: false,
       },
-      ...parsed.elements.map((element, index) => clampElement(element, index, width, height, ids)),
+      ...parsed.elements.map((element, index) => clampElement(element, index, width, height, characterNames)),
     ],
   };
 }
@@ -364,18 +422,22 @@ export async function generateStoryboardLayer(input: {
   storyboard: StoryboardDocument;
   layerId: string;
   layoutImage: { data: string; mimeType: string };
-  references: Array<{ character: CharacterVisualInput; data: string; mimeType: string }>;
-}): Promise<{ data: string; mimeType: string; prompt: string }> {
+  references: CharacterReferenceInput[];
+  poseReference?: { data: string; mimeType: string };
+}): Promise<{ data: string; mimeType: string; prompt: string; characterRig?: CharacterRig }> {
   const layer = input.storyboard.elements.find((element) => element.id === input.layerId);
   if (!layer || !["background", "character", "prop"].includes(layer.type)) throw new Error("생성할 콘티 레이어를 찾지 못했습니다.");
   const reference = layer.type === "character"
     ? input.references.find(({ character }) => character.id === layer.characterId)
     : undefined;
+  if (layer.type === "character" && !reference) {
+    throw new Error(`${layer.text || "선택한 캐릭터"}의 캐릭터 시트 참조가 요청에 포함되지 않았습니다.`);
+  }
   const rig = layer.type === "character" ? resolveCharacterRig(layer) : undefined;
   const rigText = rig ? Object.entries(rig).map(([name, point]) => `${name}=(${point.x.toFixed(3)},${point.y.toFixed(3)})`).join(", ") : "";
   const common = `Project: ${input.context.title}; genre=${input.context.genre}; setting=${input.context.setting}
 Episode context: ${input.episode.synopsis}
-Panel camera: ${input.cut.angle}
+Panel camera: ${input.cut.angle} — ${webtoonShotPrompt(input.cut.angle)}
 Panel action: ${input.cut.description}
 Art direction: monochrome Korean webtoon storyboard rough, confident pencil/ink construction lines, selective hatching, readable acting, unfinished production drawing.`;
   const prompt = layer.type === "background"
@@ -387,8 +449,10 @@ Use input image 1 as the exact camera framing and perspective map. Establish hor
       ? `Draw ONE isolated character layer for a professional webtoon storyboard.
 ${common}
 Character: ${reference?.character.name ?? layer.text}; pose=${layer.pose || "follow the joint rig"}; expression=${layer.expression || "match the scene"}.
+${reference ? identityLock(reference.character) : ""}
 The normalized joint rig inside this layer is: ${rigText}.
-Use input image 1 only for pose/blocking and input image 2, when present, as the approved character design. Preserve face shape, hair silhouette, body proportions, outfit and accessories. The pose must match every joint, weight balance and facing direction. Draw readable anatomy, hands and feet; do not replace it with a stick figure or generic standing pose.
+REFERENCE PRIORITY: input image 2 is the complete approved design sheet and input image 3 is an enlarged crop of its canonical full-body hero figure. These two images are the single source of truth for identity and design. ${input.poseReference ? "Input image 4 is the creator-selected POSE REFERENCE: copy its body gesture, limb bends, weight balance and facing direction, but never copy that person's identity, face, clothes or background." : "Input image 1 supplies pose and placement."} If the layout diagram conflicts with the approved identity references, keep ONLY its placement/pose and discard its face, hair, body design and clothes. Do not redesign, beautify, simplify, age up/down, recolor, change hairstyle, change uniform, remove accessories, or blend in features from another person.
+Preserve the exact face geometry, eye design, hair silhouette, body proportions, outfit construction, shoes, accessories and palette from the approved sheet. Change only pose, expression, viewing angle and lighting. The pose must match every joint, weight balance and facing direction. Draw readable anatomy, hands and feet; do not replace it with a stick figure or generic standing pose.
 Output exactly one character, centered and fully visible, on pure white with no floor, shadow, background, props, text, balloon, border, label or watermark. Monochrome rough line art only.`
       : `Draw ONE isolated major prop layer for a professional webtoon storyboard.
 ${common}
@@ -397,17 +461,23 @@ Prop: ${layer.text}. Use input image 1 for orientation and intended scale. Draw 
     model: IMAGE_MODEL,
     input: [
       { type: "image" as const, mime_type: input.layoutImage.mimeType, data: input.layoutImage.data },
-      ...(reference ? [{ type: "image" as const, mime_type: reference.mimeType, data: reference.data }] : []),
+      ...(reference ? [
+        { type: "image" as const, mime_type: reference.mimeType, data: reference.data },
+        { type: "image" as const, mime_type: reference.heroMimeType, data: reference.heroData },
+      ] : []),
+      ...(input.poseReference ? [{ type: "image" as const, mime_type: input.poseReference.mimeType, data: input.poseReference.data }] : []),
       { type: "text" as const, text: prompt },
     ],
     response_format: {
       type: "image",
       mime_type: "image/jpeg",
       aspect_ratio: layerAspectRatio(layer, input.cut.aspectRatio),
-      image_size: layer.type === "background" ? "1K" : "512",
+      image_size: layer.type === "prop" ? "512" : "1K",
     },
   });
-  return { ...imageResult(interaction), prompt };
+  const image = imageResult(interaction);
+  const characterRig = layer.type === "character" ? await detectCharacterRig(image) : undefined;
+  return { ...image, prompt, characterRig };
 }
 
 export async function generateSceneImage(input: {
@@ -416,10 +486,19 @@ export async function generateSceneImage(input: {
   cut: { angle: string; description: string; dialogue: string; soundEffect: string; aspectRatio: PanelAspectRatio };
   storyboard: StoryboardDocument;
   layoutImage: { data: string; mimeType: string };
-  references: Array<{ character: CharacterVisualInput; data: string; mimeType: string }>;
+  references: CharacterReferenceInput[];
 }): Promise<{ data: string; mimeType: string; prompt: string }> {
+  const requiredCharacterIds = new Set(input.storyboard.elements
+    .filter((element) => element.visible !== false && element.type === "character" && element.characterId)
+    .map((element) => element.characterId as string));
+  const providedCharacterIds = new Set(input.references.map(({ character }) => character.id));
+  const missingReference = [...requiredCharacterIds].find((id) => !providedCharacterIds.has(id));
+  if (missingReference) {
+    const element = input.storyboard.elements.find((item) => item.characterId === missingReference);
+    throw new Error(`${element?.text || "장면 속 캐릭터"}의 캐릭터 시트 참조가 누락되었습니다.`);
+  }
   const cast = input.references.map(({ character }, index) =>
-    `Reference image ${index + 2} is the approved design sheet for ${character.name} (${character.role}). Preserve that character's face, hair, outfit, colors and proportions.`
+    `REFERENCE IMAGES ${index * 2 + 2} and ${index * 2 + 3} = the approved full design sheet and enlarged canonical full-body reference for ${character.name} (${character.role}). These are the ONLY identity sources for this character.\n${identityLock(character)}`
   ).join("\n");
   const pct = (value: number, total: number) => `${((value / total) * 100).toFixed(1)}%`;
   const rotate = (x: number, y: number, element: StoryboardElement) => {
@@ -469,7 +548,7 @@ PROJECT
 
 PANEL
 - Aspect ratio: ${input.cut.aspectRatio}
-- Camera: ${input.cut.angle}
+- Camera: ${input.cut.angle} — ${webtoonShotPrompt(input.cut.angle)}
 - Scene: ${input.cut.description}
 - Episode context: ${input.episode.synopsis}
 ${cast}
@@ -482,15 +561,20 @@ COMPOSITION LOCK:
 - Render exactly ${characterCount} character figure(s). Do not add, remove, merge, duplicate, or swap them.
 - Each character's head, hands, elbows, knees and feet must land on the listed JOINTS. Keep the complete body inside its listed bounding box.
 - Preserve every element's bounding box, scale, rotation, overlap and front-to-back layer. Background perspective must support these placements, never move them.
-- The characterId/design-sheet mapping is fixed. Use the matching design sheet only for that figure's identity, outfit, colors and proportions.
+- IDENTITY LOCK HAS HIGHER PRIORITY THAN THE ROUGH LAYOUT. Reference image 1 supplies coordinates and pose only; never copy or invent a face, hairstyle, body design, outfit or color from its rough character drawings.
+- The characterId/design-sheet mapping is fixed. For each figure, reproduce the matching sheet's facial geometry, apparent age, eye shape, hair silhouette, body proportions, exact outfit construction, shoes, accessories and palette. Change only pose, expression, camera angle and scene lighting.
+- Never average or blend features between reference sheets. Never turn distinct cast members into similar-looking generic students. Never redesign a school uniform, remove a signature feature, or substitute a different hairstyle.
 - Keep all RESERVED TYPOGRAPHY AREA boxes visually quiet. Do not place faces, hands or important props inside them.
 - Replace diagram figures and boxes with finished art, but do not reinterpret their blocking. If written scene prose conflicts with the spatial contract, the spatial contract wins.
-- Before returning the image, compare it against reference image 1 from edge to edge and correct any displaced figure or prop.
+- Before returning the image, compare composition against reference image 1, then compare every character separately against their assigned design sheet. Correct any face, hair, apparent age, outfit, accessory, palette or proportion mismatch before finalizing.
 
 IMPORTANT: Produce artwork only. Do not draw speech balloons, dialogue, captions, sound-effect letters, labels, panel borders, logos or watermarks. The application will add exact editable Korean typography afterward.`;
   const imageInputs = [
     { type: "image" as const, mime_type: input.layoutImage.mimeType, data: input.layoutImage.data },
-    ...input.references.map((reference) => ({ type: "image" as const, mime_type: reference.mimeType, data: reference.data })),
+    ...input.references.flatMap((reference) => [
+      { type: "image" as const, mime_type: reference.mimeType, data: reference.data },
+      { type: "image" as const, mime_type: reference.heroMimeType, data: reference.heroData },
+    ]),
     { type: "text" as const, text: prompt },
   ];
   const interaction = await client().interactions.create({
