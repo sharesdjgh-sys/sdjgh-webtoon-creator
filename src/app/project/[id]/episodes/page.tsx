@@ -338,15 +338,23 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
       const targets = storyboard.elements.filter((element) => ["background", "character", "prop"].includes(element.type));
       setLayerGenerationProgress((current) => ({ ...current, [cut.id]: { completed: 0, total: targets.length } }));
       const generated = new Map<string, { assetId: string; sourceHash: string; characterRig?: CharacterRig }>();
+      const failed: string[] = [];
       for (let index = 0; index < targets.length; index += 2) {
         const batch = targets.slice(index, index + 2);
-        const results = await Promise.all(batch.map(async (layer) => {
+        const results = await Promise.allSettled(batch.map(async (layer) => {
           const result = await requestStoryboardLayer(currentProject, episode, draftCut, layer.id);
           const blob = layer.type === "background" ? result.blob : await whiteToTransparentPng(result.blob);
           const asset = await saveMediaAsset({ projectId: id, ownerId: layer.id, ownerType: "storyboard-layer", mimeType: blob.type || "image/png", blob });
           return { layerId: layer.id, assetId: asset.id, sourceHash: result.sourceHash, characterRig: result.characterRig };
         }));
-        results.forEach((result) => generated.set(result.layerId, { assetId: result.assetId, sourceHash: result.sourceHash, characterRig: result.characterRig }));
+        results.forEach((result, offset) => {
+          if (result.status === "fulfilled") {
+            const value = result.value;
+            generated.set(value.layerId, { assetId: value.assetId, sourceHash: value.sourceHash, characterRig: value.characterRig });
+          } else {
+            failed.push(batch[offset].type === "background" ? "배경" : batch[offset].text || "레이어");
+          }
+        });
         setLayerGenerationProgress((current) => ({ ...current, [cut.id]: { completed: Math.min(index + batch.length, targets.length), total: targets.length } }));
       }
       const layeredStoryboard: StoryboardDocument = {
@@ -356,14 +364,20 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
           return result ? { ...element, assetId: result.assetId, assetSourceHash: result.sourceHash, characterRig: result.characterRig ?? element.characterRig } : element;
         }),
       };
+      if (!generated.size) {
+        setVisualError("콘티 그림 생성에 실패했습니다. 기존 콘티는 유지됩니다. 잠시 후 다시 시도해주세요.");
+        return false;
+      }
       replaceCut(cutIdx, (current) => ({
         ...current,
         storyboard: layeredStoryboard,
         storyboardImageAssetId: undefined,
         storyboardImageSourceHash: undefined,
       }));
-      setVisualError("배경·인물·소품을 분리한 레이어 콘티를 생성했습니다.");
-      return true;
+      setVisualError(failed.length
+        ? `생성 완료 ${generated.size}/${targets.length}개. 완성된 배경·레이어는 보존했습니다. 미생성: ${failed.join(", ")}. 해당 레이어만 다시 그릴 수 있습니다.`
+        : "배경·인물·소품을 분리한 레이어 콘티를 생성했습니다.");
+      return failed.length === 0;
     } catch (error) {
       setVisualError(error instanceof Error ? error.message : "레이어 콘티 생성에 실패했습니다.");
       return false;
@@ -1028,8 +1042,8 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
                               </div>
                               <div className="self-center">
                                 <p className="text-xs font-bold text-[#1A1A1A] mb-1">새 장면을 적용할까요?</p>
-                                <p className="text-[10px] text-[#7A7067] mb-3">이 미리보기는 말풍선을 합성하지 않은 AI 원본입니다. 글자·빈 말풍선·가이드·내부 테두리·잘림이 없는지 확인해주세요.</p>
-                                <label className="mb-3 flex items-start gap-2 text-[11px]"><input type="checkbox" checked={Boolean(sceneCandidates[cut.id].reviewed)} onChange={event => { const reviewed = event.target.checked; setSceneCandidates(current => ({ ...current, [cut.id]: { ...current[cut.id], reviewed } })); }} /> AI 원본에 말풍선·가이드·잘림이 없는 것을 확인했습니다.</label>
+                                <p className="text-[10px] text-[#7A7067] mb-3">이 미리보기는 말풍선을 합성하지 않은 AI 원본입니다. 크게 비교에서 인물 크기·위치·포즈와 소품 배치를 대조하고, 불필요한 글자·말풍선·가이드·테두리·잘림이 없는지 확인해주세요.</p>
+                                <label className="mb-3 flex items-start gap-2 text-[11px]"><input type="checkbox" checked={Boolean(sceneCandidates[cut.id].reviewed)} onChange={event => { const reviewed = event.target.checked; setSceneCandidates(current => ({ ...current, [cut.id]: { ...current[cut.id], reviewed } })); }} /> 콘티의 크기·위치·포즈·소품 배치가 유지되고 불필요한 말풍선·가이드·잘림이 없는 것을 확인했습니다.</label>
                                 <div className="flex gap-2">
                                   <button type="button" disabled={!sceneCandidates[cut.id].reviewed} onClick={() => acceptScene(cutIdx)} className="inline-flex items-center gap-1 rounded-full bg-[#7C3AED] text-white px-3 py-1.5 text-[11px] font-semibold"><Check className="w-3 h-3" /> 적용</button>
                                   <button type="button" onClick={() => setSceneCandidates((current) => { const next = { ...current }; delete next[cut.id]; return next; })} className="inline-flex items-center gap-1 rounded-full border border-[#EBE7E0] px-3 py-1.5 text-[11px]"><X className="w-3 h-3" /> 취소</button>

@@ -4,6 +4,7 @@ import { fitImageRect } from "@/lib/panelGeometry";
 import type { StoryboardDocument } from "@/lib/storage";
 import { getMediaAsset } from "@/lib/mediaStorage";
 import { isOverlayElement, drawStoryboardOverlays } from "@/lib/storyboardSvg";
+import { sceneStructureSvg } from "@/lib/cleanGeneration";
 
 function loadImage(source: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
@@ -40,7 +41,7 @@ async function drawBlob(
 
 export async function composeStoryboardPng(
   storyboard: StoryboardDocument,
-  options: { includeOverlays?: boolean; background?: string; strictAssets?: boolean } = {},
+  options: { includeOverlays?: boolean; background?: string; strictAssets?: boolean; missingArtwork?: "geometry" } = {},
 ): Promise<Blob> {
   const canvas = document.createElement("canvas");
   canvas.width = storyboard.width;
@@ -51,10 +52,17 @@ export async function composeStoryboardPng(
   context.fillRect(0, 0, canvas.width, canvas.height);
 
   const imageLayers = storyboard.elements
-    .filter((element) => element.visible !== false && ["background", "character", "prop"].includes(element.type) && element.assetId)
+    .filter((element) => element.visible !== false && ["background", "character", "prop"].includes(element.type))
     .sort((left, right) => left.zIndex - right.zIndex);
   for (const layer of imageLayers) {
-    const asset = await getMediaAsset(layer.assetId);
+    const asset = layer.assetId ? await getMediaAsset(layer.assetId) : undefined;
+    if (!asset && options.missingArtwork === "geometry") {
+      const svg = sceneStructureSvg({ ...storyboard, elements: [layer] }, true);
+      const url = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml;charset=utf-8" }));
+      try { context.drawImage(await loadImage(url), 0, 0, storyboard.width, storyboard.height); }
+      finally { URL.revokeObjectURL(url); }
+      continue;
+    }
     if (!asset && options.strictAssets) throw new Error("콘티 그림 파일이 누락되었습니다. 해당 레이어를 다시 생성해주세요.");
     if (asset) await drawBlob(context, asset.blob, layer);
   }

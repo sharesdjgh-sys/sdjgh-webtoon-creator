@@ -5,22 +5,24 @@ const vm = require("node:vm");
 const ts = require("typescript");
 const cache = new Map(), requests = [], blobs = [], drawn = [];
 const httpRequests = [], assetReads = [];
+const assets = new Map();
+let layoutResponse;
 const context = new Proxy({}, { get: (_, key) => key === "measureText" ? text => ({ width: [...text].length * 20 }) : key === "createLinearGradient" ? (...args) => { drawn.push([key, ...args]); return { addColorStop: (...stop) => drawn.push(["addColorStop", ...stop]) }; } : (...args) => drawn.push([key,...args]), set: (_, key, value) => { drawn.push(["set", key, value]); return true; } });
 const browser = { document: { fonts: { ready: Promise.resolve() }, createElement: () => ({ getContext: () => context, toBlob: callback => callback(new Blob(["canvas"], { type: "image/png" })) }) } };
-class FakeImage { set src(value) { queueMicrotask(() => this.onload()); } }
+class FakeImage { naturalWidth = 900; naturalHeight = 1600; set src(value) { queueMicrotask(() => this.onload()); } }
 function load(file) {
   if (cache.has(file)) return cache.get(file);
   const mod = { exports: {} }; cache.set(file, mod.exports);
   vm.runInNewContext(ts.transpileModule(fs.readFileSync(file,"utf8"), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } }).outputText, {
-    module: mod, exports: mod.exports, structuredClone, Blob, Image: FakeImage,
+    module: mod, exports: mod.exports, structuredClone, Blob, Image: FakeImage, crypto: require("node:crypto").webcrypto,
     fetch: async (url, options) => { httpRequests.push(JSON.parse(options.body)); return { ok: true, json: async () => ({ data: "mock", mimeType: "image/png", prompt: "mock" }) }; },
     window: browser, document: browser.document, process: { env: { GEMINI_API_KEY: "mock-only" } },
     URL: { createObjectURL: blob => { blobs.push(blob); return "blob:test"; }, revokeObjectURL: () => {} },
     require(name) {
       if (name === "server-only") return {};
-      if (name === "@google/genai") return { GoogleGenAI: class { interactions = { create: async input => { requests.push(input); return { output_image: { data: "mock", mime_type: "image/jpeg" } }; } }; } };
+      if (name === "@google/genai") return { GoogleGenAI: class { interactions = { create: async input => { requests.push(input); return layoutResponse ? { output_text: JSON.stringify(layoutResponse) } : { output_image: { data: "mock", mime_type: "image/jpeg" } }; } }; } };
       if (name === "@/lib/mediaStorage") return {
-        sourceHash: JSON.stringify, getMediaAsset: async id => { assetReads.push(id); return null; },
+        sourceHash: JSON.stringify, getMediaAsset: async id => { assetReads.push(id); return assets.get(id) ?? null; },
         blobToBase64: async () => "canvas", base64ToBlob: () => new Blob(["mock"], { type: "image/png" }),
       };
       if (name === "@/lib/panelGeometry") return { ...load("src/lib/panelGeometry.ts"), validatePanelImage: async () => {} };
@@ -58,6 +60,7 @@ async function main() {
   await scene.generateStoryboardLayer({...input,layerId:"bg"});
   prompt = requests[1].input.find(item=>item.type==="text").text;
   assert.ok(prompt.includes("clean empty canvas"));
+  assert.ok(prompt.includes("ENVIRONMENT ART") && prompt.includes("blank cutout holes"));
   assert.equal(JSON.stringify(doc),before);
   const { sceneHash, storyboardLayerHash } = load("src/lib/visualClient.ts");
   const project = { title:"test",genre:"SF",story:{setting:"학교"},world:{},artDirection:input.context.artDirection,characters:[] };
@@ -72,7 +75,9 @@ async function main() {
   assert.notEqual(storyboardLayerHash(project,ep,cut,"prop"),storyboardLayerHash(project,ep,{...cut,storyboard:{...doc,elements:doc.elements.map(e=>e.id==="prop"?{...e,width:500}:e)}},"prop"));
   // Multiple dirty/missing layers go through ONE scene request, never layer generation.
   const directCut = structuredClone(cut);
-  directCut.storyboard.elements[0].assetId = "legacy-polluted";
+  directCut.storyboard.elements[0].assetId = "edited-background";
+  const originalRaster = new Blob(["original storyboard raster"], { type: "image/png" });
+  assets.set("edited-background", { blob: originalRaster, mimeType: "image/png" });
   directCut.storyboard.elements[0].assetSourceHash = "old";
   directCut.storyboard.elements[0].text = "비 오는 도서관";
   directCut.storyboard.elements[1].text = "붉은 우산";
@@ -86,19 +91,39 @@ async function main() {
   assert.equal(httpRequests[0].storyboard.elements.length, 2);
   assert.equal(httpRequests[0].storyboard.elements[0].text, "비 오는 도서관");
   assert.equal(httpRequests[0].storyboard.elements[1].text, "붉은 우산");
-  assert.ok(!assetReads.includes("legacy-polluted"), "stale raster never enters AI reference");
+  assert.ok(assetReads.includes("edited-background") && blobs.includes(originalRaster), "edited raster still enters full composition");
+  assert.equal(httpRequests[0].structureImage.mimeType, "image/png");
+  const svgInputs = await Promise.all(blobs.filter(blob => blob.type.startsWith("image/svg")).map(blob => blob.text()));
+  assert.ok(svgInputs.some(value => value.includes('width="300" height="200"') && value.includes('translate(0 0)')), "missing prop has geometry instead of disappearing");
+  const rigModule = load("src/lib/storyboardRig.ts");
+  const exactRig = rigModule.resolveCharacterRig(hero);
+  const structureHero = { ...hero, x: 123, y: 456, rotation: 17, flipX: true, characterRig: { ...exactRig, head: { x: .2, y: .3 } } };
+  const geometry = clean.sceneStructureSvg({ ...doc, elements: [...doc.elements, structureHero, { ...hero, id: "hidden", visible: false }] });
+  assert.ok(geometry.includes("translate(123 456) rotate(17 150 300)"));
+  assert.ok(geometry.includes('cx="240" cy="180"'), "joint image uses exact local coordinates and mirroring without padding");
+  for (const secret of ["비밀대사", "가이드비밀", "동선비밀", "효과음비밀", "<text"]) assert.ok(!geometry.includes(secret));
   assert.equal(directResult.sourceHash, sceneHash(project, ep, directCut));
   assert.equal(JSON.stringify(directCut), directBefore);
   await assert.rejects(client.requestSceneImage(project, ep, directCut), /레이어를 먼저/);
   assert.equal(httpRequests.length, 1, "strict mode remains guarded without an API call");
   const callsBefore = requests.length;
-  await scene.generateSceneImage({ ...input, referenceMode: "direct", storyboard: directCut.storyboard });
+  await scene.generateSceneImage({ ...input, referenceMode: "direct", storyboard: directCut.storyboard, structureImage: { data: "geometry-map", mimeType: "image/png" } });
   assert.equal(requests.length, callsBefore + 1, "one model call for combined changes");
   const directPrompt = requests.at(-1).input.find(item => item.type === "text").text;
-  assert.ok(directPrompt.includes("SINGLE image generation") && directPrompt.includes("PARTIAL canvas"));
+  assert.ok(directPrompt.includes("SINGLE image generation") && directPrompt.includes("STRUCTURAL CONTROL MAP"));
+  assert.ok(!directPrompt.includes("PARTIAL canvas") && !directPrompt.includes("apply the described pose inside"));
+  assert.ok(directPrompt.includes("Neither prose nor character-sheet poses may move these coordinates"));
+  assert.equal(requests.at(-1).input.filter(item => item.type === "image").length, 2);
+  assert.equal(requests.at(-1).input[1].data, "geometry-map");
+  const reference = { character: { id: "person", name: "주인공", role: "주연", visualProfile: {} }, data: "sheet", mimeType: "image/png", heroData: "hero-crop", heroMimeType: "image/png" };
+  await scene.generateSceneImage({ ...input, referenceMode: "direct", storyboard: { ...doc, elements: [...doc.elements, { ...structureHero, characterId: "person" }] }, structureImage: { data: "geometry-map", mimeType: "image/png" }, references: [reference] });
+  const withCharacter = requests.at(-1);
+  assert.equal(withCharacter.input.filter(item => item.type === "image").map(item => item.data).join(","), "clean,geometry-map,sheet,hero-crop");
+  assert.ok(withCharacter.input.find(item => item.type === "text").text.includes("REFERENCE IMAGES 3 and 4"));
+  assert.ok(sceneHash(project, ep, cut).includes(clean.SCENE_REFERENCE_VERSION), "old scene candidates are invalidated independently of layer hashes");
   assert.ok(directPrompt.includes("비 오는 도서관") && directPrompt.includes("붉은 우산"));
   assert.ok(!directPrompt.includes("비밀대사") && !directPrompt.includes("가이드비밀"));
-  console.log("PASS: combined changes use one scene API/model request, stale raster exclusion, full current contract, source hash and strict-mode compatibility (mock)");
+  console.log("PASS: single scene request with full edited raster + SVG geometry image, missing-art placeholders, exact mirrored/rotated pose, overlay exclusion, geometry priority and strict-mode compatibility (mock)");
   // Regression from supplied SVG: x=510, width=390 touches right edge.
   const speech = {...base("speech","speech","...하은아, 전진 좌표가 아니라 좌측 회전 각도가 최대로 들어가 있어."),x:510,y:95,width:390,height:216};
   const fitted = typography.fitOverlayToCanvas(speech,900,1600);
@@ -152,6 +177,19 @@ async function main() {
   Object.assign(restyledCut.storyboard.elements[2], styled);
   assert.equal(sceneHash(project, ep, restyledCut), sceneHash(project, ep, cut), "styling does not require paid image regeneration");
   console.log("PASS: six balloon shapes, sanitized paint, SVG and Canvas gradient/outline parity, typography-only hash stability");
+  const brief = "학교 작업실, 눈높이 2점 투시. 전경 책상, 중경 선반과 창문, 원경 문. 왼쪽 오후 햇빛과 옅은 명암.";
+  layoutResponse = { backgroundDescription: brief, elements: [base("prop", "prop", "robot")] };
+  const layout = await scene.generateStoryboardLayout({ ...input, characters: [] });
+  assert.equal(layout.elements[0].text, brief);
+  assert.equal(layout.elements[0].width, layout.width);
+  assert.equal(layout.elements[0].height, layout.height);
+  assert.ok(requests.at(-1).response_format.schema.required.includes("backgroundDescription"));
+  assert.ok(requests.at(-1).input.includes("World setting: 학교"));
+  layoutResponse = { elements: [base("prop", "prop", "robot")] };
+  const fallback = await scene.generateStoryboardLayout({ ...input, characters: [] });
+  assert.ok(fallback.elements[0].text.includes("학교") && fallback.elements[0].text.includes("robot"));
+  layoutResponse = undefined;
+  console.log("PASS: concrete environment brief, full-canvas background, world context and legacy layout fallback (mock)");
   if (process.argv.includes("--preview")) {
     const styles = ["normal", "thought", "shout", "whisper", "rounded", "none"];
     const labels = ["Hello!", "Dream...", "BOOM!", "Shh...", "Monologue", "LOVE"];

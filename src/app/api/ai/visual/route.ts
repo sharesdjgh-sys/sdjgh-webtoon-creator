@@ -142,6 +142,7 @@ const requestSchema = z.discriminatedUnion("action", [
     cut: cutSchema,
     storyboard: storyboardSchema,
     layoutImage: imagePayloadSchema,
+    structureImage: imagePayloadSchema.optional(),
     references: z.array(characterReferenceSchema).max(4),
   }),
 ]);

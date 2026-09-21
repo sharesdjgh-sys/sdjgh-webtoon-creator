@@ -63,6 +63,8 @@ const button = (tree, label) => find(tree, n => n.type === "button" && (n.props[
 async function main() {
   let tree = render();
   assert.equal(tree.type, "div");
+  assert.ok(button(tree, "AI 참고 콘티 PNG"));
+  assert.ok(button(tree, "AI 구도 SVG"));
   const inlinePreview = find(tree, n => n.props?.["aria-label"] === "콘티 편집 화면");
   assert.ok(inlinePreview.props.className.includes("h-full"));
   assert.ok(inlinePreview.props.className.includes("min-h-0"));
@@ -85,6 +87,15 @@ async function main() {
   assert.equal(shown, 1);
   assert.equal(browser.document.body.style.overflow, "hidden");
   assert.equal(all(tree, n => n.type === "section").length, 2);
+  const compareSection = () => find(render(), n => n.props?.["aria-label"] === "실제 그림 비교 화면");
+  const compareChildren = React.Children.toArray(compareSection().props.children);
+  assert.ok(compareChildren[1].props.className.includes("min-h-[260px]"), "image follows title without an intervening checkbox row");
+  assert.equal(compareChildren[2].type, "label", "typography toggle sits beneath the preview");
+  const typographyToggle = () => find(compareSection(), n => n.type === "input" && n.props.type === "checkbox");
+  typographyToggle().props.onChange({ target: { checked: false } });
+  assert.equal(find(compareSection(), n => n.props?.["aria-label"] === "실제 그림의 대사와 말풍선"), undefined);
+  typographyToggle().props.onChange({ target: { checked: true } });
+  assert.ok(find(compareSection(), n => n.props?.["aria-label"] === "실제 그림의 대사와 말풍선"));
   assert.ok(find(tree, n => n.props?.["aria-label"] === "실제 그림 비교 화면"));
   button(tree, "안녕").props.onClick();
   tree = render();
@@ -283,6 +294,20 @@ async function main() {
   assert.equal(handles().length, 0);
   console.log("PASS: eight resize handles, four rotation angles, anchored opposite edges, minimum sizes, pointer resize undo, keyboard resize and locked-element guard");
   console.log("PASS: style controls, presets, color/gradient/outline serialization and undo/redo");
+  const background = { id: "bg", type: "background", text: "작업실 창문과 선반", x: 0, y: 0, width: 900, height: 1600, rotation: 0, zIndex: -100 };
+  props.document = { ...props.document, elements: [...props.document.elements, background] };
+  let regenerated;
+  props.onRegenerateLayer = id => { regenerated = id; };
+  button(render(), "배경 스케치 생성").props.onClick();
+  assert.equal(regenerated, "bg", "background-only generation");
+  props.generatingLayerIds = new Set(["bg"]);
+  assert.ok(button(render(), "배경 스케치 생성 중…").props.disabled);
+  props.generatingLayerIds = new Set();
+  background.assetId = "background-art";
+  assert.equal(find(render(), n => n.type === stored.default && n.props.alt === "배경 스케치 미리보기").props.assetId, "background-art");
+  button(render(), "배경 연출 편집").props.onClick();
+  assert.ok(find(render(), n => n.type === "label" && n.props.children === "배경 연출 지시 (장소·원근·시설·조명)"));
+  console.log("PASS: background preview, background-only request, busy guard and environment direction editor");
   console.log("PASS: inline switch, comparison dialog, live overlay, candidate apply/discard/stale guard, Escape, scroll/focus cleanup, edit/undo preservation, empty scene (mock component harness)");
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });

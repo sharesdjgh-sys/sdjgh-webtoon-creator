@@ -42,6 +42,7 @@ import { pendingLayerIds } from "@/lib/layerBatch";
 import { balloonMarkup, textDecoration, textGradientId } from "@/lib/webtoonDecoration";
 import WebtoonStyleControls from "@/components/visual/WebtoonStyleControls";
 import { RESIZE_HANDLES, resizeCursor, resizeOverlay, type ResizeDirection } from "@/lib/storyboardResize";
+import { artworkOnlyStoryboard, sceneStructureSvg } from "@/lib/cleanGeneration";
 
 type Props = {
   document: StoryboardDocument;
@@ -315,6 +316,7 @@ export default function StoryboardEditor({ document: savedDocument, characters, 
   const hasImageLayers = visibleElements.some((element) => ["background", "character", "prop"].includes(element.type) && element.assetId);
   const generatingThisStoryboard = document.elements.some((element) => generatingLayerIds.has(element.id));
   const pendingLayers = pendingLayerIds(document, staleLayerIds);
+  const backgroundLayer = document.elements.find((element) => element.type === "background");
   const generationStep = generationSeconds < 8
     ? "콘티의 구도와 레이어를 확인하고 있어요"
     : generationSeconds < 22
@@ -654,7 +656,7 @@ export default function StoryboardEditor({ document: savedDocument, characters, 
                     !element.assetId || (showBlocking && element.type === "character") ? (
                       <LayoutControlOverlay
                         element={element}
-                        label={element.characterId ? characterNames.get(element.characterId) ?? element.text : element.text || labelForType(element.type)}
+                        label={element.type === "background" ? "배경 그림 미생성" : element.characterId ? characterNames.get(element.characterId) ?? element.text : element.text || labelForType(element.type)}
                         selected={selectedId === element.id}
                         flipped={element.flipX}
                         onJointPointerDown={(event, jointKey) => startJointPointer(event, element, jointKey)}
@@ -719,7 +721,6 @@ export default function StoryboardEditor({ document: savedDocument, characters, 
               <h3 className="text-sm font-bold text-[#5B21B6]">실제 그림 · 결과 확인</h3>
               <span className="text-[10px] text-[#82798B]">{generatingScene ? "생성 중" : sceneCandidate ? "새 생성 결과 · 적용 전" : sceneStale ? "재생성 필요" : sceneAssetId ? "적용된 그림" : "아직 생성 전"}</span>
             </div>
-            <label className="flex items-center gap-2 rounded-lg bg-white px-2 py-1.5 text-[11px]"><input type="checkbox" checked={showTypography} onChange={event => setShowTypography(event.target.checked)} /> 말풍선·글자 표시 · 끄면 AI 원본만 검수</label>
             <div className="flex min-h-[260px] items-center justify-center overflow-hidden rounded-xl bg-[#E9E4DC] p-3">
               <div className="relative w-full shrink-0 bg-white shadow-xl" style={{ aspectRatio: `${document.width}/${document.height}`, maxWidth: `${62 * document.width / document.height}vh` }}>
                 {sceneCandidate ? <BlobImage blob={sceneCandidate} alt="새로 생성한 장면 후보" className="absolute inset-0 h-full w-full object-contain" /> : sceneAssetId ? <StoredImage assetId={sceneAssetId} alt="콘티와 비교할 실제 그림" className="absolute inset-0 h-full w-full object-contain" /> : (
@@ -737,9 +738,10 @@ export default function StoryboardEditor({ document: savedDocument, characters, 
                 </svg>}
               </div>
             </div>
+            <label className="flex items-center gap-2 rounded-lg bg-white px-2 py-1.5 text-[11px]"><input type="checkbox" checked={showTypography} onChange={event => setShowTypography(event.target.checked)} /> 말풍선·글자 표시 · 끄면 AI 원본만 검수</label>
             {sceneCandidate && <div className="space-y-2 rounded-xl border border-[#C4B5FD] bg-[#F5F3FF] p-3">
               <p className="text-xs font-semibold text-[#5B21B6]">{candidateStale ? "생성 후 콘티가 변경되었습니다. 다시 생성해주세요." : "새 장면을 확인하고 적용해주세요."}</p>
-              <label className="flex items-start gap-2 text-[11px]"><input type="checkbox" checked={Boolean(sceneCandidateReviewed)} disabled={candidateStale || applyingScene} onChange={event => onReviewScene?.(event.target.checked)} /> 말풍선 표시를 끄고 AI 원본에 말풍선·글자·가이드·테두리·잘림이 없는지 확인했습니다.</label>
+              <label className="flex items-start gap-2 text-[11px]"><input type="checkbox" checked={Boolean(sceneCandidateReviewed)} disabled={candidateStale || applyingScene} onChange={event => onReviewScene?.(event.target.checked)} /> 말풍선 표시를 끄고 인물 크기·위치·포즈·소품 배치가 콘티와 맞으며, 불필요한 말풍선·글자·가이드·테두리·잘림이 없는지 확인했습니다.</label>
               <div className="flex gap-2">
                 <button type="button" disabled={applyingScene || candidateStale || !sceneCandidateReviewed || !onAcceptScene} onClick={async () => {
                   if (applyingScene || candidateStale || !sceneCandidateReviewed || !onAcceptScene) return;
@@ -759,6 +761,21 @@ export default function StoryboardEditor({ document: savedDocument, characters, 
           className={`min-h-0 overflow-y-auto overscroll-contain rounded-xl border border-[#EBE7E0] bg-white p-3 space-y-3 focus-visible:outline-2 focus-visible:outline-[#7C3AED] ${expanded ? "max-h-[72vh]" : "h-full"}`}
           style={{ scrollbarGutter: "stable" }}>
           <p className="text-[10px] text-[#8B7EAE]">미리보기는 고정되어 있습니다. 이 설정창 안에서 스크롤하세요.</p>
+          {backgroundLayer && <section aria-label="배경 스케치" className="space-y-2 rounded-xl border border-[#DDD6FE] bg-[#FAF8FF] p-3">
+            <div className="flex items-center justify-between">
+              <h3 className="text-xs font-bold text-[#5B21B6]">배경 스케치</h3>
+              <button type="button" className="editor-tool" onClick={() => { setSelectedId(backgroundLayer.id); setFinalView(false); }}>배경 연출 편집</button>
+            </div>
+            {backgroundLayer.assetId ? <StoredImage assetId={backgroundLayer.assetId} alt="배경 스케치 미리보기" className="max-h-48 w-full rounded-lg bg-white object-contain" /> : <p className="rounded-lg border border-dashed border-[#C4B5FD] bg-white p-4 text-[11px] leading-5 text-[#7A7067]">아직 배경 그림이 없습니다. 배경 스케치를 생성하면 장소·원근·조명·주요 시설을 그림으로 확인할 수 있습니다.</p>}
+            {backgroundLayer.visible === false && <p className="text-[11px] text-orange-700">배경이 숨겨져 있습니다. 레이어의 표시 버튼을 켜면 콘티에 보입니다.</p>}
+            {staleLayerIds.has(backgroundLayer.id) && <p className="text-[11px] text-orange-700">변경한 배경 연출이 아직 그림에 반영되지 않았습니다.</p>}
+            <button type="button" onClick={() => onRegenerateLayer(backgroundLayer.id)}
+              disabled={generatingThisStoryboard || Boolean(layerBatchProgress) || Boolean(generatingScene) || Boolean(detectingAllPoses)}
+              className="w-full rounded-lg bg-[#7C3AED] px-3 py-2 text-[11px] font-semibold text-white disabled:opacity-50">
+              {generatingLayerIds.has(backgroundLayer.id) ? "배경 스케치 생성 중…" : backgroundLayer.assetId ? "배경 스케치만 다시 그리기" : "배경 스케치 생성"}
+            </button>
+            <p className="text-[10px] leading-4 text-[#82798B]">배경만 AI로 그립니다. 인물·말풍선은 유지되며 이미지 생성 비용이 발생합니다.</p>
+          </section>}
           <div className="rounded-lg border border-[#EBE7E0] bg-[#FBF9F6] p-2">
             <div className="mb-2 flex items-center justify-between">
               <span className="flex items-center gap-1 text-[11px] font-bold text-[#514A45]"><Layers3 className="h-3.5 w-3.5" /> 레이어</span>
@@ -770,7 +787,7 @@ export default function StoryboardEditor({ document: savedDocument, characters, 
                 className="w-full rounded-lg bg-[#7C3AED] px-3 py-2 text-[11px] font-semibold text-white disabled:opacity-40">
                 {generatingScene ? "장면에 반영 중…" : "수정 사항 한 번에 장면 반영"}
               </button>
-              <p className="text-[10px] leading-relaxed text-[#5B21B6]">레이어별 재생성 없이 현재 설명·포즈·배치를 이미지 생성 요청 1회로 반영합니다. 결과는 완성 장면 한 장이며, 편집용 레이어 그림은 바꾸지 않습니다. 생성 후 원본을 검수하고 적용하세요.</p>
+              <p className="text-[10px] leading-relaxed text-[#5B21B6]">전체 콘티 이미지와 SVG 기반 위치·관절 구도, 캐릭터 시트를 이미지 생성 요청 1회에 함께 보냅니다. 편집용 말풍선·글자는 제외합니다. 설명보다 직접 조절한 배치·관절을 우선하며, 결과의 구도 일치 여부를 검수 후 적용하세요.</p>
               <button type="button" disabled={!pendingLayers.length || Boolean(layerBatchProgress) || generatingThisStoryboard || Boolean(generatingScene) || Boolean(detectingAllPoses)}
                 onClick={() => onRegenerateLayers(pendingLayers)}
                 className="editor-tool w-full justify-center disabled:opacity-40">
@@ -891,7 +908,7 @@ export default function StoryboardEditor({ document: savedDocument, characters, 
                 </div>
               )}
               <div className={isOverlayElement(selected) ? "space-y-2 rounded-xl border border-[#E4DDF8] bg-[#FAF8FF] p-3" : "space-y-2"}>
-                <label className="visual-label">표시 내용</label>
+                <label className="visual-label">{selected.type === "background" ? "배경 연출 지시 (장소·원근·시설·조명)" : "표시 내용"}</label>
                 <textarea value={selected.text} onChange={(event) => updateElement(selected.id, { text: event.target.value })} className="visual-input min-h-16 resize-none" />
                 {isOverlayElement(selected) && layoutStoryboardText(selected, webtoonFontStack(selected.fontFamily ?? defaultWebtoonFont(selected.type))).tooSmall && <p className="text-[11px] text-orange-700">대사가 길어 글자가 작아졌습니다. 말풍선을 키우거나 내용을 나눠주세요. 내용은 생략하지 않습니다.</p>}
                 {isOverlayElement(selected) && (
@@ -1002,8 +1019,10 @@ export default function StoryboardEditor({ document: savedDocument, characters, 
       </div>
 
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <button type="button" onClick={downloadStoryboard} className="editor-action"><Download className="w-3.5 h-3.5" /> 콘티 PNG</button>
+          <button type="button" onClick={async () => downloadBlob(await composeStoryboardPng(artworkOnlyStoryboard(document), { includeOverlays: false, missingArtwork: "geometry" }), "webtoon-ai-reference.png")} className="editor-action">AI 참고 콘티 PNG</button>
+          <button type="button" onClick={() => downloadBlob(new Blob([sceneStructureSvg(document)], { type: "image/svg+xml;charset=utf-8" }), "webtoon-ai-geometry.svg")} className="editor-action">AI 구도 SVG</button>
           <button type="button" onClick={downloadSvg} className="editor-action"><Download className="w-3.5 h-3.5" /> 오버레이 SVG</button>
           {sceneAssetId && <button type="button" onClick={downloadFinal} className="editor-action"><Download className="w-3.5 h-3.5" /> 최종 PNG</button>}
         </div>

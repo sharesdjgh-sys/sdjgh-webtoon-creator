@@ -1,4 +1,4 @@
-import { artworkOnlyStoryboard, layerReferenceSvg, CLEAN_ART_VERSION } from "@/lib/cleanGeneration";
+import { artworkOnlyStoryboard, layerReferenceSvg, sceneStructureSvg, CLEAN_ART_VERSION, SCENE_REFERENCE_VERSION } from "@/lib/cleanGeneration";
 import { validatePanelImage } from "@/lib/panelGeometry";
 import type { Character, CharacterRig, Cut, Episode, Project, StoryboardDocument } from "@/lib/storage";
 import { base64ToBlob, blobToBase64, cropImageBlob, getMediaAsset, sourceHash } from "@/lib/mediaStorage";
@@ -184,7 +184,7 @@ export function sceneHash(project: Project, episode: Episode, cut: Cut): string 
   const references = project.characters
     .filter((character) => cut.characterIds.includes(character.id))
     .map((character) => ({ id: character.id, imageAssetId: character.imageAssetId, imageSourceHash: character.imageSourceHash }));
-  return sourceHash({ renderer: CLEAN_ART_VERSION, context: context(project), episode: { number: episode.episodeNumber, title: episode.title, synopsis: episode.synopsis }, cut: { ...cutData(cut), dialogue: "", soundEffect: "" }, storyboard: cut.storyboard ? artworkOnlyStoryboard(cut.storyboard) : undefined, references });
+  return sourceHash({ renderer: SCENE_REFERENCE_VERSION, context: context(project), episode: { number: episode.episodeNumber, title: episode.title, synopsis: episode.synopsis }, cut: { ...cutData(cut), dialogue: "", soundEffect: "" }, storyboard: cut.storyboard ? artworkOnlyStoryboard(cut.storyboard) : undefined, references });
 }
 
 export async function requestSceneImage(project: Project, episode: Episode, cut: Cut, referenceMode: "layers" | "direct" = "layers"): Promise<{ blob: Blob; prompt: string; sourceHash: string }> {
@@ -193,12 +193,10 @@ export async function requestSceneImage(project: Project, episode: Episode, cut:
   if (referenceMode === "layers" && incomplete.length) throw new Error("기존 그림은 보존됩니다. 말풍선·가이드가 섞일 수 있는 이전 레이어를 먼저 다시 생성해주세요.");
   const artwork = artworkOnlyStoryboard(cut.storyboard);
   if (!artwork.elements.length) throw new Error("장면에 표시할 배경·인물·소품을 먼저 추가해주세요.");
-  // Never forward stale/legacy raster layers: they may contain baked-in balloons or guides.
-  // Their current descriptions and geometry still travel in the complete artwork contract.
-  const incompleteIds = new Set(incomplete.map(layer => layer.id));
-  const referenceArtwork = referenceMode === "direct"
-    ? { ...artwork, elements: artwork.elements.filter(layer => !incompleteIds.has(layer.id)) } : artwork;
-  const layoutBlob = await composeStoryboardPng(referenceArtwork, { includeOverlays: false, strictAssets: referenceMode === "layers" });
+  // Keep the COMPLETE current layout, even when a layer's prompt/pose has changed.
+  // Editable typography is excluded; missing raster assets get geometry, never silent omission.
+  const layoutBlob = await composeStoryboardPng(artwork, { includeOverlays: false, strictAssets: referenceMode === "layers", missingArtwork: referenceMode === "direct" ? "geometry" : undefined });
+  const structureBlob = await svgToPngBlob(artwork, sceneStructureSvg(artwork));
   const layoutMimeType = "image/png";
   const references = await characterReferences(project, cut);
   const response = await postVisual<GeneratedImageResponse>({
@@ -209,6 +207,7 @@ export async function requestSceneImage(project: Project, episode: Episode, cut:
     cut: cutData(cut),
     storyboard: artwork,
     layoutImage: { data: await blobToBase64(layoutBlob), mimeType: layoutMimeType },
+    structureImage: { data: await blobToBase64(structureBlob), mimeType: "image/png" },
     references,
   });
   const blob = base64ToBlob(response.data, response.mimeType);

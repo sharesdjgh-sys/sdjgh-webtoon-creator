@@ -1,5 +1,5 @@
 import "server-only";
-import { artworkOnlyStoryboard } from "@/lib/cleanGeneration";
+import { artworkOnlyStoryboard, sceneStructureSvg } from "@/lib/cleanGeneration";
 
 import { GoogleGenAI } from "@google/genai";
 import { z } from "zod";
@@ -104,12 +104,14 @@ const generatedElementSchema = z.object({
 });
 
 const generatedDocumentSchema = z.object({
+  backgroundDescription: z.string().trim().max(900).optional(),
   elements: z.array(generatedElementSchema).min(1).max(24),
 });
 
 const STORYBOARD_JSON_SCHEMA = {
   type: "object",
   properties: {
+    backgroundDescription: { type: "string", description: "Korean environment art direction: concrete location, camera perspective/horizon, near/middle/far depth, architecture or landscape, visible furniture/fixtures, light source, time and atmosphere. Describe drawable details, not a short label. Maximum 900 characters." },
     elements: {
       type: "array",
       items: {
@@ -153,7 +155,7 @@ const STORYBOARD_JSON_SCHEMA = {
       },
     },
   },
-  required: ["elements"],
+  required: ["backgroundDescription", "elements"],
 } as const;
 
 export type CharacterVisualInput = z.infer<typeof characterInputSchema>;
@@ -346,11 +348,12 @@ export async function generateStoryboardLayout(input: {
   const cast = input.characters.map((character) =>
     `- ${character.id}: ${character.name} (${character.role}), appearance=${character.appearance}, personality=${character.personality}`
   ).join("\n");
-  const prompt = `You are a professional webtoon storyboard artist. Plan ONE editable panel as a sparse composition diagram.
+  const prompt = `You are a professional webtoon storyboard artist. Plan ONE editable panel with readable acting AND a concrete, drawable environment.
 
 Canvas viewBox: 0 0 ${width} ${height} (${input.cut.aspectRatio})
 Episode ${input.episode.number}: ${input.episode.title}
 Episode context: ${input.episode.synopsis}
+World setting: ${input.context.setting || "Infer from this scene"}
 Camera angle: ${input.cut.angle} — ${webtoonShotPrompt(input.cut.angle)}
 Scene: ${input.cut.description || "Infer a clear beat from the episode context"}
 Dialogue: ${input.cut.dialogue || "None"}
@@ -359,6 +362,9 @@ Selected cast:
 ${cast || "No named character selected"}
 
 Return a practical SVG scene graph using only the supplied JSON schema.
+- Write backgroundDescription in Korean as actual visual art direction, not "background" or a location name alone. Specify camera perspective/horizon, near/middle/far spatial depth, key architecture/landscape, at least three scene-appropriate fixtures/details, lighting direction, time of day and mood. The environment will be DRAWN as a full-canvas background sketch.
+- Use the scene and world context to infer a coherent setting when details are sparse. Keep it consistent with the action, and do not introduce unrelated story facts.
+- Do not use labeled shape boxes to substitute for walls, windows, furniture or scenery. Put fixed environmental fixtures in backgroundDescription; use prop elements for independently editable interaction objects without duplicating them in the background.
 - Keep every element fully inside the canvas.
 - Use character elements for blocking people; characterId must exactly match a selected cast ID.
 - Every character element must include characterRig with all 14 normalized joints. Build the actual described action and weight balance — sitting must bend hips and knees onto a seat, running must show stride and arm counter-swing, looking back must turn the shoulder line and head. Never fall back to a generic standing pose.
@@ -396,7 +402,7 @@ Return a practical SVG scene graph using only the supplied JSON schema.
         height,
         rotation: 0,
         zIndex: -100,
-        text: "배경",
+        text: parsed.backgroundDescription || [input.cut.description, input.context.setting, `카메라: ${input.cut.angle}. 전경·중경·원경, 공간 구조와 주요 시설, 광원과 명암이 읽히는 배경 스케치.`].filter(Boolean).join("\n").slice(0, 900),
         visible: true,
         locked: true,
         opacity: 1,
@@ -444,7 +450,8 @@ Art direction: monochrome Korean webtoon storyboard rough, confident pencil/ink 
   const prompt = layer.type === "background"
     ? `Draw ONLY the empty environment/background layer for one webtoon storyboard panel.
 ${common}
-Background direction: ${layer.text || input.context.setting}
+Background direction: ${layer.text && !/^(배경|background)$/i.test(layer.text.trim()) ? layer.text : [input.cut.description, input.context.setting].filter(Boolean).join("; ")}
+Draw recognizable ENVIRONMENT ART, never a word card, label, empty rectangle, abstract location symbol or bare perspective grid. Rough means unfinished line quality, not missing scenery. Show foreground/middle/background depth, coherent horizon/vanishing lines, at least three scene-appropriate environmental fixtures, and readable light/shadow with selective gray hatching. Continue the architecture/landscape behind the planned character positions; do not leave blank cutout holes for them. Avoid duplicating independently editable props: ${input.storyboard.elements.filter(element => element.type === "prop" && element.visible !== false).map(element => element.text).join(", ") || "none"}.
 Input image 1 is a clean empty canvas defining the aspect ratio, NOT a scene or diagram to copy. Use the camera and environment descriptions to build perspective. Render the environment full-bleed to ALL FOUR canvas edges without an inset frame or blank page bands. Establish horizon, depth, architecture, furniture and environmental context. Leave the character and major-prop areas visually open. Do not draw any people, body parts, foreground character silhouettes, speech balloons, letters, panel borders, labels or watermark. White paper background, monochrome rough line art.`
     : layer.type === "character"
       ? `Draw ONE isolated character layer for a professional webtoon storyboard.
@@ -488,6 +495,7 @@ export async function generateSceneImage(input: {
   cut: { angle: string; description: string; dialogue: string; soundEffect: string; aspectRatio: PanelAspectRatio };
   storyboard: StoryboardDocument;
   layoutImage: { data: string; mimeType: string };
+  structureImage?: { data: string; mimeType: string };
   references: CharacterReferenceInput[];
 }): Promise<{ data: string; mimeType: string; prompt: string }> {
   input = { ...input, storyboard: artworkOnlyStoryboard(input.storyboard) };
@@ -501,7 +509,7 @@ export async function generateSceneImage(input: {
     throw new Error(`${element?.text || "장면 속 캐릭터"}의 캐릭터 시트 참조가 누락되었습니다.`);
   }
   const cast = input.references.map(({ character }, index) =>
-    `REFERENCE IMAGES ${index * 2 + 2} and ${index * 2 + 3} = the approved full design sheet and enlarged canonical full-body reference for ${character.name} (${character.role}). These are the ONLY identity sources for this character.\n${identityLock(character)}`
+    `REFERENCE IMAGES ${index * 2 + (input.structureImage ? 3 : 2)} and ${index * 2 + (input.structureImage ? 4 : 3)} = the approved full design sheet and enlarged canonical full-body reference for ${character.name} (${character.role}). These are the ONLY identity sources for this character.\n${identityLock(character)}`
   ).join("\n");
   const pct = (value: number, total: number) => `${((value / total) * 100).toFixed(1)}%`;
   const rotate = (x: number, y: number, element: StoryboardElement) => {
@@ -540,7 +548,7 @@ export async function generateSceneImage(input: {
   const characterCount = input.storyboard.elements.filter((element) => element.visible !== false && element.type === "character").length;
 
   const task = input.referenceMode === "direct"
-    ? "CREATE one finished webtoon panel by applying ALL current artwork descriptions, poses, expressions and placements together in a SINGLE image generation. Reference image 1 is an intentionally PARTIAL canvas containing only up-to-date artwork; it may be completely blank. Missing artwork is NOT a request to omit an object. Draw EVERY object in the spatial contract from its description and canonical character references. Current descriptions and spatial coordinates override any reference pixels. Do not return separate layers, a collage, a contact sheet or intermediate drafts."
+    ? "FINISH the complete user-edited storyboard as one webtoon panel in a SINGLE image generation. This is faithful rendering, NOT recomposition. Reference image 1 contains the full current layer composition including existing images of edited layers. Missing raster assets are represented by control geometry rather than omitted. Preserve the user's framing, figure sizes, positions, hand contacts, props, desk/monitor layout and overlaps. Draw EVERY object in the spatial contract. Do not return separate layers, a collage, a contact sheet or intermediate drafts."
     : "REDRAW the first image as one finished webtoon panel. This is a layout-locked image-to-image production task, not a new composition.";
   const prompt = `${task}
 
@@ -560,12 +568,18 @@ ${cast}
 NON-NEGOTIABLE SPATIAL CONTRACT (coordinates are percentages of the final image):
 ${spatialContract}
 
+CONTROL GEOMETRY:
+${input.structureImage ? "Reference image 2 is a STRUCTURAL CONTROL MAP, not artwork or a character design sheet. Its boxes and joint lines specify the CURRENT edited placement and pose. Never draw its blue/brown lines, rectangles or markers in the output." : "The SVG below specifies the CURRENT edited placement and pose."}
+The following SVG is geometric input only, never typography or artwork to reproduce:
+${sceneStructureSvg(input.storyboard)}
+If the older raster pose in image 1 conflicts with the control map/JOINTS, use the control map/JOINTS while retaining the overall composition. Neither prose nor character-sheet poses may move these coordinates.
+
 COMPOSITION LOCK:
 - Preserve the exact camera framing and canvas edges from reference image 1. Do not zoom, crop, pan, mirror, or choose a new angle.
 - Render exactly ${characterCount} character figure(s). Do not add, remove, merge, duplicate, or swap them.
-- ${input.referenceMode === "direct" ? "Use JOINTS as pose guidance, but if a current explicit pose description conflicts with an older rig, apply the described pose inside the same placement box. Do not keep an obsolete pose merely because its previous joints were supplied." : "Each character's head, hands, elbows, knees and feet must land on the listed JOINTS."} Keep the complete body inside its listed bounding box.
+- Each character's head, hands, elbows, knees and feet must land on the listed JOINTS. Descriptions refine expression and appearance ONLY within this fixed pose; never reposition joints to satisfy prose. Preserve partial-body framing and intentional canvas-edge cropping; do not shrink or reposition a foreground figure to force its entire body into view.
 - Preserve the listed ARTWORK objects, scale, rotation, overlap and front-to-back layer. The coordinate boxes are metadata, NOT rectangles to draw. Background perspective must support these placements. Fill the ENTIRE canvas edge-to-edge; never put the scene inside a smaller frame, page, border or blank margin.
-- IDENTITY LOCK HAS HIGHER PRIORITY THAN THE ROUGH LAYOUT. Reference image 1 supplies coordinates and pose only; never copy or invent a face, hairstyle, body design, outfit or color from its rough character drawings.
+- The control map and spatial contract govern placement, scale and pose. Character sheets govern face, hairstyle, outfit and palette ONLY; never resize, move or re-pose a figure to imitate a sheet. Reference image 1 governs composition and object detail, not new character identity.
 - The characterId/design-sheet mapping is fixed. For each figure, reproduce the matching sheet's facial geometry, apparent age, eye shape, hair silhouette, body proportions, exact outfit construction, shoes, accessories and palette. Change only pose, expression, camera angle and scene lighting.
 - Never average or blend features between reference sheets. Never turn distinct cast members into similar-looking generic students. Never redesign a school uniform, remove a signature feature, or substitute a different hairstyle.
 - No typography or editorial guides are part of the artwork. Speech balloons, empty balloons, captions, effect letters, arrows, handles, skeletons, labels, dashed rectangles and page frames must not appear, even if a reference accidentally contains them.
@@ -575,6 +589,7 @@ COMPOSITION LOCK:
 IMPORTANT: Produce artwork only. Do not draw speech balloons, dialogue, captions, sound-effect letters, labels, panel borders, logos or watermarks. The application will add exact editable Korean typography afterward.`;
   const imageInputs = [
     { type: "image" as const, mime_type: input.layoutImage.mimeType, data: input.layoutImage.data },
+    ...(input.structureImage ? [{ type: "image" as const, mime_type: input.structureImage.mimeType, data: input.structureImage.data }] : []),
     ...input.references.flatMap((reference) => [
       { type: "image" as const, mime_type: reference.mimeType, data: reference.data },
       { type: "image" as const, mime_type: reference.heroMimeType, data: reference.heroData },

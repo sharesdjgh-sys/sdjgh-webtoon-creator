@@ -2,12 +2,39 @@ import type { StoryboardDocument, StoryboardElement } from "@/lib/storage";
 import { resolveCharacterRig } from "@/lib/storyboardRig";
 
 export const CLEAN_ART_VERSION = "clean-art-v1";
+export const SCENE_REFERENCE_VERSION = "full-storyboard-geometry-v2";
 export const isArtworkElement = (element: StoryboardElement) =>
   element.visible !== false && ["background", "character", "prop"].includes(element.type);
 
 /** Guides and typography are editor-only. Never send their content as drawable objects. */
 export function artworkOnlyStoryboard(document: StoryboardDocument): StoryboardDocument {
   return { ...document, elements: document.elements.filter(isArtworkElement) };
+}
+
+/** Exact scene-space geometry, not a decorated editor screenshot. No typography or user guides. */
+export function sceneStructureSvg(document: StoryboardDocument, transparent = false): string {
+  const edges = [
+    ["head", "neck"], ["neck", "leftShoulder"], ["neck", "rightShoulder"],
+    ["leftShoulder", "leftElbow"], ["leftElbow", "leftHand"], ["rightShoulder", "rightElbow"], ["rightElbow", "rightHand"],
+    ["leftShoulder", "leftHip"], ["rightShoulder", "rightHip"], ["leftHip", "rightHip"],
+    ["leftHip", "leftKnee"], ["leftKnee", "leftFoot"], ["rightHip", "rightKnee"], ["rightKnee", "rightFoot"],
+  ] as const;
+  const drawings = artworkOnlyStoryboard(document).elements.slice().sort((a, b) => a.zIndex - b.zIndex).map(layer => {
+    const box = `<rect width="${layer.width}" height="${layer.height}" fill="none" stroke="${layer.type === "character" ? "#2563eb" : "#a16207"}" stroke-width="2"/>`;
+    let content = box;
+    if (layer.type === "character") {
+      const rig = resolveCharacterRig(layer);
+      const point = (key: keyof typeof rig) => ({ x: (layer.flipX ? 1 - rig[key].x : rig[key].x) * layer.width, y: rig[key].y * layer.height });
+      content += edges.map(([a, b]) => {
+        const from = point(a), to = point(b);
+        return `<line x1="${from.x}" y1="${from.y}" x2="${to.x}" y2="${to.y}" stroke="#2563eb" stroke-width="5" stroke-linecap="round"/>`;
+      }).join("");
+      const head = point("head");
+      content += `<circle cx="${head.x}" cy="${head.y}" r="${Math.max(5, Math.min(layer.width, layer.height) * .045)}" fill="#2563eb"/>`;
+    }
+    return `<g transform="translate(${layer.x} ${layer.y}) rotate(${layer.rotation} ${layer.width / 2} ${layer.height / 2})">${content}</g>`;
+  }).join("");
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${document.width}" height="${document.height}" viewBox="0 0 ${document.width} ${document.height}">${transparent ? "" : '<rect width="100%" height="100%" fill="white"/>'}${drawings}</svg>`;
 }
 
 /** A separate reference, not a screenshot/export of the user's editor. */
