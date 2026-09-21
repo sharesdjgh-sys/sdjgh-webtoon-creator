@@ -770,8 +770,40 @@ export default function StoryboardEditor({ document, characters, staleLayerIds =
                   </div>
                 </div>
               )}
-              <label className="visual-label">표시 내용</label>
-              <textarea value={selected.text} onChange={(event) => updateElement(selected.id, { text: event.target.value })} className="visual-input min-h-16 resize-none" />
+              <div className={isOverlayElement(selected) ? "space-y-2 rounded-xl border border-[#E4DDF8] bg-[#FAF8FF] p-3" : "space-y-2"}>
+                <label className="visual-label">표시 내용</label>
+                <textarea value={selected.text} onChange={(event) => updateElement(selected.id, { text: event.target.value })} className="visual-input min-h-16 resize-none" />
+                {isOverlayElement(selected) && (
+                  <div className="space-y-2 border-t border-[#E4DDF8] pt-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-bold text-[#5B21B6]">웹툰 글꼴</span>
+                      <span className="text-[9px] text-[#8B7EAE]">요소마다 개별 설정</span>
+                    </div>
+                    <select
+                      value={selected.fontFamily ?? defaultWebtoonFont(selected.type)}
+                      onChange={(event) => updateElement(selected.id, { fontFamily: event.target.value as StoryboardElement["fontFamily"] })}
+                      className="visual-input"
+                    >
+                      {WEBTOON_FONT_OPTIONS.map((font) => (
+                        <option key={font.value} value={font.value}>{font.label} · {font.description}</option>
+                      ))}
+                    </select>
+                    <label className="visual-label">글자 굵기</label>
+                    <select
+                      value={selected.fontWeight ?? (selected.type === "sfx" ? 900 : 600)}
+                      onChange={(event) => updateElement(selected.id, { fontWeight: Number(event.target.value) })}
+                      className="visual-input"
+                    >
+                      <option value="400">보통</option>
+                      <option value="500">중간</option>
+                      <option value="600">약간 굵게</option>
+                      <option value="700">굵게</option>
+                      <option value="800">매우 굵게</option>
+                      <option value="900">강조</option>
+                    </select>
+                  </div>
+                )}
+              </div>
               {selected.type === "speech" && (
                 <div className="space-y-2.5 rounded-xl border border-[#F1D5B9] bg-[#FFF9F2] p-3">
                   <div>
@@ -806,56 +838,6 @@ export default function StoryboardEditor({ document, characters, staleLayerIds =
                     </select>
                     <p className="mt-1.5 text-[10px] leading-relaxed text-[#9A7654]">화자를 선택하면 꼬리가 인물을 향합니다. 캔버스의 노란 핸들을 드래그해 정확한 방향을 조절할 수 있어요.</p>
                   </div>
-                </div>
-              )}
-              {isOverlayElement(selected) && (
-                <div className="space-y-2.5 rounded-xl border border-[#E4DDF8] bg-[#FAF8FF] p-3">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[11px] font-bold text-[#5B21B6]">웹툰 글꼴</span>
-                    <span className="text-[9px] text-[#8B7EAE]">요소마다 개별 설정</span>
-                  </div>
-                  <select
-                    value={selected.fontFamily ?? defaultWebtoonFont(selected.type)}
-                    onChange={(event) => updateElement(selected.id, { fontFamily: event.target.value as StoryboardElement["fontFamily"] })}
-                    className="visual-input"
-                  >
-                    {WEBTOON_FONT_OPTIONS.map((font) => (
-                      <option key={font.value} value={font.value}>{font.label} · {font.description}</option>
-                    ))}
-                  </select>
-                  <div
-                    className="flex min-h-14 items-center justify-center rounded-lg border border-[#E4DDF8] bg-white px-3 text-center text-xl text-[#1A1A1A]"
-                    style={{
-                      fontFamily: webtoonFontStack(selected.fontFamily ?? defaultWebtoonFont(selected.type)),
-                      fontSize: Math.min(32, selected.fontSize ?? defaultElementFontSize(selected)),
-                      fontWeight: selected.fontWeight ?? (selected.type === "sfx" ? 900 : 600),
-                    }}
-                  >
-                    {selected.text || (selected.type === "sfx" ? "쾅!" : selected.type === "caption" ? "그날의 기억" : "무슨 일이야?")}
-                  </div>
-                  <label className="visual-label">글자 크기 {Math.round(selected.fontSize ?? defaultElementFontSize(selected))}</label>
-                  <input
-                    type="range"
-                    min="12"
-                    max="120"
-                    step="1"
-                    value={selected.fontSize ?? defaultElementFontSize(selected)}
-                    onChange={(event) => updateElement(selected.id, { fontSize: Number(event.target.value) })}
-                    className="w-full accent-[#7C3AED]"
-                  />
-                  <label className="visual-label">글자 굵기</label>
-                  <select
-                    value={selected.fontWeight ?? (selected.type === "sfx" ? 900 : 600)}
-                    onChange={(event) => updateElement(selected.id, { fontWeight: Number(event.target.value) })}
-                    className="visual-input"
-                  >
-                    <option value="400">보통</option>
-                    <option value="500">중간</option>
-                    <option value="600">약간 굵게</option>
-                    <option value="700">굵게</option>
-                    <option value="800">매우 굵게</option>
-                    <option value="900">강조</option>
-                  </select>
                 </div>
               )}
               <label className="visual-label">회전 {Math.round(selected.rotation)}°</label>
