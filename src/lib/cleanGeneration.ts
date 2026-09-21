@@ -2,13 +2,15 @@ import type { StoryboardDocument, StoryboardElement } from "@/lib/storage";
 import { resolveCharacterRig, sceneCharacterRig } from "@/lib/storyboardRig";
 
 export const CLEAN_ART_VERSION = "clean-art-v1";
-export const SCENE_REFERENCE_VERSION = "complete-people-safe-geometry-v3";
+export const SCENE_REFERENCE_VERSION = "raster-pose-with-explicit-controls-v4";
 export const isArtworkElement = (element: StoryboardElement) =>
   element.visible !== false && ["background", "character", "prop"].includes(element.type);
 
 /** Guides and typography are editor-only. Never send their content as drawable objects. */
 export function artworkOnlyStoryboard(document: StoryboardDocument): StoryboardDocument {
-  return { ...document, elements: document.elements.filter(isArtworkElement) };
+  const { flow: _flow, ...artwork } = document;
+  void _flow;
+  return { ...artwork, elements: document.elements.filter(isArtworkElement) };
 }
 
 /** Exact scene-space geometry, not a decorated editor screenshot. No typography or user guides. */
@@ -23,7 +25,7 @@ export function sceneStructureSvg(document: StoryboardDocument, transparent = fa
     const box = `<rect width="${layer.width}" height="${layer.height}" fill="none" stroke="${layer.type === "character" ? "#2563eb" : "#a16207"}" stroke-width="2"/>`;
     let content = box;
     if (layer.type === "character") {
-      const rig = sceneCharacterRig(layer);
+      const rig = layer.poseDescriptionEdited ? {} : sceneCharacterRig({ ...layer, assetId: document.sceneSketchAssetId || layer.assetId });
       const point = (key: keyof typeof rig) => { const joint = rig[key]; return joint ? { x: (layer.flipX ? 1 - joint.x : joint.x) * layer.width, y: joint.y * layer.height } : undefined; };
       content += edges.map(([a, b]) => {
         const from = point(a), to = point(b);

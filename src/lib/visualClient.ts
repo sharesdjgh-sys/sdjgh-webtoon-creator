@@ -53,7 +53,7 @@ async function postVisual<T>(body: unknown): Promise<T> {
 }
 
 export function characterSheetHash(project: Project, character: Character): string {
-  return sourceHash({ renderer: "openai-character-sheet-v3-3x2-safe-frame", context: context(project), character: characterData(character) });
+  return sourceHash({ renderer: "gemini-character-sheet-v1-3x2", context: context(project), character: characterData(character) });
 }
 
 export async function requestCharacterSheet(
@@ -81,7 +81,7 @@ export async function requestStoryboardLayout(project: Project, episode: Episode
     action: "storyboard-layout",
     context: context(project),
     episode: { number: episode.episodeNumber, title: episode.title, synopsis: episode.synopsis },
-    cut: cutData(cut),
+    cut: { ...cutData(cut), scrollGap: cut.scrollGap },
     characters: selected.map(characterData),
   });
   return response.storyboard;
@@ -187,25 +187,26 @@ export function sceneHash(project: Project, episode: Episode, cut: Cut): string 
   return sourceHash({ renderer: SCENE_REFERENCE_VERSION, context: context(project), episode: { number: episode.episodeNumber, title: episode.title, synopsis: episode.synopsis }, cut: { ...cutData(cut), dialogue: "", soundEffect: "" }, storyboard: cut.storyboard ? artworkOnlyStoryboard(cut.storyboard) : undefined, references });
 }
 
-export async function requestSceneImage(project: Project, episode: Episode, cut: Cut, referenceMode: "layers" | "direct" = "layers"): Promise<{ blob: Blob; prompt: string; sourceHash: string }> {
+export async function requestSceneImage(project: Project, episode: Episode, cut: Cut, referenceMode: "layers" | "direct" = "layers", stage: "sketch" | "finish" = "finish"): Promise<{ blob: Blob; prompt: string; sourceHash: string }> {
   if (!cut.storyboard) throw new Error("먼저 편집 가능한 콘티를 만들어주세요.");
   const incomplete = cut.storyboard.elements.filter(layer => ["background", "character", "prop"].includes(layer.type) && layer.visible !== false && (!layer.assetId || layer.assetSourceHash !== storyboardLayerHash(project, episode, cut, layer.id)));
-  if (referenceMode === "layers" && incomplete.length) throw new Error("기존 그림은 보존됩니다. 말풍선·가이드가 섞일 수 있는 이전 레이어를 먼저 다시 생성해주세요.");
+  if (stage !== "sketch" && !cut.storyboard.sceneSketchAssetId && referenceMode === "layers" && incomplete.length) throw new Error("기존 그림은 보존됩니다. 말풍선·가이드가 섞일 수 있는 이전 레이어를 먼저 다시 생성해주세요.");
   const artwork = artworkOnlyStoryboard(cut.storyboard);
   if (!artwork.elements.length) throw new Error("장면에 표시할 배경·인물·소품을 먼저 추가해주세요.");
   const missingPeople: string[] = [];
-  for (const layer of artwork.elements.filter(element => element.type === "character")) {
+  for (const layer of artwork.elements.filter(element => stage !== "sketch" && !artwork.sceneSketchAssetId && element.type === "character")) {
     if (!layer.assetId || !await getMediaAsset(layer.assetId)) missingPeople.push(layer.text || "인물");
   }
   if (missingPeople.length) throw new Error(`인물 스케치가 없습니다: ${missingPeople.join(", ")}. 누락 인물 스케치를 먼저 생성하고 콘티를 확인해주세요. 완성 그림 생성은 시작하지 않았습니다.`);
   // Keep the COMPLETE current layout, even when a layer's prompt/pose has changed.
   // Editable typography is excluded; missing raster assets get geometry, never silent omission.
-  const layoutBlob = await composeStoryboardPng(artwork, { includeOverlays: false, strictAssets: referenceMode === "layers", missingArtwork: referenceMode === "direct" ? "geometry" : undefined });
+  const layoutBlob = await composeStoryboardPng(artwork, { includeOverlays: false, strictAssets: stage !== "sketch" && referenceMode === "layers", missingArtwork: referenceMode === "direct" ? "geometry" : undefined });
   const structureBlob = await svgToPngBlob(artwork, sceneStructureSvg(artwork));
   const layoutMimeType = "image/png";
   const references = await characterReferences(project, cut);
   const response = await postVisual<GeneratedImageResponse>({
     action: "scene-image",
+    stage,
     referenceMode,
     context: context(project),
     episode: { number: episode.episodeNumber, title: episode.title, synopsis: episode.synopsis },

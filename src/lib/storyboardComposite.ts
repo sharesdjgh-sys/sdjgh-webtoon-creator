@@ -51,8 +51,14 @@ export async function composeStoryboardPng(
   context.fillStyle = options.background ?? "#ffffff";
   context.fillRect(0, 0, canvas.width, canvas.height);
 
+  if (storyboard.sceneSketchAssetId) {
+    const scene = await getMediaAsset(storyboard.sceneSketchAssetId);
+    if (!scene) throw new Error("장면 스케치 파일이 없습니다. 장면 스케치를 다시 생성해주세요.");
+    await drawBlob(context, scene.blob, { x: 0, y: 0, width: storyboard.width, height: storyboard.height, rotation: 0 });
+  }
+
   const imageLayers = storyboard.elements
-    .filter((element) => element.visible !== false && ["background", "character", "prop"].includes(element.type))
+    .filter((element) => !storyboard.sceneSketchAssetId && element.visible !== false && ["background", "character", "prop"].includes(element.type))
     .sort((left, right) => left.zIndex - right.zIndex);
   for (const layer of imageLayers) {
     const asset = layer.assetId ? await getMediaAsset(layer.assetId) : undefined;
@@ -74,6 +80,7 @@ export async function composeStoryboardPng(
 
 export function hasGeneratedStoryboardLayers(storyboard?: StoryboardDocument): boolean {
   if (!storyboard) return false;
+  if (storyboard.sceneSketchAssetId) return true;
   return storyboard.elements.some((element) => element.visible !== false && ["background", "character", "prop"].includes(element.type) && Boolean(element.assetId));
 }
 

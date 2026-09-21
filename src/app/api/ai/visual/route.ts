@@ -6,9 +6,9 @@ import {
   generateSceneImage,
   generateStoryboardLayout,
   generateStoryboardLayer,
+  generateCharacterSheet,
   projectVisualContextSchema,
 } from "@/lib/gemini";
-import { generateCharacterSheet } from "@/lib/openaiImage";
 
 export const maxDuration = 120;
 
@@ -36,6 +36,7 @@ const cutSchema = z.object({
   dialogue: z.string().trim().max(1_000),
   soundEffect: z.string().trim().max(300),
   aspectRatio: z.enum(["4:3", "3:4", "1:1", "9:16"]),
+  scrollGap: z.enum(["short", "normal", "long"]).optional(),
 });
 
 const pointSchema = z.object({
@@ -61,6 +62,7 @@ const characterRigSchema = z.object({
 });
 
 const storyboardSchema = z.object({
+  sceneSketchAssetId: z.string().max(200).optional(),
   version: z.literal(2),
   aspectRatio: z.enum(["4:3", "3:4", "1:1", "9:16"]),
   width: z.number().positive().max(4_000),
@@ -93,6 +95,9 @@ const storyboardSchema = z.object({
     balloonStroke: z.string().regex(/^#[0-9a-f]{6}$/i).optional(),
     balloonStrokeWidth: z.number().min(0).max(12).optional(),
     characterRig: characterRigSchema.optional(),
+    poseControlEdited: z.boolean().optional(),
+    poseDescriptionEdited: z.boolean().optional(),
+    placement: z.enum(["art", "before", "after", "top-edge", "bottom-edge", "canvas"]).optional(),
     balloonStyle: z.enum(["normal", "thought", "shout", "whisper", "rounded", "none"]).optional(),
     tailX: z.number().min(-2).max(3).optional(),
     tailY: z.number().min(-2).max(3).optional(),
@@ -136,6 +141,7 @@ const requestSchema = z.discriminatedUnion("action", [
   }),
   z.object({
     action: z.literal("scene-image"),
+    stage: z.enum(["sketch", "finish"]).default("finish"),
     referenceMode: z.enum(["layers", "direct"]).default("layers"),
     context: projectVisualContextSchema,
     episode: episodeSchema,

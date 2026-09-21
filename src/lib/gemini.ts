@@ -7,6 +7,7 @@ import type { CharacterRig, PanelAspectRatio, StoryboardDocument, StoryboardElem
 import { resolveCharacterRig, sceneCharacterRig } from "@/lib/storyboardRig";
 import { webtoonShotPrompt } from "@/lib/webtoonShots";
 import { cleanCharacterMentions } from "@/lib/characterMentions";
+import { normalizeWebtoonFlow } from "@/lib/webtoonFlow";
 
 const IMAGE_MODEL = process.env.GEMINI_IMAGE_MODEL ?? "gemini-3.1-flash-image";
 const LAYOUT_MODEL = process.env.GEMINI_LAYOUT_MODEL ?? "gemini-3.8-flash";
@@ -101,10 +102,14 @@ const generatedElementSchema = z.object({
   tailX: z.number().optional(),
   tailY: z.number().optional(),
   speakerCharacterId: z.string().max(120).optional(),
+  placement: z.enum(["art", "before", "after", "top-edge", "bottom-edge"]).optional(),
+  flowOrder: z.number().optional(),
+  flowSpacing: z.number().optional(),
 });
 
 const generatedDocumentSchema = z.object({
   backgroundDescription: z.string().trim().max(900).optional(),
+  flow: z.object({ before: z.number(), after: z.number(), inset: z.number(), align: z.enum(["left", "center", "right"]) }).optional(),
   elements: z.array(generatedElementSchema).min(1).max(24),
 });
 
@@ -112,6 +117,11 @@ const STORYBOARD_JSON_SCHEMA = {
   type: "object",
   properties: {
     backgroundDescription: { type: "string", description: "Korean environment art direction: concrete location, camera perspective/horizon, near/middle/far depth, architecture or landscape, visible furniture/fixtures, light source, time and atmosphere. Describe drawable details, not a short label. Maximum 900 characters." },
+    flow: {
+      type: "object", description: "Vertical reading rhythm outside the artwork. Whitespace is composed by the app, never drawn into the image.",
+      properties: { before: { type: "number", minimum: 0, maximum: 300, description: "Whitespace above, default 150 pixels; maximum 300" }, after: { type: "number", minimum: 0, maximum: 300, description: "Whitespace below, default 150 pixels; maximum 300" }, inset: { type: "number", description: "Half the space left beside the art: 0..35% of canvas width. Vary art width to suit this beat." }, align: { type: "string", enum: ["left", "center", "right"] } },
+      required: ["before", "after", "inset", "align"],
+    },
     elements: {
       type: "array",
       items: {
@@ -146,7 +156,10 @@ const STORYBOARD_JSON_SCHEMA = {
               "leftHip", "rightHip", "leftKnee", "leftFoot", "rightKnee", "rightFoot",
             ],
           },
-          balloonStyle: { type: "string", enum: ["normal", "thought", "shout", "whisper"] },
+          balloonStyle: { type: "string", enum: ["normal", "thought", "shout", "whisper", "rounded", "none"] },
+          placement: { type: "string", enum: ["art", "before", "after", "top-edge", "bottom-edge"], description: "Vertical-webtoon lettering location. Prefer before/after whitespace or top-edge/bottom-edge for dialogue. Art is for SFX or intentional unobstructive placement only." },
+          flowOrder: { type: "number", description: "Top-to-bottom reading order of lettering within its whitespace region" },
+          flowSpacing: { type: "number", description: "Extra whitespace before this line of dialogue or narration, 0..1200 pixels" },
           tailX: { type: "number", description: "Speech-tail endpoint x in local normalized coordinates; 0..1 is inside the balloon" },
           tailY: { type: "number", description: "Speech-tail endpoint y in local normalized coordinates; 0..1 is inside the balloon" },
           speakerCharacterId: { type: "string", description: "Exact selected cast ID of the speaker" },
@@ -155,7 +168,7 @@ const STORYBOARD_JSON_SCHEMA = {
       },
     },
   },
-  required: ["backgroundDescription", "elements"],
+  required: ["backgroundDescription", "flow", "elements"],
 } as const;
 
 export type CharacterVisualInput = z.infer<typeof characterInputSchema>;
@@ -305,6 +318,15 @@ function dimensions(aspectRatio: PanelAspectRatio): { width: number; height: num
   }[aspectRatio];
 }
 
+export async function generateCharacterSheet(context: ProjectVisualContext, character: CharacterVisualInput) {
+  const prompt = buildCharacterSheetPrompt(context, character);
+  const result = await client().interactions.create({
+    model: IMAGE_MODEL, input: prompt,
+    response_format: { type: "image", mime_type: "image/png", aspect_ratio: "3:2", image_size: "2K" },
+  });
+  return { ...imageResult(result), prompt };
+}
+
 function clampElement(
   element: z.infer<typeof generatedElementSchema>,
   index: number,
@@ -325,7 +347,10 @@ function clampElement(
     zIndex: index,
     text: cleanCharacterMentions(element.text, [...characters].map(([id, name]) => ({ id, name }))),
     characterId: element.characterId && characters.has(element.characterId) ? element.characterId : undefined,
-    balloonStyle: element.type === "speech" ? (element.balloonStyle ?? "normal") : undefined,
+    balloonStyle: element.type === "speech" ? (element.balloonStyle ?? "normal") : element.type === "caption" ? (element.balloonStyle ?? "rounded") : undefined,
+    placement: element.placement ?? (element.type === "caption" ? "before" : element.type === "speech" ? (element.y < height * .45 ? "before" : "after") : "art"),
+    flowOrder: element.flowOrder ?? index * 100,
+    flowSpacing: Math.min(1200, Math.max(0, element.flowSpacing ?? 0)),
     tailX: element.type === "speech" ? Math.min(2, Math.max(-1, element.tailX ?? 0.25)) : undefined,
     tailY: element.type === "speech" ? Math.min(2, Math.max(-1, element.tailY ?? 1.22)) : undefined,
     speakerCharacterId: element.type === "speech" && element.speakerCharacterId && characters.has(element.speakerCharacterId)
@@ -341,7 +366,7 @@ function clampElement(
 export async function generateStoryboardLayout(input: {
   context: ProjectVisualContext;
   episode: { number: number; title: string; synopsis: string };
-  cut: { angle: string; description: string; dialogue: string; soundEffect: string; aspectRatio: PanelAspectRatio };
+  cut: { angle: string; description: string; dialogue: string; soundEffect: string; aspectRatio: PanelAspectRatio; scrollGap?: "short" | "normal" | "long" };
   characters: CharacterVisualInput[];
 }): Promise<StoryboardDocument> {
   const { width, height } = dimensions(input.cut.aspectRatio);
@@ -358,6 +383,7 @@ Camera angle: ${input.cut.angle} — ${webtoonShotPrompt(input.cut.angle)}
 Scene: ${input.cut.description || "Infer a clear beat from the episode context"}
 Dialogue: ${input.cut.dialogue || "None"}
 Sound effect: ${input.cut.soundEffect || "None"}
+Scroll pacing: ${input.cut.scrollGap || "normal"}
 Selected cast:
 ${cast || "No named character selected"}
 
@@ -370,6 +396,9 @@ Return a practical SVG scene graph using only the supplied JSON schema.
 - Every character element must include characterRig with all 14 normalized joints. Build the actual described action and weight balance — sitting must bend hips and knees onto a seat, running must show stride and arm counter-swing, looking back must turn the shoulder line and head. Never fall back to a generic standing pose.
 - Use prop, shape, and arrow elements only when they clarify depth, motion, foreground, or background.
 - Use speech/caption/sfx elements for exact Korean text; these remain editable overlays.
+- Design for a VERTICAL SCROLL WEBTOON, not a printed comic page or four-panel grid. Dialogue belongs primarily in whitespace BEFORE/AFTER the art or lightly across its top/bottom edge. Never cover faces, hands, interaction props, or important scenery. Narration/inner monologue may be separate caption boxes or unboxed text in whitespace; SFX can cross an art boundary. Preserve top-to-bottom reading order. Do not force all speech inside the artwork.
+- Plan flow.before/after as reading time: short gaps for quick exchanges, longer gaps for hesitation, silence, time passing or scene transitions. Vary art width with flow.inset and left/center/right alignment where it serves the beat; establishing scenery can be wide, reactions/detail shots can be narrow. Do not mechanically make every image the same width. The art canvas remains fully drawn; the app creates these surrounding spaces. Use flowOrder/flowSpacing to separate monologue beats and dialogue in a natural reading sequence, without changing or inventing the supplied text.
+- Both top and bottom whitespace default to 150px and have a HARD 300px maximum. Keep each side's total lettering height plus flowSpacing, 40px between elements and 24px outer padding within 300px. Distribute dialogue between the two sides when needed; never allocate oversized whitespace or clip text.
 - For every speech element, choose balloonStyle: normal for ordinary dialogue, thought for inner monologue, shout for yelling, or whisper for quiet/breathing dialogue. Set speakerCharacterId to the exact cast ID and aim tailX/tailY toward that speaker. tail coordinates are local to the balloon: (0,0) top-left, (1,1) bottom-right, and may extend outside the box.
 - text for character and prop elements is a short Korean label. Include concise pose and expression notes for characters.
 - Avoid overlaps that obscure faces or key action. Keep 10% safe margins for text.
@@ -392,6 +421,8 @@ Return a practical SVG scene graph using only the supplied JSON schema.
     aspectRatio: input.cut.aspectRatio,
     width,
     height,
+    flow: { ...normalizeWebtoonFlow(parsed.flow),
+      inset: Math.min(width * .35, Math.max(0, parsed.flow?.inset ?? 0)), align: parsed.flow?.align ?? "center" },
     elements: [
       {
         id: `background-${crypto.randomUUID()}`,
@@ -461,10 +492,10 @@ ${reference ? identityLock(reference.character) : ""}
 The normalized joint rig inside this layer is: ${rigText}.
 REFERENCE PRIORITY: input image 2 is the complete approved design sheet and input image 3 is an enlarged crop of its canonical full-body hero figure. These two images are the single source of truth for identity and design. ${input.poseReference ? "Input image 4 is the creator-selected POSE REFERENCE: copy its body gesture, limb bends, weight balance and facing direction, but never copy that person's identity, face, clothes or background." : "Input image 1 supplies pose and placement."} If the layout diagram conflicts with the approved identity references, keep ONLY its placement/pose and discard its face, hair, body design and clothes. Do not redesign, beautify, simplify, age up/down, recolor, change hairstyle, change uniform, remove accessories, or blend in features from another person.
 Preserve the exact face geometry, eye design, hair silhouette, body proportions, outfit construction, shoes, accessories and palette from the approved sheet. Change only pose, expression, viewing angle and lighting. The pose must match every joint, weight balance and facing direction. Draw readable anatomy, hands and feet; do not replace it with a stick figure or generic standing pose.
-Output exactly one character at the specified joint positions and scale. Do not center, enlarge or shrink the figure independently of the rig. Preserve intentional partial-body framing; never invent a full body to fit the layer. Use pure white outside the silhouette and opaque white/gray inside skin and clothes, with continuous closed outer contours suitable for compositing. No floor, shadow, background, props, text, balloon, border, label or watermark. Monochrome rough line art only.`
+Output exactly one character at the specified joint positions and scale. Do not center, enlarge or shrink the figure independently of the rig. Preserve intentional partial-body framing; never invent a full body to fit the layer. BACKGROUND MATTE CONTRACT: paint ALL empty space outside the subject, including gaps between limbs, solid chroma green #00FF00. This overrides the white background of reference images. Skin, hair and clothes must be opaque grayscale, never green, even in highlights or sketch gaps. Render a solid grayscale silhouette beneath the line art, not bare floating lines. Identity palette applies to grayscale values only in this sketch. No green reflected light, gradients or shadows. No floor, background objects, props, text, balloon, border, label or watermark. Monochrome subject on green screen.`
       : `Draw ONE isolated major prop layer for a professional webtoon storyboard.
 ${common}
-Prop: ${layer.text}. Use input image 1 for orientation and intended scale. Draw the complete prop centered on pure white, monochrome rough line art, with no person, hand, background, shadow, text, border, label or watermark.`;
+Prop: ${layer.text}. Use input image 1 for orientation and intended scale. Draw the complete prop as an opaque grayscale silhouette and line art on solid chroma green #00FF00. All empty space and holes must be green; every object surface must remain opaque grayscale, not green. No green reflected light, person, hand, background objects, shadow, text, border, label or watermark.`;
   const interaction = await client().interactions.create({
     model: IMAGE_MODEL,
     input: [
@@ -490,6 +521,7 @@ Prop: ${layer.text}. Use input image 1 for orientation and intended scale. Draw 
 }
 
 export async function generateSceneImage(input: {
+  stage?: "sketch" | "finish";
   referenceMode?: "layers" | "direct";
   context: ProjectVisualContext;
   episode: { number: number; title: string; synopsis: string };
@@ -536,28 +568,34 @@ export async function generateSceneImage(input: {
         const purpose = element.type === "background" ? `environment=${element.text || input.cut.description}; fills the ENTIRE canvas; never draw its bounding box or label` : `physical prop=${element.text || "object"}; never render its label`;
         return `- [${element.type.toUpperCase()} ${element.id}] ${elementBox(element)}; ${purpose}`;
       }
-      const rig = sceneCharacterRig(element);
+      const rig = sceneCharacterRig({ ...element, assetId: input.storyboard.sceneSketchAssetId || element.assetId });
       const joints = Object.entries(rig).map(([name, point]) => {
         const localX = element.flipX ? (1 - point.x) * element.width : point.x * element.width;
         const position = rotate(element.x + localX, element.y + point.y * element.height, element);
         return `${name}=(${pct(position.x, input.storyboard.width)},${pct(position.y, input.storyboard.height)})`;
       }).join(", ");
       const identity = referenceNames.get(element.characterId ?? "") || element.text || "character";
-      return `- [CHARACTER ${element.id}] identity=${identity}; ${elementBox(element)}; pose=${element.pose || "follow rig"}; expression=${element.expression || "follow scene"}; JOINTS ${joints}`;
+      return `- [CHARACTER ${element.id}] identity=${identity}; ${elementBox(element)}; expression=${element.expression || "follow scene"}; ${element.poseDescriptionEdited ? `REQUESTED POSE CHANGE: ${element.pose || "follow scene"}. Apply this creator edit within the existing framing, updating hand contacts and connected props coherently; this explicit edit overrides the old raster pose and default joints.` : joints ? `EXPLICIT EDITED JOINTS ${joints}` : "RASTER POSE LOCK: trace the visible head, hands, silhouette and crop in reference image 1; no inferred full-body pose"}`;
     })
     .join("\n");
   const characterCount = input.storyboard.elements.filter((element) => element.visible !== false && element.type === "character").length;
 
-  const task = input.referenceMode === "direct"
+  const task = input.stage === "sketch"
+    ? "DRAW a complete grayscale storyboard scene using reference image 1 and the edited control map. Existing artwork is a composition reference, not separate pieces to paste. Keep all people, hands and connected objects in a single coherent perspective. Draw the environment visibly rather than writing its name. Never add dialogue, balloons, labels or guides."
+    : input.referenceMode === "direct"
     ? "FINISH the complete user-edited storyboard as one webtoon panel in a SINGLE image generation. This is faithful rendering, NOT recomposition. Reference image 1 contains the full current layer composition including existing images of edited layers. Missing raster assets are represented by control geometry rather than omitted. Preserve the user's framing, figure sizes, positions, hand contacts, props, desk/monitor layout and overlaps. Draw EVERY object in the spatial contract. Do not return separate layers, a collage, a contact sheet or intermediate drafts."
     : "REDRAW the first image as one finished webtoon panel. This is a layout-locked image-to-image production task, not a new composition.";
-  const prompt = `${task}
+  const stageDirection = input.stage === "sketch"
+    ? "STORYBOARD SKETCH STAGE: Draw ONE coherent grayscale scene, including ALL people, their hands, contact objects and environment together in a single perspective. This is one art region of a vertical-scroll webtoon, never a four-panel comic, page grid or contact sheet. Draw whole connected objects: laptop screen/hinge/keyboard must connect; tablet front/back/stand must be physically consistent; hands must contact the correct surface. Do not separate people or props onto independent canvases. Grayscale rough artwork with opaque surfaces, no green-screen or transparency."
+    : "FINISH STAGE: Color and finish the approved full-scene sketch. Preserve object topology, visible front/back, hand contacts, laptop screen/hinge/keyboard and tablet/stand orientation. Do not redesign the scene or complete clipped objects by changing camera framing. This is one art region within a vertical-scroll webtoon, not a page grid.";
+  const prompt = `${stageDirection}
+${task}
 
 PROJECT
 - Title: ${input.context.title}
 - Genre: ${input.context.genre}
 - Setting: ${input.context.setting}
-- Art direction: ${artStyle(input.context)}
+- Art direction: ${input.stage === "sketch" ? "Grayscale storyboard line art in the project's established drawing style; no color." : artStyle(input.context)}
 
 PANEL
 - Aspect ratio: ${input.cut.aspectRatio}
@@ -575,6 +613,8 @@ The following SVG is geometric input only, never typography or artwork to reprod
 ${sceneStructureSvg(input.storyboard)}
 Collapsed leg joints from cropped-image analysis are deliberately omitted. Unlisted joints are unknown, NOT a request to draw extra limbs or expand the framing. Preserve the visible silhouette and crop in reference image 1.
 If the older raster pose in image 1 conflicts with the control map/JOINTS, use the control map/JOINTS while retaining the overall composition. Neither prose nor character-sheet poses may move these coordinates.
+Only explicitly edited joints override the raster pose. Boxes describe layer placement, NOT the person's silhouette or head size. For a character with RASTER POSE LOCK, the structure image intentionally has no skeleton: preserve its visible drawing exactly. Do not infer a standing body from its rectangular layer.
+REQUESTED POSE CHANGE is also an explicit creator edit: apply that instruction within its box instead of tracing the old pose. Never let an unedited default rig override this request; keep hand/prop contact and perspective coherent with the rest of the scene.
 
 COMPOSITION LOCK:
 - Preserve the exact camera framing and canvas edges from reference image 1. Do not zoom, crop, pan, mirror, or choose a new angle.

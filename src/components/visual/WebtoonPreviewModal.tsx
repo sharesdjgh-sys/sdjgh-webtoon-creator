@@ -1,141 +1,127 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Eye, LoaderCircle, Smartphone, X } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import type { Cut } from "@/lib/storage";
-import { getMediaAsset } from "@/lib/mediaStorage";
-import { composeScenePng } from "@/lib/storyboardSvg";
-import { composeStoryboardPng } from "@/lib/storyboardComposite";
+import { renderWebtoonBlock, exportWebtoonStrip, legacyGap } from "@/lib/webtoonFlowRender";
+import { webtoonFlowLayout, editableWebtoonDocument } from "@/lib/webtoonFlow";
+import { webtoonArchive, webtoonFilename } from "@/lib/webtoonArchive";
 
-type Props = {
-  open: boolean;
-  title: string;
-  cuts: Cut[];
-  onClose: () => void;
-};
-
-type PreviewImage = {
-  cutId: string;
-  url?: string;
-  state: "loading" | "ready" | "missing" | "error";
-};
-
+type Props = { open: boolean; title: string; cuts: Cut[]; onClose: () => void };
 export default function WebtoonPreviewModal({ open, title, cuts, onClose }: Props) {
-  const [gap, setGap] = useState(56);
-  const [showGuides, setShowGuides] = useState(false);
-  const [images, setImages] = useState<PreviewImage[]>([]);
-
+  const [images, setImages] = useState<Record<string, { url?: string; error?: string; warning?: string; width?: number; height?: number }>>({});
+  const [files, setFiles] = useState<string[]>([]);
+  const [archive, setArchive] = useState("");
+  const [exporting, setExporting] = useState(false);
+  const [error, setError] = useState("");
+  const exportUrls = useRef<string[]>([]);
+  const generation = useRef(0);
+  const reader = useRef<HTMLDivElement>(null);
+  const exportingRef = useRef(false);
+  const filename = webtoonFilename(title);
+  const finished = cuts.filter(cut => cut.sceneImageAssetId).length;
+  const missing = cuts.flatMap((cut, index) => !cut.sceneImageAssetId || images[cut.id]?.error ? [index + 1] : []);
+  const warnings = cuts.flatMap((cut, index) => images[cut.id]?.warning ? [index + 1] : []);
+  const ready = cuts.length > 0 && cuts.every(cut => cut.sceneImageAssetId && images[cut.id]?.url && !images[cut.id]?.warning);
   useEffect(() => {
     if (!open) return;
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
-    };
-    document.addEventListener("keydown", closeOnEscape);
-    return () => {
-      document.body.style.overflow = previousOverflow;
-      document.removeEventListener("keydown", closeOnEscape);
-    };
+    const previous = document.body.style.overflow; document.body.style.overflow = "hidden";
+    const key = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
+    document.addEventListener("keydown", key);
+    return () => { document.body.style.overflow = previous; document.removeEventListener("keydown", key); };
   }, [open, onClose]);
-
   useEffect(() => {
-    if (!open) return;
-    let active = true;
+    const current = ++generation.current;
     const urls: string[] = [];
-    Promise.resolve().then(() => {
-      if (active) setImages(cuts.map((cut) => ({ cutId: cut.id, state: "loading" })));
-    });
-
-    Promise.all(cuts.map(async (cut): Promise<PreviewImage> => {
-      try {
-        let blob: Blob | undefined;
-        if (cut.sceneImageAssetId) {
-          const asset = await getMediaAsset(cut.sceneImageAssetId);
-          if (asset) blob = cut.storyboard ? await composeScenePng(cut.storyboard, asset.blob) : asset.blob;
-        } else if (cut.storyboard) {
-          blob = await composeStoryboardPng(cut.storyboard);
+    exportingRef.current = false;
+    Promise.resolve().then(() => { if (current === generation.current) { setImages({}); setFiles([]); setArchive(""); setExporting(false); setError(""); } });
+    if (open) {
+      (async () => {
+        for (const cut of cuts) {
+          if (current !== generation.current) break;
+          try {
+            const result = await renderWebtoonBlock(cut, { finishedOnly: true, preview: true });
+            if (current !== generation.current) break;
+            const url = URL.createObjectURL(result.blob); urls.push(url);
+            setImages(prev => ({ ...prev, [cut.id]: { url, warning: result.warning, width: result.width, height: result.height } }));
+          } catch (e) {
+            if (current === generation.current) setImages(prev => ({ ...prev, [cut.id]: { error: e instanceof Error ? e.message : "미리보기 실패" } }));
+          }
         }
-        if (!blob) return { cutId: cut.id, state: "missing" };
-        const url = URL.createObjectURL(blob);
-        urls.push(url);
-        return { cutId: cut.id, state: "ready", url };
-      } catch {
-        return { cutId: cut.id, state: "error" };
-      }
-    })).then((next) => {
-      if (active) setImages(next);
-    });
-
-    return () => {
-      active = false;
-      urls.forEach((url) => URL.revokeObjectURL(url));
-    };
+      })();
+    }
+    return () => { generation.current = current + 1; urls.forEach(URL.revokeObjectURL); exportUrls.current.forEach(URL.revokeObjectURL); exportUrls.current = []; };
   }, [cuts, open]);
-
+  const exportImages = async () => {
+    if (exportingRef.current || !ready) return;
+    exportingRef.current = true;
+    const current = generation.current;
+    setExporting(true); setError("");
+    try {
+      const pages = await exportWebtoonStrip(cuts, 900, 4096, { finishedOnly: true });
+      if (current !== generation.current) return;
+      const zip = await webtoonArchive(pages.map((blob, index) => ({ name: `${filename}-${String(index + 1).padStart(3, "0")}.png`, blob })));
+      if (current !== generation.current) return;
+      exportUrls.current.forEach(URL.revokeObjectURL);
+      const pngUrls = pages.map(blob => URL.createObjectURL(blob));
+      const zipUrl = URL.createObjectURL(zip);
+      exportUrls.current = [...pngUrls, zipUrl];
+      setFiles(pngUrls); setArchive(zipUrl);
+    } catch (e) {
+      if (current === generation.current) setError(e instanceof Error ? e.message : "출력 실패");
+    } finally { if (current === generation.current) { exportingRef.current = false; setExporting(false); } }
+  };
   if (!open) return null;
-  const imageByCut = new Map(images.map((image) => [image.cutId, image]));
-
-  return (
-    <div className="fixed inset-0 z-[100] flex flex-col bg-[#17151C]/95" role="dialog" aria-modal="true" aria-label={`${title} 웹툰 미리보기`}>
-      <header className="z-10 flex flex-wrap items-center justify-between gap-3 border-b border-white/10 bg-[#211E29]/95 px-4 py-3 text-white backdrop-blur sm:px-6">
-        <div className="flex min-w-0 items-center gap-3">
-          <span className="flex h-9 w-9 items-center justify-center rounded-full bg-[#7C3AED]"><Smartphone className="h-4 w-4" /></span>
-          <div className="min-w-0">
-            <p className="truncate text-sm font-bold">{title || "제목 없는 회차"}</p>
-            <p className="text-[10px] text-white/55">독자가 휴대폰에서 보는 순서대로 스크롤해보세요</p>
-          </div>
-        </div>
-        <div className="flex flex-1 items-center justify-end gap-2 sm:flex-none">
-          <label className="hidden items-center gap-2 rounded-full bg-white/8 px-3 py-2 text-[10px] text-white/70 md:flex">
-            기본 여백 (컷별 설정 우선)
-            <input aria-label="컷 사이 여백" type="range" min="0" max="180" step="8" value={gap} onChange={(event) => setGap(Number(event.target.value))} className="w-24 accent-[#A78BFA]" />
-            <span className="w-8 tabular-nums">{gap}px</span>
-          </label>
-          <button type="button" onClick={() => setShowGuides((current) => !current)} className={`inline-flex items-center gap-1.5 rounded-full px-3 py-2 text-[10px] font-semibold transition ${showGuides ? "bg-[#7C3AED] text-white" : "bg-white/8 text-white/70 hover:bg-white/15"}`}>
-            <Eye className="h-3.5 w-3.5" /> 컷 경계
-          </button>
-          <button type="button" onClick={onClose} aria-label="미리보기 닫기" className="rounded-full bg-white/8 p-2 text-white/70 transition hover:bg-white/15 hover:text-white"><X className="h-4 w-4" /></button>
-        </div>
-      </header>
-
-      <div className="flex-1 overflow-y-auto overscroll-contain">
-        <div className="mx-auto min-h-full w-full max-w-[480px] bg-white shadow-[0_0_80px_rgba(0,0,0,0.45)]">
-          <div className="flex min-h-[38vh] flex-col items-center justify-center bg-gradient-to-b from-[#F7F5FF] to-white px-8 text-center">
-            <p className="text-[10px] font-semibold tracking-[0.3em] text-[#7C3AED]">WEBTOON PREVIEW</p>
-            <h2 className="mt-3 text-xl font-black text-[#1A1A1A]">{title || "제목 없는 회차"}</h2>
-            <p className="mt-2 text-xs text-[#ADA8A0]">아래로 스크롤해서 읽어보세요</p>
-          </div>
-
-          {cuts.length === 0 ? (
-            <div className="flex min-h-[50vh] items-center justify-center px-8 text-center text-sm text-[#ADA8A0]">아직 미리 볼 컷이 없습니다.</div>
-          ) : cuts.map((cut, index) => {
-            const preview = imageByCut.get(cut.id);
-            return (
-              <div key={cut.id}>
-                <div className={`relative w-full bg-white ${showGuides ? "ring-2 ring-inset ring-[#A78BFA]" : ""}`} style={{ aspectRatio: cut.aspectRatio.replace(":", "/") }}>
-                  {preview?.state === "ready" && preview.url ? (
-                    // Generated local Blob URLs do not benefit from Next image optimization.
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={preview.url} alt={`컷 ${index + 1}`} className="absolute inset-0 h-full w-full object-contain" draggable={false} />
-                  ) : preview?.state === "loading" || !preview ? (
-                    <div className="flex h-full items-center justify-center bg-[#F7F5FF] text-[#7C3AED]"><LoaderCircle className="h-5 w-5 animate-spin" /></div>
-                  ) : (
-                    <div className="flex h-full flex-col items-center justify-center bg-[#F4F1EC] px-8 text-center">
-                      <span className="text-xs font-bold text-[#7A7067]">컷 {index + 1} · 아직 그림이 없어요</span>
-                      <span className="mt-2 line-clamp-3 text-[10px] leading-5 text-[#ADA8A0]">{cut.description || "콘티나 장면 이미지를 만들면 여기에 표시됩니다."}</span>
-                    </div>
-                  )}
-                  {showGuides && <span className="absolute left-2 top-2 rounded-full bg-[#7C3AED] px-2 py-1 text-[9px] font-bold text-white shadow">컷 {index + 1} · {cut.aspectRatio}</span>}
-                </div>
-                {index < cuts.length - 1 && <div aria-label={`컷 ${index + 1}과 ${index + 2} 사이 여백`} className="bg-white transition-[height]" style={{ height: cut.scrollGap === "short" ? 16 : cut.scrollGap === "long" ? 160 : gap }} />}
-              </div>
-            );
-          })}
-
-          <div className="flex min-h-[38vh] items-center justify-center bg-gradient-to-b from-white to-[#F7F5FF] text-xs font-semibold text-[#ADA8A0]">이번 화 끝</div>
-        </div>
+  return <div className="fixed inset-0 z-[100] flex flex-col bg-[#17151C]/95" role="dialog" aria-modal="true" aria-label={`${title} 웹툰 미리보기`}>
+    <header className="flex items-center justify-between gap-4 border-b border-white/10 bg-[#211E29] px-6 py-4 text-white">
+      <div><h2 className="text-sm font-bold">{title || "세로 웹툰 원고"}</h2>
+        <p className="mt-1 text-xs text-white/60">총 {cuts.length}컷 · 완성 그림 {finished}컷 · 실제 그림에 최신 말풍선·자막을 표시합니다</p>
+        <p className="mt-1 text-xs text-white/60">현재 편집 내용의 그림·여백·대사를 반영합니다. 미리보기와 다운로드는 프로젝트 저장을 대신하지 않습니다.</p></div>
+      <div className="flex gap-2">
+        <button type="button" disabled={exporting || !ready} onClick={exportImages} className="rounded-full bg-[#7C3AED] px-4 py-2 text-xs disabled:opacity-50">{exporting ? "다운로드 준비 중…" : "이 화 다운로드 준비"}</button>
+        <button type="button" onClick={onClose} aria-label="미리보기 닫기" className="rounded-full bg-white/10 px-4 py-2 text-xs">닫기</button>
+      </div>
+    </header>
+    <div className="shrink-0 space-y-2 border-b border-white/10 bg-[#211E29] px-6 py-2 text-xs text-white/80">
+      <label className="flex items-center gap-2">컷으로 이동
+        <select aria-label="미리보기 컷 이동" defaultValue="" onChange={event => { reader.current?.querySelector(`[data-cut-index="${Number(event.target.value)}"]`)?.scrollIntoView({ block: "start" }); event.target.value = ""; }} className="rounded-lg bg-[#373140] px-3 py-1.5">
+          <option value="" disabled>컷 선택</option>
+          {cuts.map((cut, index) => <option key={cut.id} value={index}>{index + 1}컷 · {cut.sceneImageAssetId ? "완성 그림" : "그림 없음"}</option>)}
+        </select>
+      </label>
+      <nav aria-label="컷 바로가기" className="flex gap-2 overflow-x-auto pb-1">
+        {cuts.map((cut, index) => <button key={cut.id} type="button"
+          onClick={() => reader.current?.querySelector(`[data-cut-index="${index}"]`)?.scrollIntoView({ block: "start" })}
+          className={`shrink-0 rounded-lg border px-3 py-2 ${missing.includes(index + 1) ? "border-amber-400/50 text-amber-200" : "border-white/20 bg-white/10"}`}>
+          {index + 1}컷{missing.includes(index + 1) ? " · 그림 없음" : ""}
+        </button>)}
+      </nav>
+      {missing.length > 0 && <p role="alert" className="text-amber-200">{missing.join(", ")}컷의 완성 그림이 없거나 파일을 불러올 수 없습니다. 콘티로 대체하지 않습니다. 전체 다운로드 전에 해당 컷을 확인해주세요.</p>}
+      {warnings.length > 0 && <p role="alert" className="text-amber-200">{warnings.join(", ")}컷의 말풍선·자막이 영역을 벗어났습니다. 실제 그림은 표시하며, 식자 위치를 조정한 뒤 다운로드할 수 있습니다.</p>}
+      <p>{ready ? "아래로 스크롤하면 한 화 전체가 이어집니다." : "완성 그림이 있는 컷부터 표시합니다."}</p>
+    </div>
+    {(error || files.length > 0) && <div className="flex flex-wrap gap-3 bg-white p-3 text-xs" role="status">
+      {error || <span>900px 폭 · 높이 최대 4096px의 PNG {files.length}개입니다. 번호 순서로 이어지는 한 화의 원고입니다.</span>}
+      {archive && <a href={archive} download={`${filename}.zip`} className="rounded-full bg-[#7C3AED] px-4 py-2 font-semibold text-white">한 화 전체 ZIP 다운로드</a>}
+      {files.map((url, index) => <a key={url} href={url} download={`${filename}-${String(index + 1).padStart(3, "0")}.png`} className="text-[#7C3AED] underline">PNG {index + 1}</a>)}
+    </div>}
+    <div ref={reader} aria-label="한 화 세로 스크롤 원고" className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+      <div className="mx-auto min-h-full w-full max-w-[560px] bg-white">
+        {cuts.map((cut, index) => {
+          const size = cut.storyboard ? webtoonFlowLayout(editableWebtoonDocument(cut.storyboard)).document : { width: 900, height: 1200 };
+          const preview = images[cut.id];
+          return <div key={cut.id} data-cut-index={index}>
+            <div style={{ aspectRatio: `${preview?.width ?? size.width}/${preview?.height ?? size.height}` }} className="relative w-full overflow-hidden bg-white">
+              {preview?.url
+                // Local Blob URLs are already rendered at the exact reading dimensions.
+                // eslint-disable-next-line @next/next/no-img-element
+                ? <img src={preview.url} alt={`세로 원고 구간 ${index + 1}`} className="absolute inset-0 h-full w-full object-contain" />
+                : <p className="p-8 text-center text-xs text-[#7A7067]">{index + 1}컷 · {preview?.error || "세로 원고 준비 중…"}</p>}
+            </div>
+            {index < cuts.length - 1 && <div style={{ aspectRatio: legacyGap(cut) ? `900/${legacyGap(cut)}` : undefined }} />}
+          </div>;
+        })}
+        {!cuts.length && <p className="p-16 text-center text-sm">아직 장면이 없습니다.</p>}
       </div>
     </div>
-  );
+  </div>;
 }

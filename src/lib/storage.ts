@@ -71,6 +71,11 @@ export type StoryboardElement = {
   balloonStroke?: string;
   balloonStrokeWidth?: number;
   characterRig?: CharacterRig;
+  poseControlEdited?: boolean;
+  poseDescriptionEdited?: boolean;
+  placement?: "art" | "before" | "after" | "top-edge" | "bottom-edge" | "canvas";
+  flowOrder?: number;
+  flowSpacing?: number;
   balloonStyle?: SpeechBalloonStyle;
   tailX?: number;
   tailY?: number;
@@ -89,6 +94,8 @@ export type StoryboardDocument = {
   width: number;
   height: number;
   elements: StoryboardElement[];
+  sceneSketchAssetId?: string;
+  flow?: { before: number; after: number; inset: number; align?: "left" | "center" | "right" };
 };
 
 function migrateStoryboard(cut: Cut): StoryboardDocument | undefined {

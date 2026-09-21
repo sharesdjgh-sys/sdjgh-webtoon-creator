@@ -35,6 +35,14 @@ async function main() {
   const geometry = load("src/lib/panelGeometry.ts");
   const svg = load("src/lib/storyboardSvg.ts");
   const composite = load("src/lib/storyboardComposite.ts");
+  const authoredBalloon = { id: "authored", type: "speech", placement: "canvas", text: "Fixed", x: 40, y: 1300, width: 300, height: 100, rotation: 0, zIndex: 1, tailY: 3 };
+  const reading = { version: 2, width: 900, height: 1500, elements: [authoredBalloon] };
+  assert.ok(svg.storyboardToSvg(reading).includes('translate(40 1300)'), "SVG must not refit authored reading-canvas positions");
+  calls.length = 0;
+  await svg.drawStoryboardOverlays(context, reading);
+  assert.ok(calls.some(call => call[0] === "translate" && call[1] === 190 && call[2] === 1350), "Canvas text uses the same unchanged center as the SVG balloon");
+  assert.equal(revoked.length, 1, "overlay SVG URL is released");
+  revoked.length = 0;
   const ratios = ["4:3", "3:4", "1:1", "9:16"];
   for (const from of ratios) for (const to of ratios) {
     const size = svg.storyboardDimensions(from);

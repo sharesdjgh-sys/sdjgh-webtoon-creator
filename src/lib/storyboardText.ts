@@ -70,6 +70,22 @@ export function layoutStoryboardText(element: StoryboardElement, stack: string) 
   };
 }
 
+/** Validate reading-canvas coordinates without moving or shrinking authored lettering. */
+export function overlayOutsideCanvas(element: StoryboardElement, width: number, height: number): boolean {
+  const radians = element.rotation * Math.PI / 180;
+  const cos = Math.cos(radians), sin = Math.sin(radians);
+  const points = [[0, 0], [element.width, 0], [0, element.height], [element.width, element.height]];
+  if (element.type === "speech" && !["none", "rounded", "shout"].includes(element.balloonStyle ?? "normal")) {
+    points.push([(element.tailX ?? .25) * element.width, (element.tailY ?? 1.22) * element.height]);
+  }
+  return points.some(([x, y]) => {
+    const dx = x - element.width / 2, dy = y - element.height / 2;
+    const px = element.x + element.width / 2 + dx * cos - dy * sin;
+    const py = element.y + element.height / 2 + dx * sin + dy * cos;
+    return px < -.001 || py < -.001 || px > width + .001 || py > height + .001;
+  });
+}
+
 /** Keep rotated overlay bodies and tails inside the panel; never mutate saved data. */
 export function fitOverlayToCanvas(element: StoryboardElement, width: number, height: number): StoryboardElement {
   if (!["speech", "caption", "sfx"].includes(element.type)) return element;

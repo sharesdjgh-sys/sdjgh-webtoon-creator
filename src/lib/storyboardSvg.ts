@@ -3,6 +3,7 @@ import { fitOverlayToCanvas, layoutStoryboardText } from "@/lib/storyboardText";
 import { fitImageRect } from "@/lib/panelGeometry";
 import { resolveCharacterRig } from "@/lib/storyboardRig";
 import { balloonMarkup, textDecoration, textGradientId, textGradientSvg } from "@/lib/webtoonDecoration";
+import { webtoonFlowLayout } from "@/lib/webtoonFlow";
 
 export const WEBTOON_FONT_OPTIONS: Array<{ value: WebtoonFontFamily; label: string; description: string }> = [
   { value: "clean", label: "깔끔한 대사체", description: "일반 대사와 설명" },
@@ -183,7 +184,7 @@ export function storyboardToSvg(
 ): string {
   const elements = document.elements
     .filter((element) => element.visible !== false && (!options.overlaysOnly || isOverlayElement(element)))
-    .map(element => fitOverlayToCanvas(element, document.width, document.height))
+    .map(element => element.placement === "canvas" ? element : fitOverlayToCanvas(element, document.width, document.height))
     .sort((left, right) => left.zIndex - right.zIndex);
   const background = options.transparent ? "" : `<rect width="100%" height="100%" fill="#FBF9F6"/>`;
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${document.width}" height="${document.height}" viewBox="0 0 ${document.width} ${document.height}">${background}${elements.map(element => options.hideText ? elementMarkup(element).replace(/<text\b[^>]*>[\s\S]*?<\/text>/g, "") : elementMarkup(element)).join("")}</svg>`;
@@ -217,7 +218,7 @@ export async function svgToPngBlob(storyboard: StoryboardDocument, svg = storybo
 export async function drawStoryboardOverlays(context: CanvasRenderingContext2D, storyboard: StoryboardDocument): Promise<void> {
   if (window.document.fonts) await window.document.fonts.ready;
   const elements = storyboard.elements.filter(element => element.visible !== false && isOverlayElement(element))
-    .map(element => fitOverlayToCanvas(element, storyboard.width, storyboard.height)).sort((a, b) => a.zIndex - b.zIndex);
+    .map(element => element.placement === "canvas" ? element : fitOverlayToCanvas(element, storyboard.width, storyboard.height)).sort((a, b) => a.zIndex - b.zIndex);
   for (const element of elements) {
     const font = layoutStoryboardText(element, webtoonFontStack(element.fontFamily ?? defaultWebtoonFont(element.type)));
     if (window.document.fonts?.load) await window.document.fonts.load(`${element.type === "sfx" ? "italic " : ""}${font.weight} ${font.fontSize}px ${font.fontFamily}`, element.text);
@@ -281,9 +282,28 @@ export function resizeStoryboard(document: StoryboardDocument, aspectRatio: Pane
   const dimensions = storyboardDimensions(aspectRatio);
   const rect = fitImageRect(document.width, document.height, dimensions.width, dimensions.height);
   const scale = rect.width / document.width;
+  const previous = webtoonFlowLayout(document), next = webtoonFlowLayout({ ...document, ...dimensions });
+  const oldArtScale = previous.art.width / document.width, newArtScale = next.art.width / dimensions.width;
+  const resizeFreeOverlay = (element: StoryboardElement) => {
+    const center = element.y + element.height / 2;
+    let updated: StoryboardElement;
+    if (center < previous.art.y || center > previous.art.y + previous.art.height) {
+      updated = { ...element, x: element.x * dimensions.width / document.width,
+        y: center < previous.art.y ? element.y : element.y + next.art.y + next.art.height - previous.art.y - previous.art.height };
+    } else {
+      const letterScale = scale * newArtScale / oldArtScale;
+      updated = { ...element,
+        x: next.art.x + rect.x * newArtScale + (element.x - previous.art.x) * letterScale,
+        y: next.art.y + rect.y * newArtScale + (element.y - previous.art.y) * letterScale,
+        width: element.width * letterScale, height: element.height * letterScale,
+        ...(element.fontSize === undefined ? {} : { fontSize: element.fontSize * letterScale }),
+      };
+    }
+    return updated;
+  };
   return {
     ...document, aspectRatio, ...dimensions,
-    elements: document.elements.map((element) => ({
+    elements: document.elements.map((element) => element.placement === "canvas" && isOverlayElement(element) ? resizeFreeOverlay(element) : ({
       ...element,
       x: rect.x + element.x * scale, y: rect.y + element.y * scale,
       width: element.width * scale, height: element.height * scale,

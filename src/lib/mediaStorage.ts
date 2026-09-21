@@ -1,6 +1,6 @@
 "use client";
 
-import { removeExteriorWhite } from "@/lib/backgroundRemoval";
+import { removeExteriorWhite, removeGreenScreen } from "@/lib/backgroundRemoval";
 
 const DB_NAME = "webtoon_creator_media";
 const STORE_NAME = "assets";
@@ -167,7 +167,7 @@ export function sourceHash(value: unknown): string {
   return (hash >>> 0).toString(36);
 }
 
-export async function whiteToTransparentPng(blob: Blob): Promise<Blob> {
+export async function whiteToTransparentPng(blob: Blob, mode: "white" | "chroma" = "white"): Promise<Blob> {
   const url = URL.createObjectURL(blob);
   try {
     const image = await new Promise<HTMLImageElement>((resolve, reject) => {
@@ -183,7 +183,8 @@ export async function whiteToTransparentPng(blob: Blob): Promise<Blob> {
     if (!context) throw new Error("레이어 투명 배경을 처리할 수 없습니다.");
     context.drawImage(image, 0, 0);
     const pixels = context.getImageData(0, 0, canvas.width, canvas.height);
-    removeExteriorWhite(pixels.data, canvas.width, canvas.height);
+    if (mode === "chroma") removeGreenScreen(pixels.data, canvas.width, canvas.height);
+    else removeExteriorWhite(pixels.data, canvas.width, canvas.height);
     context.putImageData(pixels, 0, 0);
     return await new Promise<Blob>((resolve, reject) => canvas.toBlob((result) => result ? resolve(result) : reject(new Error("투명 PNG 변환에 실패했습니다.")), "image/png"));
   } finally {

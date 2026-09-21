@@ -10,8 +10,8 @@ let shown = 0, closed = 0, focused = 0, accepted = 0, discarded = 0;
 const browser = { document: { body: { style: { overflow: "auto" } } }, requestAnimationFrame: fn => fn() };
 const stored = { default: () => null, BlobImage: () => null };
 const props = {
-  document: { width: 900, height: 1600, aspectRatio: "9:16", elements: [
-    { id: "speech", type: "speech", text: "안녕", x: 10, y: 10, width: 200, height: 100, rotation: 0, zIndex: 1 },
+  document: { width: 900, height: 1600, aspectRatio: "9:16", flow: { before: 0, after: 0, inset: 0 }, elements: [
+    { id: "speech", type: "speech", placement: "canvas", text: "안녕", x: 10, y: 10, width: 200, height: 100, rotation: 0, zIndex: 1 },
     { id: "hero", type: "character", text: "주인공", x: 20, y: 200, width: 200, height: 400, rotation: 0, zIndex: 0 },
   ] },
   characters: [], sceneAssetId: "applied",
@@ -310,6 +310,71 @@ async function main() {
   button(render(), "배경 연출 편집").props.onClick();
   assert.ok(find(render(), n => n.type === "label" && n.props.children === "배경 연출 지시 (장소·원근·시설·조명)"));
   console.log("PASS: background preview, background-only request, busy guard and environment direction editor");
+  const person = props.document.elements.find(element => element.type === "character");
+  person.assetId = "existing-sketch";
+  find(render(), n => n.type === "button" && n.props.className?.includes("truncate") && textContent(n).includes(person.text)).props.onClick();
+  button(render(), "서기").props.onClick();
+  assert.equal(props.document.elements.find(element => element.id === person.id).poseControlEdited, true);
+  button(render(), "현재 스케치 자세 유지").props.onClick();
+  assert.equal(props.document.elements.find(element => element.id === person.id).poseControlEdited, false);
+  button(render(), "실행 취소").props.onClick();
+  assert.equal(props.document.elements.find(element => element.id === person.id).poseControlEdited, true);
+  console.log("PASS: explicit pose edit, raster-pose reset and undo preserve the control mode");
+  let sketchCalls = 0;
+  props.onRegenerateSketch = () => { sketchCalls++; };
+  button(render(), "현재 콘티를 장면 스케치로 전환").props.onClick();
+  assert.equal(sketchCalls, 1);
+  props.document = { ...props.document, sceneSketchAssetId: "whole-scene", elements: props.document.elements.map(e => e.id === "speech" ? { ...e, placement: "after" } : e) };
+  props.sceneAssetId = "applied";
+  if (render().type !== "dialog") button(render(), "콘티와 실제 그림 크게 비교").props.onClick();
+  tree = render();
+  for (const region of ["콘티 편집 화면", "실제 그림 비교 화면"]) {
+    const panel = find(tree, n => n.props?.["aria-label"] === region);
+    assert.ok(find(panel, n => n.props?.element?.id === "speech"), "whitespace lettering is visible in both integrated previews");
+  }
+  assert.equal(find(tree, n => n.type === stored.default && n.props.alt === "장면 전체 스케치").props.assetId, "whole-scene");
+  assert.equal(button(tree, "배경 스케치 생성"), undefined);
+  button(tree, "수정한 구도로 장면 스케치 다시 그리기").props.onClick();
+  assert.equal(sketchCalls, 2);
+  props.generatingSketch = true;
+  assert.ok(button(render(), "현재 스케치 채색·마감").props.disabled);
+  props.document = { ...props.document, flow: { before: 150, after: 150, inset: 90 }, elements: props.document.elements.map(e => e.id === "speech" ? { ...e, placement: "canvas", locked: false, x: 300, y: 500, width: 200, height: 100, tailY: .5 } : e) };
+  const flowLib = load("src/lib/webtoonFlow.ts");
+  const editingSvg = () => find(render(), n => n.type === "svg" && n.props.onPointerMove);
+  editingSvg().props.ref.current = { getBoundingClientRect: () => ({ left: 0, top: 0, width: 900, height: flowLib.webtoonFlowLayout(props.document).document.height }), setPointerCapture() {} };
+  const textLayer = () => find(render(), n => n.type === "g" && n.props.onPointerDown && find(n, child => child.props?.element?.id === "speech"));
+  const drag = (fromY, toY) => {
+    textLayer().props.onPointerDown({ ...pointer, clientX: 350, clientY: fromY });
+    editingSvg().props.onPointerMove({ ...pointer, clientX: 350, clientY: toY });
+    editingSvg().props.onPointerUp();
+  };
+  const beforeWhitespaceDrag = structuredClone(props.document);
+  drag(520, 55);
+  assert.equal(props.document.elements[0].y, 35, "drag from art into upper whitespace without snapping into an art box");
+  assert.equal(props.document.elements[0].placement, "canvas");
+  const rightSpeech = find(compareSection(), n => n.props?.element?.id === "speech").props.element;
+  assert.equal(rightSpeech.y, 35, "comparison follows the exact reading coordinate");
+  button(render(), "실행 취소").props.onClick();
+  assert.deepEqual(props.document, beforeWhitespaceDrag);
+  button(render(), "다시 실행").props.onClick();
+  assert.equal(props.document.elements[0].y, 35);
+  drag(55, 1470);
+  assert.ok(props.document.elements[0].y > flowLib.webtoonFlowLayout(props.document).art.y + flowLib.webtoonFlowLayout(props.document).art.height, "balloon can cross into lower whitespace");
+  const bottomState = structuredClone(props.document);
+  const upperGap = find(render(), n => n.props?.["aria-label"] === "그림 위 여백");
+  assert.equal(upperGap.props.max, 300);
+  upperGap.props.onChange({ target: { value: "250" } });
+  assert.equal(props.document.flow.before, 250);
+  assert.equal(props.document.elements[0].y, bottomState.elements[0].y + 100);
+  button(render(), "실행 취소").props.onClick();
+  assert.deepEqual(props.document, bottomState, "margin changes share existing undo history");
+  button(render(), "독백 상자").props.onClick();
+  assert.equal(props.document.elements[0].type, "caption");
+  button(render(), "테두리 없는 글").props.onClick();
+  assert.equal(props.document.elements[0].balloonStyle, "none");
+  assert.equal(sketchCalls, 2, "margin and lettering edits never call AI");
+  assert.ok(!fs.existsSync("src/components/visual/ScrollLayoutEditor.tsx"));
+  console.log("PASS: one canvas for art and whitespace; free drag across both margins, comparison parity, inset coordinates, undo/redo, margin options and no AI calls");
   console.log("PASS: inline switch, comparison dialog, live overlay, candidate apply/discard/stale guard, Escape, scroll/focus cleanup, edit/undo preservation, empty scene (mock component harness)");
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });

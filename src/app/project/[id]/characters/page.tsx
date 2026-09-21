@@ -87,14 +87,14 @@ function CharacterSheetGenerationStatus({ progress }: { progress: GenerationProg
     : stage === "saving"
       ? "결과를 브라우저에 저장하고 미리보기를 준비하고 있습니다."
       : elapsedSeconds < 10
-        ? "캐릭터 설정과 시트 구성을 OpenAI에 전달했습니다."
+        ? "캐릭터 설정과 시트 구성을 Gemini에 전달했습니다."
         : elapsedSeconds < 45
-          ? "OpenAI가 포즈·표정·의상 디테일이 포함된 고해상도 시트를 생성하고 있습니다."
+          ? "Gemini가 포즈·표정·의상 디테일이 포함된 고해상도 시트를 생성하고 있습니다."
           : elapsedSeconds < 90
             ? "구성 요소가 많은 고해상도 시트라 생성 응답을 기다리고 있습니다."
-            : "OpenAI에서 계속 생성 중입니다. 창을 닫지 말고 조금만 더 기다려주세요.";
+            : "Gemini에서 계속 생성 중입니다. 창을 닫지 말고 조금만 더 기다려주세요.";
   const activeStep = stage === "generating" ? 1 : stage === "receiving" ? 2 : 3;
-  const steps = ["요청 준비", "OpenAI 생성", "결과 수신", "미리보기"];
+  const steps = ["요청 준비", "Gemini 생성", "결과 수신", "미리보기"];
 
   return (
     <div aria-live="polite" className="mb-3 rounded-xl border border-[#C4B5FD] bg-white p-3.5 shadow-sm">

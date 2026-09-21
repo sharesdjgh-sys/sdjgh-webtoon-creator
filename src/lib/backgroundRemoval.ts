@@ -1,4 +1,26 @@
 /**
+ * Matte a monochrome subject against a green screen without deleting white skin.
+ * Unmix green edge pixels against grayscale artwork to avoid a green fringe.
+ * Refuse an unrecognized screen rather than silently erasing white artwork.
+ */
+export function removeGreenScreen(data: Uint8ClampedArray, width: number, height: number): void {
+  if (data.length !== width * height * 4 || !width || !height) throw new Error("Invalid RGBA dimensions");
+  let green = 0;
+  for (let i = 0; i < data.length; i += 4) {
+    if (data[i + 1] - Math.max(data[i], data[i + 2]) > 100 && data[i + 3] > 0) green++;
+  }
+  if (green < width * height * 0.01) throw new Error("AI가 배경 분리용 녹색 화면을 만들지 않았습니다. 기존 그림은 유지됩니다. 해당 레이어를 다시 생성해주세요.");
+  for (let i = 0; i < data.length; i += 4) {
+    const spill = data[i + 1] - Math.max(data[i], data[i + 2]);
+    if (spill <= 12) continue;
+    const alpha = Math.max(0, 1 - spill / 255);
+    const gray = alpha > 0 ? Math.min(255, (data[i] + data[i + 2]) / (2 * alpha)) : 0;
+    data[i] = data[i + 1] = data[i + 2] = gray;
+    data[i + 3] = Math.round(data[i + 3] * alpha);
+  }
+}
+
+/**
  * Remove only neutral white pixels connected to the image border.
  * Enclosed whites (skin, clothing, prop surfaces) remain opaque.
  * This is a conservative matte, not semantic segmentation.

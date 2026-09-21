@@ -103,6 +103,10 @@ async function main() {
   assert.ok(svgInputs.some(value => value.includes('width="300" height="200"') && value.includes('translate(0 0)')), "missing prop has geometry instead of disappearing");
   const rigModule = load("src/lib/storyboardRig.ts");
   const exactRig = rigModule.resolveCharacterRig(hero);
+  const rasterHero = { ...hero, assetId: "actual-upper-body-sketch" };
+  assert.equal(Object.keys(rigModule.sceneCharacterRig(rasterHero)).length, 0, "legacy/default full-body rig must not override existing upper-body artwork");
+  assert.ok(!clean.sceneStructureSvg({ ...doc, elements: [rasterHero] }).includes("<line"));
+  assert.equal(Object.keys(rigModule.sceneCharacterRig({ ...rasterHero, poseControlEdited: true })).length, 14, "explicit user edits remain effective");
   const collapsedRig = { ...exactRig, leftHip: { x: .56, y: 1 }, leftKnee: { x: .56, y: 1 }, leftFoot: { x: .56, y: 1 } };
   const collapsedElement = { ...hero, characterRig: collapsedRig };
   const safeRig = rigModule.sceneCharacterRig(collapsedElement);
@@ -139,6 +143,7 @@ async function main() {
   assert.equal(personResult.data, "mock");
   assert.equal(personResult.characterRig, undefined, "do not overwrite creator joints with inferred cropped joints");
   assert.ok(personResult.prompt.includes("Do not center, enlarge or shrink"));
+  assert.ok(personResult.prompt.includes("#00FF00") && personResult.prompt.includes("opaque grayscale"));
   await scene.generateSceneImage({ ...input, referenceMode: "direct", storyboard: { ...doc, elements: [...doc.elements, { ...structureHero, characterId: "person" }] }, structureImage: { data: "geometry-map", mimeType: "image/png" }, references: [reference] });
   const withCharacter = requests.at(-1);
   assert.equal(withCharacter.input.filter(item => item.type === "image").map(item => item.data).join(","), "clean,geometry-map,sheet,hero-crop");
@@ -214,6 +219,26 @@ async function main() {
   layoutResponse = undefined;
   console.log("PASS: concrete environment brief, full-canvas background, world context and legacy layout fallback (mock)");
   const { removeExteriorWhite } = load("src/lib/backgroundRemoval.ts");
+  const { removeGreenScreen } = load("src/lib/backgroundRemoval.ts");
+  const keyed = new Uint8ClampedArray([
+    0,255,0,255, 255,255,255,255, 0,0,0,255, 128,255,128,255,
+    0,128,0,255, 160,160,160,255, 0,255,0,0, 255,255,255,100,
+  ]);
+  removeGreenScreen(keyed, 4, 2);
+  assert.equal(keyed[3], 0);
+  assert.equal(keyed[7], 255, "white skin/hair is opaque even without a closed outline");
+  assert.equal(keyed[11], 255);
+  assert.equal(keyed[12], 255, "unmix green from white edge");
+  assert.ok(keyed[15] >= 127 && keyed[15] <= 129);
+  assert.equal(keyed[16], 0, "unmix green from dark edge");
+  assert.equal(keyed[23], 255);
+  assert.equal(keyed[27], 0);
+  assert.equal(keyed[31], 100);
+  const invalidScreen = new Uint8ClampedArray(16).fill(255);
+  const invalidBefore = invalidScreen.slice();
+  assert.throws(() => removeGreenScreen(invalidScreen, 2, 2), /녹색 화면/);
+  assert.deepEqual(invalidScreen, invalidBefore, "invalid matte never erases white artwork");
+  console.log("PASS: raster-first pose, explicit-only joint controls, chroma matte with white/gray preservation and edge decontamination");
   const pixels = new Uint8ClampedArray(9 * 9 * 4).fill(255);
   for (let y = 2; y <= 6; y++) for (let x = 2; x <= 6; x++) {
     if (x === 2 || x === 6 || y === 2 || y === 6) pixels.set([30, 30, 30, 255], (y * 9 + x) * 4);
@@ -227,6 +252,52 @@ async function main() {
   assert.equal(pixels[7], 255, "colored pixels retained");
   assert.ok(pixels[11] <= 100, "existing alpha never increases");
   console.log("PASS: enclosed white preserved, border-connected white removed, contour/color/alpha preserved; missing-person gate; single-call character generation");
+  // Whole-scene sketches replace independently pasted art, while typography stays local.
+  const coherent = { ...missingPersonCut, storyboard: { ...missingPersonCut.storyboard, sceneSketchAssetId: "whole-scene" } };
+  assets.set("whole-scene", { blob: new Blob(["whole scene artwork"], { type: "image/png" }) });
+  assetReads.length = 0;
+  const composedBefore = drawn.filter(call => call[0] === "drawImage").length;
+  await composite.composeStoryboardPng(coherent.storyboard, { includeOverlays: false, strictAssets: true });
+  assert.equal(drawn.filter(call => call[0] === "drawImage").length - composedBefore, 1);
+  assert.deepEqual(assetReads, ["whole-scene"], "do not paste old per-object raster pieces over a whole scene");
+  await assert.rejects(composite.composeStoryboardPng({ ...coherent.storyboard, sceneSketchAssetId: "lost-scene" }), /장면 스케치 파일/);
+  const coherentHash = sceneHash(project, ep, coherent);
+  const readingEdit = structuredClone(coherent);
+  readingEdit.storyboard.flow = { before: 700, after: 1200, inset: 180, align: "right" };
+  readingEdit.storyboard.elements = readingEdit.storyboard.elements.map(e => e.type === "speech" ? { ...e, placement: "before", flowOrder: 42, flowSpacing: 600, text: "독백 수정" } : e);
+  assert.equal(sceneHash(project, ep, readingEdit), coherentHash, "whitespace and lettering never stale the artwork");
+  let httpCount = httpRequests.length;
+  await client.requestSceneImage(project, ep, coherent);
+  assert.equal(httpRequests.length, httpCount + 1);
+  assert.equal(httpRequests.at(-1).stage, "finish");
+  assert.equal(httpRequests.at(-1).storyboard.sceneSketchAssetId, "whole-scene");
+  httpCount = httpRequests.length;
+  await client.requestSceneImage(project, ep, missingPersonCut, "direct", "sketch");
+  assert.equal(httpRequests.length, httpCount + 1, "first scene sketch does not require independent people rasters");
+  assert.equal(httpRequests.at(-1).stage, "sketch");
+  layoutResponse = undefined;
+  await scene.generateSceneImage({ ...input, stage: "sketch", referenceMode: "direct" });
+  const sketchPrompt = requests.at(-1).input.find(item => item.type === "text").text;
+  assert.ok(sketchPrompt.includes("STORYBOARD SKETCH STAGE") && sketchPrompt.includes("grayscale"));
+  assert.ok(!sketchPrompt.includes("FINISH the complete"));
+  const verbalPose = { ...hero, assetId: "existing-person", pose: "두 손으로 노트북을 들기", poseDescriptionEdited: true };
+  await scene.generateSceneImage({ ...input, storyboard: { ...coherent.storyboard, elements: [verbalPose] } });
+  assert.ok(requests.at(-1).input.find(item => item.type === "text").text.includes("REQUESTED POSE CHANGE: 두 손으로 노트북을 들기"));
+  assert.ok(!clean.sceneStructureSvg({ ...doc, elements: [verbalPose] }).includes("<line"));
+  const sceneModel = requests.at(-1).model;
+  await scene.generateCharacterSheet(input.context, { id: "hero", name: "hero", role: "main", age: "20", appearance: "black hair", personality: "calm", backstory: "", visualProfile: {} });
+  assert.equal(requests.at(-1).model, sceneModel, "character sheets and scene art use the same image model");
+  layoutResponse = { backgroundDescription: "교실의 창문과 책상, 빛", flow: { before: -10, after: 4000, inset: 800, align: "right" }, elements: [
+    { ...base("narration", "caption", "속으로 생각한다"), placement: "top-edge", balloonStyle: "none", flowOrder: 2, flowSpacing: 180 },
+  ] };
+  const flowProposal = await scene.generateStoryboardLayout({ ...input, characters: [] });
+  assert.equal(flowProposal.flow.before, 0); assert.equal(flowProposal.flow.after, 300);
+  assert.equal(flowProposal.flow.inset, 315); assert.equal(flowProposal.flow.align, "right");
+  assert.equal(flowProposal.elements[1].placement, "top-edge");
+  assert.equal(flowProposal.elements[1].balloonStyle, "none");
+  assert.equal(flowProposal.elements[1].flowSpacing, 180);
+  layoutResponse = undefined;
+  console.log("PASS: single whole-scene raster, first-sketch and finish requests, AI flow proposal, caption styles and AI-free whitespace edits (mock)");
   if (process.argv.includes("--preview")) {
     const styles = ["normal", "thought", "shout", "whisper", "rounded", "none"];
     const labels = ["Hello!", "Dream...", "BOOM!", "Shh...", "Monologue", "LOVE"];

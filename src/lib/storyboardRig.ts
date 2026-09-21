@@ -45,6 +45,9 @@ export function resolveCharacterRig(element: StoryboardElement): CharacterRig {
  * The saved rig stays untouched and remains editable.
  */
 export function sceneCharacterRig(element: StoryboardElement): Partial<CharacterRig> {
+  // Generated art is the pose reference unless the creator explicitly edits controls.
+  // Legacy/default rigs are not measured anatomy and must not override the raster.
+  if (element.assetId && !element.poseControlEdited) return {};
   const rig = { ...resolveCharacterRig(element) };
   const result: Partial<CharacterRig> = { ...rig };
   for (const side of ["left", "right"] as const) {
