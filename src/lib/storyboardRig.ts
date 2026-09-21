@@ -39,3 +39,22 @@ export function resolveCharacterRig(element: StoryboardElement): CharacterRig {
             : "stand";
   return structuredClone(CHARACTER_POSE_PRESETS.find((item) => item.id === preset)?.rig ?? STAND);
 }
+
+/** Cropped-image analysis can collapse an entire leg onto the image edge.
+ * Do not turn those unknown joints into hard scene-generation constraints.
+ * The saved rig stays untouched and remains editable.
+ */
+export function sceneCharacterRig(element: StoryboardElement): Partial<CharacterRig> {
+  const rig = { ...resolveCharacterRig(element) };
+  const result: Partial<CharacterRig> = { ...rig };
+  for (const side of ["left", "right"] as const) {
+    const hip = rig[`${side}Hip`], knee = rig[`${side}Knee`], foot = rig[`${side}Foot`];
+    const length = Math.hypot(hip.x - knee.x, hip.y - knee.y) + Math.hypot(knee.x - foot.x, knee.y - foot.y);
+    if (length < 0.04) {
+      delete result[`${side}Hip`];
+      delete result[`${side}Knee`];
+      delete result[`${side}Foot`];
+    }
+  }
+  return result;
+}

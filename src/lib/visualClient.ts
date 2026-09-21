@@ -193,6 +193,11 @@ export async function requestSceneImage(project: Project, episode: Episode, cut:
   if (referenceMode === "layers" && incomplete.length) throw new Error("기존 그림은 보존됩니다. 말풍선·가이드가 섞일 수 있는 이전 레이어를 먼저 다시 생성해주세요.");
   const artwork = artworkOnlyStoryboard(cut.storyboard);
   if (!artwork.elements.length) throw new Error("장면에 표시할 배경·인물·소품을 먼저 추가해주세요.");
+  const missingPeople: string[] = [];
+  for (const layer of artwork.elements.filter(element => element.type === "character")) {
+    if (!layer.assetId || !await getMediaAsset(layer.assetId)) missingPeople.push(layer.text || "인물");
+  }
+  if (missingPeople.length) throw new Error(`인물 스케치가 없습니다: ${missingPeople.join(", ")}. 누락 인물 스케치를 먼저 생성하고 콘티를 확인해주세요. 완성 그림 생성은 시작하지 않았습니다.`);
   // Keep the COMPLETE current layout, even when a layer's prompt/pose has changed.
   // Editable typography is excluded; missing raster assets get geometry, never silent omission.
   const layoutBlob = await composeStoryboardPng(artwork, { includeOverlays: false, strictAssets: referenceMode === "layers", missingArtwork: referenceMode === "direct" ? "geometry" : undefined });

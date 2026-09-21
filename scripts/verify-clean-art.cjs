@@ -84,6 +84,12 @@ async function main() {
   const directBefore = JSON.stringify(directCut);
   assetReads.length = 0;
   const client = load("src/lib/visualClient.ts");
+  const missingPersonCut = { ...directCut, storyboard: { ...directCut.storyboard, elements: [...directCut.storyboard.elements, hero] } };
+  await assert.rejects(client.requestSceneImage(project, ep, missingPersonCut, "direct"), /인물 스케치가 없습니다/);
+  hero.assetId = "lost-person-file";
+  await assert.rejects(client.requestSceneImage(project, ep, missingPersonCut, "direct"), /인물 스케치가 없습니다/);
+  delete hero.assetId;
+  assert.equal(httpRequests.length, 0, "missing person never starts paid scene generation");
   const directResult = await client.requestSceneImage(project, ep, directCut, "direct");
   assert.equal(httpRequests.length, 1);
   assert.equal(httpRequests[0].action, "scene-image");
@@ -97,6 +103,17 @@ async function main() {
   assert.ok(svgInputs.some(value => value.includes('width="300" height="200"') && value.includes('translate(0 0)')), "missing prop has geometry instead of disappearing");
   const rigModule = load("src/lib/storyboardRig.ts");
   const exactRig = rigModule.resolveCharacterRig(hero);
+  const collapsedRig = { ...exactRig, leftHip: { x: .56, y: 1 }, leftKnee: { x: .56, y: 1 }, leftFoot: { x: .56, y: 1 } };
+  const collapsedElement = { ...hero, characterRig: collapsedRig };
+  const safeRig = rigModule.sceneCharacterRig(collapsedElement);
+  assert.equal(safeRig.leftHip, undefined);
+  assert.equal(safeRig.leftKnee, undefined);
+  assert.equal(safeRig.leftFoot, undefined);
+  assert.deepEqual(safeRig.head, exactRig.head);
+  assert.deepEqual(collapsedElement.characterRig, collapsedRig, "never rewrite saved user joints");
+  for (const preset of rigModule.CHARACTER_POSE_PRESETS) {
+    assert.equal(Object.keys(rigModule.sceneCharacterRig({ ...hero, characterRig: preset.rig })).length, 14);
+  }
   const structureHero = { ...hero, x: 123, y: 456, rotation: 17, flipX: true, characterRig: { ...exactRig, head: { x: .2, y: .3 } } };
   const geometry = clean.sceneStructureSvg({ ...doc, elements: [...doc.elements, structureHero, { ...hero, id: "hidden", visible: false }] });
   assert.ok(geometry.includes("translate(123 456) rotate(17 150 300)"));
@@ -116,6 +133,12 @@ async function main() {
   assert.equal(requests.at(-1).input.filter(item => item.type === "image").length, 2);
   assert.equal(requests.at(-1).input[1].data, "geometry-map");
   const reference = { character: { id: "person", name: "주인공", role: "주연", visualProfile: {} }, data: "sheet", mimeType: "image/png", heroData: "hero-crop", heroMimeType: "image/png" };
+  const beforePerson = requests.length;
+  const personResult = await scene.generateStoryboardLayer({ ...input, layerId: hero.id, storyboard: { ...doc, elements: [{ ...hero, characterId: "person" }] }, references: [reference] });
+  assert.equal(requests.length, beforePerson + 1, "drawing success must not depend on a second pose-analysis call");
+  assert.equal(personResult.data, "mock");
+  assert.equal(personResult.characterRig, undefined, "do not overwrite creator joints with inferred cropped joints");
+  assert.ok(personResult.prompt.includes("Do not center, enlarge or shrink"));
   await scene.generateSceneImage({ ...input, referenceMode: "direct", storyboard: { ...doc, elements: [...doc.elements, { ...structureHero, characterId: "person" }] }, structureImage: { data: "geometry-map", mimeType: "image/png" }, references: [reference] });
   const withCharacter = requests.at(-1);
   assert.equal(withCharacter.input.filter(item => item.type === "image").map(item => item.data).join(","), "clean,geometry-map,sheet,hero-crop");
@@ -190,6 +213,20 @@ async function main() {
   assert.ok(fallback.elements[0].text.includes("학교") && fallback.elements[0].text.includes("robot"));
   layoutResponse = undefined;
   console.log("PASS: concrete environment brief, full-canvas background, world context and legacy layout fallback (mock)");
+  const { removeExteriorWhite } = load("src/lib/backgroundRemoval.ts");
+  const pixels = new Uint8ClampedArray(9 * 9 * 4).fill(255);
+  for (let y = 2; y <= 6; y++) for (let x = 2; x <= 6; x++) {
+    if (x === 2 || x === 6 || y === 2 || y === 6) pixels.set([30, 30, 30, 255], (y * 9 + x) * 4);
+  }
+  pixels.set([255, 230, 220, 255], 4);
+  pixels.set([240, 240, 240, 100], 8);
+  removeExteriorWhite(pixels, 9, 9);
+  assert.equal(pixels[3], 0, "exterior white removed");
+  assert.equal(pixels[(4 * 9 + 4) * 4 + 3], 255, "enclosed skin/clothing white retained");
+  assert.equal(pixels[(2 * 9 + 2) * 4 + 3], 255, "dark contour retained");
+  assert.equal(pixels[7], 255, "colored pixels retained");
+  assert.ok(pixels[11] <= 100, "existing alpha never increases");
+  console.log("PASS: enclosed white preserved, border-connected white removed, contour/color/alpha preserved; missing-person gate; single-call character generation");
   if (process.argv.includes("--preview")) {
     const styles = ["normal", "thought", "shout", "whisper", "rounded", "none"];
     const labels = ["Hello!", "Dream...", "BOOM!", "Shh...", "Monologue", "LOVE"];

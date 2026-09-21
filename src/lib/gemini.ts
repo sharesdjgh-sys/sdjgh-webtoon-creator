@@ -4,7 +4,7 @@ import { artworkOnlyStoryboard, sceneStructureSvg } from "@/lib/cleanGeneration"
 import { GoogleGenAI } from "@google/genai";
 import { z } from "zod";
 import type { CharacterRig, PanelAspectRatio, StoryboardDocument, StoryboardElement } from "@/lib/storage";
-import { resolveCharacterRig } from "@/lib/storyboardRig";
+import { resolveCharacterRig, sceneCharacterRig } from "@/lib/storyboardRig";
 import { webtoonShotPrompt } from "@/lib/webtoonShots";
 import { cleanCharacterMentions } from "@/lib/characterMentions";
 
@@ -461,7 +461,7 @@ ${reference ? identityLock(reference.character) : ""}
 The normalized joint rig inside this layer is: ${rigText}.
 REFERENCE PRIORITY: input image 2 is the complete approved design sheet and input image 3 is an enlarged crop of its canonical full-body hero figure. These two images are the single source of truth for identity and design. ${input.poseReference ? "Input image 4 is the creator-selected POSE REFERENCE: copy its body gesture, limb bends, weight balance and facing direction, but never copy that person's identity, face, clothes or background." : "Input image 1 supplies pose and placement."} If the layout diagram conflicts with the approved identity references, keep ONLY its placement/pose and discard its face, hair, body design and clothes. Do not redesign, beautify, simplify, age up/down, recolor, change hairstyle, change uniform, remove accessories, or blend in features from another person.
 Preserve the exact face geometry, eye design, hair silhouette, body proportions, outfit construction, shoes, accessories and palette from the approved sheet. Change only pose, expression, viewing angle and lighting. The pose must match every joint, weight balance and facing direction. Draw readable anatomy, hands and feet; do not replace it with a stick figure or generic standing pose.
-Output exactly one character, centered and fully visible, on pure white with no floor, shadow, background, props, text, balloon, border, label or watermark. Monochrome rough line art only.`
+Output exactly one character at the specified joint positions and scale. Do not center, enlarge or shrink the figure independently of the rig. Preserve intentional partial-body framing; never invent a full body to fit the layer. Use pure white outside the silhouette and opaque white/gray inside skin and clothes, with continuous closed outer contours suitable for compositing. No floor, shadow, background, props, text, balloon, border, label or watermark. Monochrome rough line art only.`
       : `Draw ONE isolated major prop layer for a professional webtoon storyboard.
 ${common}
 Prop: ${layer.text}. Use input image 1 for orientation and intended scale. Draw the complete prop centered on pure white, monochrome rough line art, with no person, hand, background, shadow, text, border, label or watermark.`;
@@ -484,8 +484,9 @@ Prop: ${layer.text}. Use input image 1 for orientation and intended scale. Draw 
     },
   });
   const image = imageResult(interaction);
-  const characterRig = layer.type === "character" ? await detectCharacterRig(image) : undefined;
-  return { ...image, prompt, characterRig };
+  // A successful drawing must not depend on a second AI analysis request.
+  // Keep the creator's rig; pose analysis remains an explicit editor action.
+  return { ...image, prompt };
 }
 
 export async function generateSceneImage(input: {
@@ -535,7 +536,7 @@ export async function generateSceneImage(input: {
         const purpose = element.type === "background" ? `environment=${element.text || input.cut.description}; fills the ENTIRE canvas; never draw its bounding box or label` : `physical prop=${element.text || "object"}; never render its label`;
         return `- [${element.type.toUpperCase()} ${element.id}] ${elementBox(element)}; ${purpose}`;
       }
-      const rig = resolveCharacterRig(element);
+      const rig = sceneCharacterRig(element);
       const joints = Object.entries(rig).map(([name, point]) => {
         const localX = element.flipX ? (1 - point.x) * element.width : point.x * element.width;
         const position = rotate(element.x + localX, element.y + point.y * element.height, element);
@@ -572,6 +573,7 @@ CONTROL GEOMETRY:
 ${input.structureImage ? "Reference image 2 is a STRUCTURAL CONTROL MAP, not artwork or a character design sheet. Its boxes and joint lines specify the CURRENT edited placement and pose. Never draw its blue/brown lines, rectangles or markers in the output." : "The SVG below specifies the CURRENT edited placement and pose."}
 The following SVG is geometric input only, never typography or artwork to reproduce:
 ${sceneStructureSvg(input.storyboard)}
+Collapsed leg joints from cropped-image analysis are deliberately omitted. Unlisted joints are unknown, NOT a request to draw extra limbs or expand the framing. Preserve the visible silhouette and crop in reference image 1.
 If the older raster pose in image 1 conflicts with the control map/JOINTS, use the control map/JOINTS while retaining the overall composition. Neither prose nor character-sheet poses may move these coordinates.
 
 COMPOSITION LOCK:

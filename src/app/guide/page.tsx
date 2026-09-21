@@ -34,6 +34,7 @@ export default function GuidePage() {
         </ScrollReveal>
 
         <GuideCarousel />
+        <p className="mt-6 rounded-xl border border-orange-200 bg-orange-50 p-4 text-sm leading-6 text-[#7A7067]">콘티에 인물 그림이 없으면 완성 그림 생성은 시작하지 않아요. ‘누락 인물 스케치 생성’으로 빠진 인물만 먼저 만들고 크기·자세를 확인하세요. 인물 생성 후 자동 포즈 분석은 하지 않으며, 기존 관절을 유지해요. 필요한 경우 포즈 분석을 직접 실행하세요. 이전 방식으로 얼굴·옷까지 투명해진 그림은 자동 복구되지 않으므로 해당 레이어를 다시 그려야 해요. 새 투명화는 테두리와 이어진 흰 영역만 제거하지만, 스케치 외곽선이 열려 있으면 내부까지 연결될 수 있어 결과 확인이 필요해요.</p>
         <p className="mt-6 rounded-xl border border-[#DDD6FE] bg-white p-4 text-sm leading-6 text-[#7A7067]">콘티 AI 설계는 장소·원근·시설·조명이 담긴 배경 연출도 함께 작성해요. 배경 스케치에서 실제 그림을 확인하고, 그림이 없거나 연출을 바꿨다면 ‘배경 스케치 생성’ 또는 ‘배경 스케치만 다시 그리기’를 누르세요. 인물·말풍선은 그대로 유지되며 배경 이미지 생성 비용이 발생해요. 콘티 생성 중 일부 레이어가 실패해도 완성된 그림은 보존하므로 실패한 레이어만 다시 생성하면 돼요.</p>
         <section className="mt-8 rounded-2xl border border-[#EBE7E0] bg-white p-6">
           <h2 className="text-lg font-bold">처음이라면 이렇게 시작해요</h2>

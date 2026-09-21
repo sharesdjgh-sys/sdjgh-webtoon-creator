@@ -316,6 +316,7 @@ export default function StoryboardEditor({ document: savedDocument, characters, 
   const hasImageLayers = visibleElements.some((element) => ["background", "character", "prop"].includes(element.type) && element.assetId);
   const generatingThisStoryboard = document.elements.some((element) => generatingLayerIds.has(element.id));
   const pendingLayers = pendingLayerIds(document, staleLayerIds);
+  const missingPeople = document.elements.filter(element => element.type === "character" && element.visible !== false && !element.assetId);
   const backgroundLayer = document.elements.find((element) => element.type === "background");
   const generationStep = generationSeconds < 8
     ? "콘티의 구도와 레이어를 확인하고 있어요"
@@ -761,6 +762,14 @@ export default function StoryboardEditor({ document: savedDocument, characters, 
           className={`min-h-0 overflow-y-auto overscroll-contain rounded-xl border border-[#EBE7E0] bg-white p-3 space-y-3 focus-visible:outline-2 focus-visible:outline-[#7C3AED] ${expanded ? "max-h-[72vh]" : "h-full"}`}
           style={{ scrollbarGutter: "stable" }}>
           <p className="text-[10px] text-[#8B7EAE]">미리보기는 고정되어 있습니다. 이 설정창 안에서 스크롤하세요.</p>
+          {missingPeople.length > 0 && <section role="alert" className="space-y-2 rounded-xl border border-orange-300 bg-orange-50 p-3">
+            <p className="text-xs font-semibold text-orange-900">인물 스케치 {missingPeople.length}개가 없습니다</p>
+            <p className="text-[11px] text-orange-800">관절선은 인물 그림이 아닙니다. 스케치를 먼저 생성하고 구도를 확인해야 완성 그림을 만들 수 있습니다.</p>
+            {onRegenerateLayers && <button type="button" className="editor-tool w-full justify-center"
+              disabled={Boolean(layerBatchProgress) || generatingThisStoryboard || Boolean(generatingScene) || Boolean(detectingAllPoses)}
+              onClick={() => onRegenerateLayers(missingPeople.map(element => element.id))}>누락 인물 스케치 생성 ({missingPeople.length})</button>}
+            <p className="text-[10px] text-orange-800">누락 인물만 생성하며, 인물별 이미지 생성 비용이 발생합니다. 기존 배경·인물·말풍선은 유지됩니다.</p>
+          </section>}
           {backgroundLayer && <section aria-label="배경 스케치" className="space-y-2 rounded-xl border border-[#DDD6FE] bg-[#FAF8FF] p-3">
             <div className="flex items-center justify-between">
               <h3 className="text-xs font-bold text-[#5B21B6]">배경 스케치</h3>

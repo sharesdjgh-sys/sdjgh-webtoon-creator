@@ -1,8 +1,8 @@
 import type { StoryboardDocument, StoryboardElement } from "@/lib/storage";
-import { resolveCharacterRig } from "@/lib/storyboardRig";
+import { resolveCharacterRig, sceneCharacterRig } from "@/lib/storyboardRig";
 
 export const CLEAN_ART_VERSION = "clean-art-v1";
-export const SCENE_REFERENCE_VERSION = "full-storyboard-geometry-v2";
+export const SCENE_REFERENCE_VERSION = "complete-people-safe-geometry-v3";
 export const isArtworkElement = (element: StoryboardElement) =>
   element.visible !== false && ["background", "character", "prop"].includes(element.type);
 
@@ -23,14 +23,15 @@ export function sceneStructureSvg(document: StoryboardDocument, transparent = fa
     const box = `<rect width="${layer.width}" height="${layer.height}" fill="none" stroke="${layer.type === "character" ? "#2563eb" : "#a16207"}" stroke-width="2"/>`;
     let content = box;
     if (layer.type === "character") {
-      const rig = resolveCharacterRig(layer);
-      const point = (key: keyof typeof rig) => ({ x: (layer.flipX ? 1 - rig[key].x : rig[key].x) * layer.width, y: rig[key].y * layer.height });
+      const rig = sceneCharacterRig(layer);
+      const point = (key: keyof typeof rig) => { const joint = rig[key]; return joint ? { x: (layer.flipX ? 1 - joint.x : joint.x) * layer.width, y: joint.y * layer.height } : undefined; };
       content += edges.map(([a, b]) => {
         const from = point(a), to = point(b);
+        if (!from || !to) return "";
         return `<line x1="${from.x}" y1="${from.y}" x2="${to.x}" y2="${to.y}" stroke="#2563eb" stroke-width="5" stroke-linecap="round"/>`;
       }).join("");
       const head = point("head");
-      content += `<circle cx="${head.x}" cy="${head.y}" r="${Math.max(5, Math.min(layer.width, layer.height) * .045)}" fill="#2563eb"/>`;
+      if (head) content += `<circle cx="${head.x}" cy="${head.y}" r="${Math.max(5, Math.min(layer.width, layer.height) * .045)}" fill="#2563eb"/>`;
     }
     return `<g transform="translate(${layer.x} ${layer.y}) rotate(${layer.rotation} ${layer.width / 2} ${layer.height / 2})">${content}</g>`;
   }).join("");

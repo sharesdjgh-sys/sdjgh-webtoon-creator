@@ -86,7 +86,7 @@ async function main() {
   const cleanup = effects.find(fn => fn.toString().includes("showModal"))();
   assert.equal(shown, 1);
   assert.equal(browser.document.body.style.overflow, "hidden");
-  assert.equal(all(tree, n => n.type === "section").length, 2);
+  assert.equal(all(tree, n => n.type === "section" && n.props.role !== "alert").length, 2);
   const compareSection = () => find(render(), n => n.props?.["aria-label"] === "실제 그림 비교 화면");
   const compareChildren = React.Children.toArray(compareSection().props.children);
   assert.ok(compareChildren[1].props.className.includes("min-h-[260px]"), "image follows title without an intervening checkbox row");
@@ -213,6 +213,8 @@ async function main() {
   assert.equal(batchButton().props.disabled, false);
   batchButton().props.onClick();
   assert.equal(submitted.join(","), "hero");
+  button(render(), "누락 인물 스케치 생성 (1)").props.onClick();
+  assert.equal(submitted.join(","), "hero", "recover only missing people, not the background");
   props.layerBatchProgress = { completed: 0, total: 1 };
   assert.equal(batchButton().props.disabled, true);
   let cancelled = false;
