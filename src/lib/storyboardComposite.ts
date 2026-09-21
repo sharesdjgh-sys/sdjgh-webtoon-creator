@@ -3,7 +3,7 @@
 import { fitImageRect } from "@/lib/panelGeometry";
 import type { StoryboardDocument } from "@/lib/storage";
 import { getMediaAsset } from "@/lib/mediaStorage";
-import { isOverlayElement, storyboardToSvg } from "@/lib/storyboardSvg";
+import { isOverlayElement, drawStoryboardOverlays } from "@/lib/storyboardSvg";
 
 function loadImage(source: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
@@ -40,7 +40,7 @@ async function drawBlob(
 
 export async function composeStoryboardPng(
   storyboard: StoryboardDocument,
-  options: { includeOverlays?: boolean; background?: string } = {},
+  options: { includeOverlays?: boolean; background?: string; strictAssets?: boolean } = {},
 ): Promise<Blob> {
   const canvas = document.createElement("canvas");
   canvas.width = storyboard.width;
@@ -55,19 +55,11 @@ export async function composeStoryboardPng(
     .sort((left, right) => left.zIndex - right.zIndex);
   for (const layer of imageLayers) {
     const asset = await getMediaAsset(layer.assetId);
+    if (!asset && options.strictAssets) throw new Error("콘티 그림 파일이 누락되었습니다. 해당 레이어를 다시 생성해주세요.");
     if (asset) await drawBlob(context, asset.blob, layer);
   }
 
-  if (options.includeOverlays !== false) {
-    const overlaySvg = storyboardToSvg(storyboard, { overlaysOnly: true, transparent: true });
-    const overlayUrl = URL.createObjectURL(new Blob([overlaySvg], { type: "image/svg+xml;charset=utf-8" }));
-    try {
-      const overlay = await loadImage(overlayUrl);
-      context.drawImage(overlay, 0, 0, canvas.width, canvas.height);
-    } finally {
-      URL.revokeObjectURL(overlayUrl);
-    }
-  }
+  if (options.includeOverlays !== false) await drawStoryboardOverlays(context, storyboard);
 
   return await new Promise<Blob>((resolve, reject) => canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error("콘티 합성에 실패했습니다.")), "image/png"));
 }

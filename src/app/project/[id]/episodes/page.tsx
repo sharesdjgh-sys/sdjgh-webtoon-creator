@@ -86,7 +86,7 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
   const [layerGenerationProgress, setLayerGenerationProgress] = useState<Record<string, { completed: number; total: number }>>({});
   const [sceneGeneratingIds, setSceneGeneratingIds] = useState<Set<string>>(new Set());
   const [poseDetectingIds, setPoseDetectingIds] = useState<Set<string>>(new Set());
-  const [sceneCandidates, setSceneCandidates] = useState<Record<string, { blob: Blob; previewBlob: Blob; sourceHash: string }>>({});
+  const [sceneCandidates, setSceneCandidates] = useState<Record<string, { blob: Blob; previewBlob: Blob; sourceHash: string; reviewed?: boolean }>>({});
   const [visualError, setVisualError] = useState("");
   const [bulkLayoutGenerating, setBulkLayoutGenerating] = useState(false);
   const [aiCutProgress, setAiCutProgress] = useState<AiCutProgress | null>(null);
@@ -375,7 +375,7 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
       const result = await requestStoryboardLayer({ ...project, episodes }, episode, cut, layer.id);
       const blob = layer.type === "background" ? result.blob : await whiteToTransparentPng(result.blob);
       const asset = await saveMediaAsset({ projectId: id, ownerId: layer.id, ownerType: "storyboard-layer", mimeType: blob.type || "image/png", blob });
-      await deleteMediaAsset(layer.assetId);
+      // Keep previous artwork for unsaved-state recovery and editor undo.
       replaceCut(cutIdx, (current) => ({
         ...current,
         storyboard: current.storyboard ? {
@@ -490,7 +490,7 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
     const currentProject = { ...project, episodes };
     const incompleteLayers = cut.storyboard.elements.filter((layer) => ["background", "character", "prop"].includes(layer.type) && layer.visible !== false && (!layer.assetId || layer.assetSourceHash !== storyboardLayerHash(currentProject, episode, cut, layer.id)));
     if (incompleteLayers.length > 0) {
-      setVisualError(`먼저 수정사항이 남은 콘티 레이어 ${incompleteLayers.length}개를 적용해주세요.`);
+      setVisualError(`이전 생성 방식 또는 수정사항이 남은 콘티 레이어 ${incompleteLayers.length}개를 먼저 다시 생성해주세요. 기존 그림은 유지됩니다.`);
       return;
     }
     setVisualError("");
@@ -511,13 +511,17 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
     if (!cut) return;
     const candidate = sceneCandidates[cut.id];
     if (!candidate) return;
+    if (!candidate.reviewed) {
+      setVisualError("AI 원본에서 말풍선·글자·가이드·잘림이 없는지 확인한 뒤 검수 체크를 해주세요.");
+      return;
+    }
     if (!project || candidate.sourceHash !== sceneHash({ ...project, episodes }, episodes[activeEp], cut)) {
       setVisualError("컷 비율이나 구도가 변경되었습니다. 현재 설정으로 장면을 다시 생성해주세요.");
       return;
     }
     try {
       const asset = await saveMediaAsset({ projectId: id, ownerId: cut.id, ownerType: "scene", mimeType: candidate.blob.type || "image/jpeg", blob: candidate.blob });
-      await deleteMediaAsset(cut.sceneImageAssetId);
+      // Do not delete the last saved artwork before project persistence succeeds.
       setEpisodes((current) => {
         const next = current.map((episode, episodeIndex) => episodeIndex === activeEp
           ? { ...episode, cuts: (episode.cuts ?? []).map((item, index) => index === cutIdx ? { ...item, sceneImageAssetId: asset.id, sceneSourceHash: candidate.sourceHash } : item) }
@@ -976,13 +980,14 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
                           {sceneCandidates[cut.id] && (
                             <div className="rounded-xl border border-[#C4B5FD] bg-white p-3 grid gap-3 sm:grid-cols-[180px_1fr]">
                               <div className="rounded-lg overflow-hidden bg-[#F4F1EC]" style={{ aspectRatio: cut.aspectRatio.replace(":", "/") }}>
-                                <BlobImage blob={sceneCandidates[cut.id].previewBlob} alt="콘티 오버레이가 합성된 새 장면 생성 결과" className="w-full h-full object-cover" />
+                                <BlobImage blob={sceneCandidates[cut.id].blob} alt="검수할 AI 원본 그림" className="w-full h-full object-cover" />
                               </div>
                               <div className="self-center">
                                 <p className="text-xs font-bold text-[#1A1A1A] mb-1">새 장면을 적용할까요?</p>
-                                <p className="text-[10px] text-[#7A7067] mb-3">콘티의 좌표·관절·레이어를 고정해 생성했고, 위 미리보기에는 편집한 말풍선과 대사까지 합성했습니다.</p>
+                                <p className="text-[10px] text-[#7A7067] mb-3">이 미리보기는 말풍선을 합성하지 않은 AI 원본입니다. 글자·빈 말풍선·가이드·내부 테두리·잘림이 없는지 확인해주세요.</p>
+                                <label className="mb-3 flex items-start gap-2 text-[11px]"><input type="checkbox" checked={Boolean(sceneCandidates[cut.id].reviewed)} onChange={event => { const reviewed = event.target.checked; setSceneCandidates(current => ({ ...current, [cut.id]: { ...current[cut.id], reviewed } })); }} /> AI 원본에 말풍선·가이드·잘림이 없는 것을 확인했습니다.</label>
                                 <div className="flex gap-2">
-                                  <button type="button" onClick={() => acceptScene(cutIdx)} className="inline-flex items-center gap-1 rounded-full bg-[#7C3AED] text-white px-3 py-1.5 text-[11px] font-semibold"><Check className="w-3 h-3" /> 적용</button>
+                                  <button type="button" disabled={!sceneCandidates[cut.id].reviewed} onClick={() => acceptScene(cutIdx)} className="inline-flex items-center gap-1 rounded-full bg-[#7C3AED] text-white px-3 py-1.5 text-[11px] font-semibold"><Check className="w-3 h-3" /> 적용</button>
                                   <button type="button" onClick={() => setSceneCandidates((current) => { const next = { ...current }; delete next[cut.id]; return next; })} className="inline-flex items-center gap-1 rounded-full border border-[#EBE7E0] px-3 py-1.5 text-[11px]"><X className="w-3 h-3" /> 취소</button>
                                 </div>
                               </div>
@@ -999,6 +1004,13 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
                               generatingLayerIds={layerGeneratingIds}
                               detectingAllPoses={poseDetectingIds.has(cut.id)}
                               sceneAssetId={cut.sceneImageAssetId}
+                              sceneCandidate={sceneCandidates[cut.id]?.blob}
+                              sceneCandidateReviewed={Boolean(sceneCandidates[cut.id]?.reviewed)}
+                              onReviewScene={reviewed => setSceneCandidates(current => current[cut.id] ? ({ ...current, [cut.id]: { ...current[cut.id], reviewed } }) : current)}
+                              candidateStale={Boolean(sceneCandidates[cut.id] && project && sceneCandidates[cut.id].sourceHash !== sceneHash({ ...project, episodes }, ep, cut))}
+                              sceneFeedback={visualError}
+                              onAcceptScene={() => acceptScene(cutIdx)}
+                              onDiscardScene={() => setSceneCandidates((current) => { const next = { ...current }; delete next[cut.id]; return next; })}
                               sceneStale={Boolean(cut.sceneImageAssetId && project && cut.sceneSourceHash !== sceneHash({ ...project, episodes }, ep, cut))}
                               generatingScene={sceneGeneratingIds.has(cut.id)}
                               onChange={(storyboard: StoryboardDocument) => replaceCut(cutIdx, (current) => ({ ...current, storyboard }))}

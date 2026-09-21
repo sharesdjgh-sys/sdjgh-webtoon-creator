@@ -1,4 +1,5 @@
 import type { PanelAspectRatio, StoryboardDocument, StoryboardElement, StoryboardElementType, WebtoonFontFamily } from "@/lib/storage";
+import { fitOverlayToCanvas, layoutStoryboardText } from "@/lib/storyboardText";
 import { fitImageRect } from "@/lib/panelGeometry";
 import { resolveCharacterRig } from "@/lib/storyboardRig";
 
@@ -69,7 +70,7 @@ export function storyboardTextLines(text: string, maxCharacters: number): string
     }
     lines.push(rest);
   }
-  return lines.slice(0, 10);
+  return lines;
 }
 
 export function speechBalloonGeometry(element: StoryboardElement) {
@@ -106,13 +107,10 @@ export function speechBalloonGeometry(element: StoryboardElement) {
   return { centerX, centerY, radiusX, radiusY, tailX, tailY, boundaryX, boundaryY, tailPoints, thoughtDots, spikePoints };
 }
 
-function svgText(element: StoryboardElement, fontSize: number, weight = 600): string {
-  const resolvedFontSize = element.fontSize ?? fontSize;
-  const resolvedWeight = element.fontWeight ?? weight;
-  const fontFamily = webtoonFontStack(element.fontFamily ?? defaultWebtoonFont(element.type));
-  const lines = storyboardTextLines(element.text, Math.max(5, Math.floor(element.width / (resolvedFontSize * 0.72))));
-  const startY = element.height / 2 - ((lines.length - 1) * resolvedFontSize * 0.6);
-  return `<text x="${element.width / 2}" y="${startY}" text-anchor="middle" dominant-baseline="middle" font-family="${fontFamily}" font-size="${resolvedFontSize}" font-weight="${resolvedWeight}" fill="#222">${lines.map((line, index) => `<tspan x="${element.width / 2}" dy="${index === 0 ? 0 : resolvedFontSize * 1.2}">${escapeXml(line)}</tspan>`).join("")}</text>`;
+function svgText(element: StoryboardElement): string {
+  const layout = layoutStoryboardText(element, webtoonFontStack(element.fontFamily ?? defaultWebtoonFont(element.type)));
+  const effects = element.type === "sfx" ? ' font-style="italic" stroke="#fff" stroke-width="5" paint-order="stroke"' : "";
+  return `<text xml:space="preserve" x="${element.width / 2}" y="${layout.startY}" text-anchor="middle" dominant-baseline="middle" font-family="${escapeXml(layout.fontFamily)}" font-size="${layout.fontSize}" font-weight="${layout.weight}" fill="#222"${effects}>${layout.lines.map((line, index) => `<tspan x="${element.width / 2}" dy="${index === 0 ? 0 : layout.lineHeight}"${layout.widths[index] > 0 ? ` textLength="${layout.widths[index]}" lengthAdjust="spacingAndGlyphs"` : ""}>${escapeXml(line || " ")}</tspan>`).join("")}</text>`;
 }
 
 function characterMarkup(element: StoryboardElement): string {
@@ -166,43 +164,39 @@ function elementMarkup(element: StoryboardElement): string {
     const balloon = speechBalloonGeometry(element);
     const style = element.balloonStyle ?? "normal";
     if (style === "thought") {
-      content = `<ellipse cx="${balloon.centerX}" cy="${balloon.centerY}" rx="${balloon.radiusX}" ry="${balloon.radiusY}" fill="#fff" stroke="#171717" stroke-width="4"/>${balloon.thoughtDots.map((dot) => `<circle cx="${dot.x}" cy="${dot.y}" r="${dot.radius}" fill="#fff" stroke="#171717" stroke-width="3"/>`).join("")}${svgText(element, Math.max(16, Math.min(30, element.height / 5)))}`;
+      content = `<ellipse cx="${balloon.centerX}" cy="${balloon.centerY}" rx="${balloon.radiusX}" ry="${balloon.radiusY}" fill="#fff" stroke="#171717" stroke-width="4"/>${balloon.thoughtDots.map((dot) => `<circle cx="${dot.x}" cy="${dot.y}" r="${dot.radius}" fill="#fff" stroke="#171717" stroke-width="3"/>`).join("")}${svgText(element)}`;
     } else if (style === "shout") {
-      content = `<polygon points="${balloon.tailPoints}" fill="#fff" stroke="#171717" stroke-width="4" stroke-linejoin="round"/><polygon points="${balloon.spikePoints}" fill="#fff" stroke="#171717" stroke-width="4" stroke-linejoin="round"/>${svgText(element, Math.max(16, Math.min(30, element.height / 5)), 800)}`;
+      content = `<polygon points="${balloon.tailPoints}" fill="#fff" stroke="#171717" stroke-width="4" stroke-linejoin="round"/><polygon points="${balloon.spikePoints}" fill="#fff" stroke="#171717" stroke-width="4" stroke-linejoin="round"/>${svgText(element)}`;
     } else if (style === "whisper") {
-      content = `<path d="M ${balloon.boundaryX} ${balloon.boundaryY} Q ${(balloon.boundaryX + balloon.tailX) / 2 + 8} ${(balloon.boundaryY + balloon.tailY) / 2} ${balloon.tailX} ${balloon.tailY}" fill="none" stroke="#555" stroke-width="3" stroke-dasharray="8 7"/><ellipse cx="${balloon.centerX}" cy="${balloon.centerY}" rx="${balloon.radiusX}" ry="${balloon.radiusY}" fill="#fff" stroke="#555" stroke-width="3" stroke-dasharray="9 7"/>${svgText(element, Math.max(16, Math.min(30, element.height / 5)), 400)}`;
+      content = `<path d="M ${balloon.boundaryX} ${balloon.boundaryY} Q ${(balloon.boundaryX + balloon.tailX) / 2 + 8} ${(balloon.boundaryY + balloon.tailY) / 2} ${balloon.tailX} ${balloon.tailY}" fill="none" stroke="#555" stroke-width="3" stroke-dasharray="8 7"/><ellipse cx="${balloon.centerX}" cy="${balloon.centerY}" rx="${balloon.radiusX}" ry="${balloon.radiusY}" fill="#fff" stroke="#555" stroke-width="3" stroke-dasharray="9 7"/>${svgText(element)}`;
     } else {
-      content = `<polygon points="${balloon.tailPoints}" fill="#fff" stroke="#171717" stroke-width="4" stroke-linejoin="round"/><ellipse cx="${balloon.centerX}" cy="${balloon.centerY}" rx="${balloon.radiusX}" ry="${balloon.radiusY}" fill="#fff" stroke="#171717" stroke-width="4"/>${svgText(element, Math.max(16, Math.min(30, element.height / 5)))}`;
+      content = `<polygon points="${balloon.tailPoints}" fill="#fff" stroke="#171717" stroke-width="4" stroke-linejoin="round"/><ellipse cx="${balloon.centerX}" cy="${balloon.centerY}" rx="${balloon.radiusX}" ry="${balloon.radiusY}" fill="#fff" stroke="#171717" stroke-width="4"/>${svgText(element)}`;
     }
   } else if (element.type === "caption") {
-    content = `<rect width="${element.width}" height="${element.height}" rx="8" fill="#fff" stroke="#171717" stroke-width="4"/>${svgText(element, Math.max(16, Math.min(28, element.height / 4)))}`;
+    content = `<rect width="${element.width}" height="${element.height}" rx="8" fill="#fff" stroke="#171717" stroke-width="4"/>${svgText(element)}`;
   } else if (element.type === "sfx") {
-    const fontSize = element.fontSize ?? Math.max(28, Math.min(72, element.height * 0.65));
-    const fontWeight = element.fontWeight ?? 900;
-    const fontFamily = webtoonFontStack(element.fontFamily ?? "impact");
-    const lines = storyboardTextLines(element.text || "효과음", Math.max(3, Math.floor(element.width / (fontSize * 0.72))));
-    const startY = element.height / 2 - ((lines.length - 1) * fontSize * 0.6);
-    content = `<text x="${element.width / 2}" y="${startY}" text-anchor="middle" dominant-baseline="middle" font-family="${fontFamily}" font-size="${fontSize}" font-weight="${fontWeight}" font-style="italic" fill="#171717" stroke="#fff" stroke-width="5" paint-order="stroke">${lines.map((line, index) => `<tspan x="${element.width / 2}" dy="${index === 0 ? 0 : fontSize * 1.2}">${escapeXml(line || " ")}</tspan>`).join("")}</text>`;
+    content = svgText(element);
   } else if (element.type === "arrow") {
     content = `<line x1="8" y1="${element.height / 2}" x2="${Math.max(12, element.width - 18)}" y2="${element.height / 2}" stroke="#C2410C" stroke-width="7"/><path d="M ${element.width - 24} ${element.height / 2 - 16} L ${element.width - 4} ${element.height / 2} L ${element.width - 24} ${element.height / 2 + 16}" fill="none" stroke="#C2410C" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>`;
   } else {
     const shape = element.shape === "ellipse"
       ? `<ellipse cx="${element.width / 2}" cy="${element.height / 2}" rx="${element.width / 2 - 3}" ry="${element.height / 2 - 3}" fill="#F4F1EC" stroke="#7A7067" stroke-width="4" stroke-dasharray="12 8"/>`
       : `<rect width="${element.width}" height="${element.height}" rx="12" fill="#F4F1EC" stroke="#7A7067" stroke-width="4" stroke-dasharray="12 8"/>`;
-    content = `${shape}${svgText(element, Math.max(16, Math.min(28, element.height / 4)))}`;
+    content = `${shape}${svgText(element)}`;
   }
-  return `<g transform="${transform}" data-element-id="${escapeXml(element.id)}">${content}</g>`;
+  return `<g transform="${transform}" data-element-id="${escapeXml(element.id)}" opacity="${element.opacity ?? 1}">${content}</g>`;
 }
 
 export function storyboardToSvg(
   document: StoryboardDocument,
-  options: { overlaysOnly?: boolean; transparent?: boolean } = {},
+  options: { overlaysOnly?: boolean; transparent?: boolean; hideText?: boolean } = {},
 ): string {
   const elements = document.elements
     .filter((element) => element.visible !== false && (!options.overlaysOnly || isOverlayElement(element)))
+    .map(element => fitOverlayToCanvas(element, document.width, document.height))
     .sort((left, right) => left.zIndex - right.zIndex);
   const background = options.transparent ? "" : `<rect width="100%" height="100%" fill="#FBF9F6"/>`;
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${document.width}" height="${document.height}" viewBox="0 0 ${document.width} ${document.height}">${background}${elements.map(elementMarkup).join("")}</svg>`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${document.width}" height="${document.height}" viewBox="0 0 ${document.width} ${document.height}">${background}${elements.map(element => options.hideText ? elementMarkup(element).replace(/<text\b[^>]*>[\s\S]*?<\/text>/g, "") : elementMarkup(element)).join("")}</svg>`;
 }
 
 function loadImage(source: string): Promise<HTMLImageElement> {
@@ -214,8 +208,7 @@ function loadImage(source: string): Promise<HTMLImageElement> {
   });
 }
 
-export async function svgToPngBlob(storyboard: StoryboardDocument): Promise<Blob> {
-  const svg = storyboardToSvg(storyboard);
+export async function svgToPngBlob(storyboard: StoryboardDocument, svg = storyboardToSvg(storyboard)): Promise<Blob> {
   const source = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml;charset=utf-8" }));
   try {
     const image = await loadImage(source);
@@ -231,12 +224,45 @@ export async function svgToPngBlob(storyboard: StoryboardDocument): Promise<Blob
   }
 }
 
+export async function drawStoryboardOverlays(context: CanvasRenderingContext2D, storyboard: StoryboardDocument): Promise<void> {
+  if (window.document.fonts) await window.document.fonts.ready;
+  const elements = storyboard.elements.filter(element => element.visible !== false && isOverlayElement(element))
+    .map(element => fitOverlayToCanvas(element, storyboard.width, storyboard.height)).sort((a, b) => a.zIndex - b.zIndex);
+  for (const element of elements) {
+    const font = layoutStoryboardText(element, webtoonFontStack(element.fontFamily ?? defaultWebtoonFont(element.type)));
+    if (window.document.fonts?.load) await window.document.fonts.load(`${element.type === "sfx" ? "italic " : ""}${font.weight} ${font.fontSize}px ${font.fontFamily}`, element.text);
+    const shapes = storyboardToSvg({ ...storyboard, elements: [element] }, { overlaysOnly: true, transparent: true, hideText: true });
+    const url = URL.createObjectURL(new Blob([shapes], { type: "image/svg+xml;charset=utf-8" }));
+    try {
+      const image = await loadImage(url);
+      context.drawImage(image, 0, 0, storyboard.width, storyboard.height);
+    } finally { URL.revokeObjectURL(url); }
+    const layout = layoutStoryboardText(element, webtoonFontStack(element.fontFamily ?? defaultWebtoonFont(element.type)));
+    context.save();
+    context.globalAlpha = element.opacity ?? 1;
+    context.translate(element.x + element.width / 2, element.y + element.height / 2);
+    context.rotate(element.rotation * Math.PI / 180);
+    context.font = `${element.type === "sfx" ? "italic " : ""}${layout.weight} ${layout.fontSize}px ${layout.fontFamily}`;
+    context.textAlign = "center";
+    context.textBaseline = "middle";
+    context.fillStyle = "#222";
+    context.strokeStyle = "#fff";
+    context.lineWidth = 5;
+    context.lineJoin = "round";
+    layout.lines.forEach((line, index) => {
+      if (!line) return;
+      const y = layout.startY + index * layout.lineHeight - element.height / 2;
+      if (element.type === "sfx") context.strokeText(line, 0, y, layout.availableWidth);
+      context.fillText(line, 0, y, layout.availableWidth);
+    });
+    context.restore();
+  }
+}
+
 export async function composeScenePng(storyboard: StoryboardDocument, sceneBlob: Blob): Promise<Blob> {
   const sceneUrl = URL.createObjectURL(sceneBlob);
-  const overlaySvg = storyboardToSvg(storyboard, { overlaysOnly: true, transparent: true });
-  const overlayUrl = URL.createObjectURL(new Blob([overlaySvg], { type: "image/svg+xml;charset=utf-8" }));
   try {
-    const [scene, overlay] = await Promise.all([loadImage(sceneUrl), loadImage(overlayUrl)]);
+    const scene = await loadImage(sceneUrl);
     const canvas = window.document.createElement("canvas");
     canvas.width = storyboard.width;
     canvas.height = storyboard.height;
@@ -246,11 +272,10 @@ export async function composeScenePng(storyboard: StoryboardDocument, sceneBlob:
     context.fillStyle = "#ffffff";
     context.fillRect(0, 0, canvas.width, canvas.height);
     context.drawImage(scene, rect.x, rect.y, rect.width, rect.height);
-    context.drawImage(overlay, 0, 0, canvas.width, canvas.height);
+    await drawStoryboardOverlays(context, storyboard);
     return await new Promise<Blob>((resolve, reject) => canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error("최종 이미지 합성에 실패했습니다.")), "image/png"));
   } finally {
     URL.revokeObjectURL(sceneUrl);
-    URL.revokeObjectURL(overlayUrl);
   }
 }
 

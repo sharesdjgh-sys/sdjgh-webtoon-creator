@@ -1,4 +1,5 @@
 import "server-only";
+import { artworkOnlyStoryboard } from "@/lib/cleanGeneration";
 
 import { GoogleGenAI } from "@google/genai";
 import { z } from "zod";
@@ -444,7 +445,7 @@ Art direction: monochrome Korean webtoon storyboard rough, confident pencil/ink 
     ? `Draw ONLY the empty environment/background layer for one webtoon storyboard panel.
 ${common}
 Background direction: ${layer.text || input.context.setting}
-Use input image 1 as the exact camera framing and perspective map. Establish horizon, depth, architecture, furniture and environmental context. Leave the character and major-prop areas visually open. Do not draw any people, body parts, foreground character silhouettes, speech balloons, letters, panel borders, labels or watermark. White paper background, monochrome rough line art.`
+Input image 1 is a clean empty canvas defining the aspect ratio, NOT a scene or diagram to copy. Use the camera and environment descriptions to build perspective. Render the environment full-bleed to ALL FOUR canvas edges without an inset frame or blank page bands. Establish horizon, depth, architecture, furniture and environmental context. Leave the character and major-prop areas visually open. Do not draw any people, body parts, foreground character silhouettes, speech balloons, letters, panel borders, labels or watermark. White paper background, monochrome rough line art.`
     : layer.type === "character"
       ? `Draw ONE isolated character layer for a professional webtoon storyboard.
 ${common}
@@ -488,6 +489,7 @@ export async function generateSceneImage(input: {
   layoutImage: { data: string; mimeType: string };
   references: CharacterReferenceInput[];
 }): Promise<{ data: string; mimeType: string; prompt: string }> {
+  input = { ...input, storyboard: artworkOnlyStoryboard(input.storyboard) };
   const requiredCharacterIds = new Set(input.storyboard.elements
     .filter((element) => element.visible !== false && element.type === "character" && element.characterId)
     .map((element) => element.characterId as string));
@@ -521,9 +523,7 @@ export async function generateSceneImage(input: {
     .sort((left, right) => left.zIndex - right.zIndex)
     .map((element) => {
       if (element.type !== "character") {
-        const purpose = ["speech", "caption", "sfx"].includes(element.type)
-          ? `RESERVED TYPOGRAPHY AREA — leave visually quiet and do not draw text${element.type === "speech" ? `; balloon=${element.balloonStyle ?? "normal"}; speaker=${referenceNames.get(element.speakerCharacterId ?? "") ?? element.speakerCharacterId ?? "unassigned"}; tail=(${element.tailX ?? 0.25},${element.tailY ?? 1.22}) local` : ""}`
-          : `visual=${element.text || element.type}`;
+        const purpose = element.type === "background" ? "environment fills the ENTIRE canvas; never draw its bounding box or label" : `physical prop=${element.text || "object"}; never render its label`;
         return `- [${element.type.toUpperCase()} ${element.id}] ${elementBox(element)}; ${purpose}`;
       }
       const rig = resolveCharacterRig(element);
@@ -560,11 +560,11 @@ COMPOSITION LOCK:
 - Preserve the exact camera framing and canvas edges from reference image 1. Do not zoom, crop, pan, mirror, or choose a new angle.
 - Render exactly ${characterCount} character figure(s). Do not add, remove, merge, duplicate, or swap them.
 - Each character's head, hands, elbows, knees and feet must land on the listed JOINTS. Keep the complete body inside its listed bounding box.
-- Preserve every element's bounding box, scale, rotation, overlap and front-to-back layer. Background perspective must support these placements, never move them.
+- Preserve the listed ARTWORK objects, scale, rotation, overlap and front-to-back layer. The coordinate boxes are metadata, NOT rectangles to draw. Background perspective must support these placements. Fill the ENTIRE canvas edge-to-edge; never put the scene inside a smaller frame, page, border or blank margin.
 - IDENTITY LOCK HAS HIGHER PRIORITY THAN THE ROUGH LAYOUT. Reference image 1 supplies coordinates and pose only; never copy or invent a face, hairstyle, body design, outfit or color from its rough character drawings.
 - The characterId/design-sheet mapping is fixed. For each figure, reproduce the matching sheet's facial geometry, apparent age, eye shape, hair silhouette, body proportions, exact outfit construction, shoes, accessories and palette. Change only pose, expression, camera angle and scene lighting.
 - Never average or blend features between reference sheets. Never turn distinct cast members into similar-looking generic students. Never redesign a school uniform, remove a signature feature, or substitute a different hairstyle.
-- Keep all RESERVED TYPOGRAPHY AREA boxes visually quiet. Do not place faces, hands or important props inside them.
+- No typography or editorial guides are part of the artwork. Speech balloons, empty balloons, captions, effect letters, arrows, handles, skeletons, labels, dashed rectangles and page frames must not appear, even if a reference accidentally contains them.
 - Replace diagram figures and boxes with finished art, but do not reinterpret their blocking. If written scene prose conflicts with the spatial contract, the spatial contract wins.
 - Before returning the image, compare composition against reference image 1, then compare every character separately against their assigned design sheet. Correct any face, hair, apparent age, outfit, accessory, palette or proportion mismatch before finalizing.
 

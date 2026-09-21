@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import {
   ArrowDown,
@@ -30,11 +30,12 @@ import {
   User,
   X,
 } from "lucide-react";
+import { fitOverlayToCanvas, layoutStoryboardText } from "@/lib/storyboardText";
 import type { Character, CharacterJointKey, StoryboardDocument, StoryboardElement, StoryboardElementType } from "@/lib/storage";
-import { composeScenePng, defaultWebtoonFont, isOverlayElement, speechBalloonGeometry, storyboardTextLines, storyboardToSvg, WEBTOON_FONT_OPTIONS, webtoonFontStack } from "@/lib/storyboardSvg";
+import { composeScenePng, defaultWebtoonFont, isOverlayElement, speechBalloonGeometry, storyboardToSvg, WEBTOON_FONT_OPTIONS, webtoonFontStack } from "@/lib/storyboardSvg";
 import { CHARACTER_POSE_PRESETS, resolveCharacterRig } from "@/lib/storyboardRig";
 import { downloadBlob, getMediaAsset } from "@/lib/mediaStorage";
-import StoredImage from "@/components/visual/StoredImage";
+import StoredImage, { BlobImage } from "@/components/visual/StoredImage";
 import { composeStoryboardPng } from "@/lib/storyboardComposite";
 import AiActivityBanner from "@/components/AiActivityBanner";
 
@@ -45,6 +46,13 @@ type Props = {
   generatingLayerIds?: Set<string>;
   sceneAssetId?: string;
   sceneStale?: boolean;
+  sceneCandidate?: Blob;
+  sceneCandidateReviewed?: boolean;
+  onReviewScene?: (reviewed: boolean) => void;
+  candidateStale?: boolean;
+  sceneFeedback?: string;
+  onAcceptScene?: () => Promise<void>;
+  onDiscardScene?: () => void;
   generatingScene?: boolean;
   detectingAllPoses?: boolean;
   onChange: (document: StoryboardDocument) => void;
@@ -76,11 +84,6 @@ function labelForType(type: StoryboardElementType): string {
   }[type];
 }
 
-function defaultElementFontSize(element: StoryboardElement): number {
-  if (element.type === "sfx") return Math.max(28, Math.min(72, element.height * 0.65));
-  if (element.type === "caption") return Math.max(16, Math.min(26, element.height / 4));
-  return Math.max(16, Math.min(28, element.height / 5));
-}
 
 function SceneElement({
   element,
@@ -98,14 +101,12 @@ function SceneElement({
   const centerX = element.width / 2;
   const centerY = element.height / 2;
   const fontFamily = webtoonFontStack(element.fontFamily ?? defaultWebtoonFont(element.type));
-  const fontWeight = element.fontWeight ?? (element.type === "sfx" ? 900 : 600);
-  const multilineText = (fallback: string) => {
-    const fontSize = element.fontSize ?? defaultElementFontSize(element);
-    const lines = storyboardTextLines(element.text || fallback, Math.max(5, Math.floor(element.width / (fontSize * 0.72))));
-    const startY = centerY - ((lines.length - 1) * fontSize * 0.6);
+  const multilineText = () => {
+    const layout = layoutStoryboardText(element, fontFamily);
     return (
-      <text x={centerX} y={startY} textAnchor="middle" dominantBaseline="middle" fontSize={fontSize} fontWeight={fontWeight} style={{ fontFamily }}>
-        {lines.map((line, index) => <tspan key={`${index}-${line}`} x={centerX} dy={index === 0 ? 0 : fontSize * 1.2}>{line || " "}</tspan>)}
+      <text xmlSpace="preserve" x={centerX} y={layout.startY} textAnchor="middle" dominantBaseline="middle" fontSize={layout.fontSize} fontWeight={layout.weight} fill="#222"
+        fontStyle={element.type === "sfx" ? "italic" : undefined} stroke={element.type === "sfx" ? "white" : undefined} strokeWidth={element.type === "sfx" ? 5 : undefined} paintOrder={element.type === "sfx" ? "stroke" : undefined} style={{ fontFamily: layout.fontFamily }}>
+        {layout.lines.map((line, index) => <tspan key={index} x={centerX} dy={index === 0 ? 0 : layout.lineHeight} textLength={layout.widths[index] || undefined} lengthAdjust="spacingAndGlyphs">{line || " "}</tspan>)}
       </text>
     );
   };
@@ -190,7 +191,7 @@ function SceneElement({
             <ellipse cx={balloon.centerX} cy={balloon.centerY} rx={balloon.radiusX} ry={balloon.radiusY} fill="white" stroke="#171717" strokeWidth={4} />
           </>
         )}
-        {multilineText("대사")}
+        {multilineText()}
         {selected && <circle cx={balloon.tailX} cy={balloon.tailY} r={11} fill="#FDE68A" stroke="#7C3AED" strokeWidth={4} className="cursor-crosshair" onPointerDown={onTailPointerDown} />}
       </>
     );
@@ -199,19 +200,12 @@ function SceneElement({
     return (
       <>
         <rect width={element.width} height={element.height} rx={8} fill="white" stroke="#171717" strokeWidth={4} />
-        {multilineText("캡션")}
+        {multilineText()}
       </>
     );
   }
   if (element.type === "sfx") {
-    const fontSize = element.fontSize ?? defaultElementFontSize(element);
-    const lines = storyboardTextLines(element.text || "효과음", Math.max(3, Math.floor(element.width / (fontSize * 0.72))));
-    const startY = centerY - ((lines.length - 1) * fontSize * 0.6);
-    return (
-      <text x={centerX} y={startY} textAnchor="middle" dominantBaseline="middle" fontSize={fontSize} fontWeight={fontWeight} fontStyle="italic" fill="#171717" stroke="white" strokeWidth={5} paintOrder="stroke" style={{ fontFamily }}>
-        {lines.map((line, index) => <tspan key={`${index}-${line}`} x={centerX} dy={index === 0 ? 0 : fontSize * 1.2}>{line || " "}</tspan>)}
-      </text>
-    );
+    return multilineText();
   }
   if (element.type === "arrow") {
     return (
@@ -286,10 +280,23 @@ function LayoutControlOverlay({
   );
 }
 
-export default function StoryboardEditor({ document, characters, staleLayerIds = new Set(), generatingLayerIds = new Set(), sceneAssetId, sceneStale, generatingScene, detectingAllPoses, onChange, onRegenerateLayer, onDetectAllPoses, onSetPoseReference, onGenerateScene }: Props) {
+export default function StoryboardEditor({ document: savedDocument, characters, staleLayerIds = new Set(), generatingLayerIds = new Set(), sceneAssetId, sceneStale, sceneCandidate, sceneCandidateReviewed, onReviewScene, candidateStale, sceneFeedback, onAcceptScene, onDiscardScene, generatingScene, detectingAllPoses, onChange, onRegenerateLayer, onDetectAllPoses, onSetPoseReference, onGenerateScene }: Props) {
+  const document = useMemo(() => ({ ...savedDocument, elements: savedDocument.elements.map(element => fitOverlayToCanvas(element, savedDocument.width, savedDocument.height)) }), [savedDocument]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
-  const [finalView, setFinalView] = useState(Boolean(sceneAssetId));
+  const [applyingScene, setApplyingScene] = useState(false);
+  const [singleFinalView, setFinalView] = useState(Boolean(sceneAssetId));
+  const finalView = !expanded && singleFinalView;
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  const compareButtonRef = useRef<HTMLButtonElement>(null);
+  const restoreCompareFocus = useCallback(() => compareButtonRef.current?.focus(), []);
+  const [showTypography, setShowTypography] = useState(true);
+  const [, setFontsReady] = useState(false);
+  useEffect(() => {
+    let active = true;
+    window.document.fonts?.ready.then(() => { if (active) setFontsReady(true); });
+    return () => { active = false; };
+  }, []);
   const [showBlocking, setShowBlocking] = useState(false);
   const [showAdvancedPose, setShowAdvancedPose] = useState(false);
   const [generationSeconds, setGenerationSeconds] = useState(0);
@@ -304,7 +311,7 @@ export default function StoryboardEditor({ document, characters, staleLayerIds =
     : undefined;
   const characterNames = useMemo(() => new Map(characters.map((character) => [character.id, character.name])), [characters]);
   const visibleElements = document.elements
-    .filter((element) => element.visible !== false && (!finalView || !sceneAssetId || isOverlayElement(element)))
+    .filter((element) => element.visible !== false && (!finalView || !sceneAssetId || (showTypography && isOverlayElement(element))))
     .sort((left, right) => left.zIndex - right.zIndex);
   const hasImageLayers = visibleElements.some((element) => ["background", "character", "prop"].includes(element.type) && element.assetId);
   const generatingThisStoryboard = document.elements.some((element) => generatingLayerIds.has(element.id));
@@ -324,12 +331,27 @@ export default function StoryboardEditor({ document, characters, staleLayerIds =
     return () => window.clearInterval(timer);
   }, [generatingScene]);
 
+  useEffect(() => {
+    if (!expanded) return;
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    const body = window.document.body;
+    const previousOverflow = body.style.overflow;
+    dialog.showModal();
+    body.style.overflow = "hidden";
+    return () => {
+      dialog.close();
+      body.style.overflow = previousOverflow;
+      window.requestAnimationFrame(restoreCompareFocus);
+    };
+  }, [expanded, restoreCompareFocus]);
+
   const apply = (next: StoryboardDocument, remember = true) => {
     if (remember) {
       undoStack.current.push(structuredClone(document));
       redoStack.current = [];
     }
-    onChange(next);
+    onChange({ ...next, elements: next.elements.map(element => fitOverlayToCanvas(element, next.width, next.height)) });
   };
 
   const updateElement = (id: string, changes: Partial<StoryboardElement>, remember = true) => {
@@ -540,7 +562,7 @@ export default function StoryboardEditor({ document, characters, staleLayerIds =
   };
 
   const editor = (
-    <div className={expanded ? "fixed inset-0 z-[100] bg-[#FBF9F6] p-3 sm:p-6 overflow-auto" : "space-y-3"}>
+    <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap items-center gap-1.5">
           <button type="button" onClick={undo} title="실행 취소" className="editor-tool"><Undo2 className="w-3.5 h-3.5" /></button>
@@ -561,11 +583,11 @@ export default function StoryboardEditor({ document, characters, staleLayerIds =
               <RefreshCw className={`h-3.5 w-3.5 ${detectingAllPoses ? "animate-spin" : ""}`} /> {detectingAllPoses ? "모두 맞추는 중..." : "그림에 포즈 모두 맞추기"}
             </button>
           )}
-          {sceneAssetId && <button type="button" onClick={() => setFinalView((value) => !value)} className="editor-tool"><MousePointer2 className="w-3.5 h-3.5" /> {finalView ? "구도 편집" : "완성 보기"}</button>}
-          <button type="button" onClick={() => setExpanded((value) => !value)} className="editor-tool">{expanded ? <X className="w-3.5 h-3.5" /> : <Expand className="w-3.5 h-3.5" />}</button>
+
         </div>
       </div>
 
+      <p className="text-[11px] text-[#82798B]">도형·동선은 편집 가이드로만 사용됩니다. 실제로 그릴 물건은 소품으로 추가해주세요. 기존 그림에 섞인 말풍선·가이드는 해당 레이어부터 다시 생성해야 합니다.</p>
       <AiActivityBanner
         active={generatingThisStoryboard || Boolean(detectingAllPoses)}
         title={detectingAllPoses ? "AI가 모든 캐릭터의 포즈를 맞추고 있어요" : "AI가 선택한 레이어를 다시 그리고 있어요"}
@@ -574,9 +596,20 @@ export default function StoryboardEditor({ document, characters, staleLayerIds =
           : ["콘티의 위치와 포즈 지시를 확인하고 있어요.", "캐릭터 시트와 참고 포즈를 비교하고 있어요.", "Gemini가 새 레이어를 그리고 있어요.", "생성된 그림에서 실제 관절 위치를 분석하고 있어요."]}
       />
 
-      <div className={`grid gap-3 ${expanded ? "lg:grid-cols-[minmax(0,1fr)_280px]" : "xl:grid-cols-[minmax(0,1fr)_240px]"}`}>
+      <div className={`grid items-start gap-3 ${expanded ? "grid-cols-[minmax(0,1fr)_minmax(0,1fr)_240px]" : "xl:grid-cols-[minmax(0,1fr)_240px]"}`}>
+        <section className="min-w-0 space-y-2" aria-label="콘티 편집 화면">
+          <div className="flex min-h-9 flex-wrap items-center justify-between gap-2">
+            {expanded ? <h3 className="text-sm font-bold text-[#5B21B6]">콘티 · 직접 편집</h3> : (
+              <div className="inline-flex rounded-xl bg-[#EDE9FE] p-1" aria-label="미리보기 화면 선택">
+                <button type="button" aria-pressed={!finalView} onClick={() => setFinalView(false)} className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${!finalView ? "bg-white text-[#5B21B6] shadow-sm" : "text-[#82798B]"}`}>콘티 편집</button>
+                <button type="button" disabled={!sceneAssetId} aria-pressed={finalView} onClick={() => setFinalView(true)} className={`rounded-lg px-3 py-1.5 text-xs font-semibold disabled:opacity-40 ${finalView ? "bg-white text-[#5B21B6] shadow-sm" : "text-[#82798B]"}`}>실제 그림</button>
+              </div>
+            )}
+            {!expanded && sceneAssetId && finalView && <label className="flex items-center gap-1 text-[11px]"><input type="checkbox" checked={showTypography} onChange={event => setShowTypography(event.target.checked)} /> 말풍선·글자 표시</label>}
+            {!expanded && <button ref={compareButtonRef} type="button" onClick={() => setExpanded(true)} className="editor-tool" aria-label="콘티와 실제 그림 크게 비교"><Expand className="h-3.5 w-3.5" /> 크게 비교</button>}
+          </div>
         <div className="relative bg-[#E9E4DC] rounded-xl p-3 min-h-[260px] flex items-center justify-center overflow-hidden">
-          <div className="relative w-full shrink-0 shadow-xl bg-white" style={{ aspectRatio: `${document.width}/${document.height}`, maxWidth: `${76 * document.width / document.height}vh` }}>
+          <div className="relative w-full shrink-0 shadow-xl bg-white" style={{ aspectRatio: `${document.width}/${document.height}`, maxWidth: `${(expanded ? 62 : 76) * document.width / document.height}vh` }}>
             {sceneAssetId && finalView && <StoredImage assetId={sceneAssetId} alt="생성된 웹툰 장면" className="absolute inset-0 w-full h-full object-contain" />}
             <svg
               ref={svgRef}
@@ -650,14 +683,57 @@ export default function StoryboardEditor({ document, characters, staleLayerIds =
                     <div className="h-full w-2/5 animate-[webtoon-progress_1.4s_ease-in-out_infinite] rounded-full bg-gradient-to-r from-[#A78BFA] to-[#7C3AED]" />
                   </div>
                   <p className="mt-3 text-[10px] font-medium text-[#8C837A]">{generationSeconds}초 경과 · 보통 30초~2분 정도 걸려요</p>
-                  <p className="mt-1 text-[10px] text-[#ADA8A0]">완료될 때까지 이 화면을 닫지 마세요.</p>
+                  <p className="mt-1 text-[10px] text-[#ADA8A0]">팝업은 닫아도 됩니다. 생성 중에는 이 페이지를 떠나지 마세요.</p>
                 </div>
               </div>
             )}
           </div>
         </div>
 
-        <div className="rounded-xl border border-[#EBE7E0] bg-white p-3 space-y-3">
+        </section>
+        {expanded && (
+          <section className="min-w-0 space-y-2" aria-label="실제 그림 비교 화면">
+            <div className="flex min-h-9 items-center justify-between gap-2">
+              <h3 className="text-sm font-bold text-[#5B21B6]">실제 그림 · 결과 확인</h3>
+              <span className="text-[10px] text-[#82798B]">{generatingScene ? "생성 중" : sceneCandidate ? "새 생성 결과 · 적용 전" : sceneStale ? "재생성 필요" : sceneAssetId ? "적용된 그림" : "아직 생성 전"}</span>
+            </div>
+            <label className="flex items-center gap-2 rounded-lg bg-white px-2 py-1.5 text-[11px]"><input type="checkbox" checked={showTypography} onChange={event => setShowTypography(event.target.checked)} /> 말풍선·글자 표시 · 끄면 AI 원본만 검수</label>
+            <div className="flex min-h-[260px] items-center justify-center overflow-hidden rounded-xl bg-[#E9E4DC] p-3">
+              <div className="relative w-full shrink-0 bg-white shadow-xl" style={{ aspectRatio: `${document.width}/${document.height}`, maxWidth: `${62 * document.width / document.height}vh` }}>
+                {sceneCandidate ? <BlobImage blob={sceneCandidate} alt="새로 생성한 장면 후보" className="absolute inset-0 h-full w-full object-contain" /> : sceneAssetId ? <StoredImage assetId={sceneAssetId} alt="콘티와 비교할 실제 그림" className="absolute inset-0 h-full w-full object-contain" /> : (
+                  <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 p-4 text-center">
+                    <Sparkles className="h-7 w-7 text-[#A78BFA]" />
+                    <p className="text-xs text-[#82798B]">장면을 생성하고 적용하면 여기에 표시됩니다.</p>
+                  </div>
+                )}
+                {showTypography && (sceneAssetId || sceneCandidate) && <svg aria-label="실제 그림의 대사와 말풍선" viewBox={`0 0 ${document.width} ${document.height}`} className="pointer-events-none absolute inset-0 h-full w-full">
+                  {document.elements.filter(element => element.visible !== false && isOverlayElement(element)).sort((a, b) => a.zIndex - b.zIndex).map(element => (
+                    <g key={element.id} transform={`translate(${element.x} ${element.y}) rotate(${element.rotation} ${element.width / 2} ${element.height / 2})`} opacity={element.opacity ?? 1}>
+                      <SceneElement element={element} />
+                    </g>
+                  ))}
+                </svg>}
+              </div>
+            </div>
+            {sceneCandidate && <div className="space-y-2 rounded-xl border border-[#C4B5FD] bg-[#F5F3FF] p-3">
+              <p className="text-xs font-semibold text-[#5B21B6]">{candidateStale ? "생성 후 콘티가 변경되었습니다. 다시 생성해주세요." : "새 장면을 확인하고 적용해주세요."}</p>
+              <label className="flex items-start gap-2 text-[11px]"><input type="checkbox" checked={Boolean(sceneCandidateReviewed)} disabled={candidateStale || applyingScene} onChange={event => onReviewScene?.(event.target.checked)} /> 말풍선 표시를 끄고 AI 원본에 말풍선·글자·가이드·테두리·잘림이 없는지 확인했습니다.</label>
+              <div className="flex gap-2">
+                <button type="button" disabled={applyingScene || candidateStale || !sceneCandidateReviewed || !onAcceptScene} onClick={async () => {
+                  if (applyingScene || candidateStale || !sceneCandidateReviewed || !onAcceptScene) return;
+                  setApplyingScene(true);
+                  try { await onAcceptScene(); } finally { setApplyingScene(false); }
+                }} className="editor-tool disabled:opacity-40">{applyingScene ? "적용 중..." : "새 그림 적용"}</button>
+                <button type="button" disabled={applyingScene} onClick={onDiscardScene} className="editor-tool">후보 취소</button>
+              </div>
+            </div>}
+            {!showTypography && <p className="rounded-lg bg-amber-50 p-2 text-[11px] text-amber-800">이 상태에도 말풍선·글자·가이드·내부 테두리가 보이면 그림에 섞인 것입니다. 적용하지 말고 다시 생성해주세요.</p>}
+            {sceneFeedback && <p role="status" className="rounded-lg bg-orange-50 p-2 text-[11px] text-orange-700">{sceneFeedback}</p>}
+            <p className="text-[11px] leading-5 text-[#82798B]">대사·말풍선 수정은 바로 반영됩니다. 인물·배경 구도는 다시 생성한 그림을 적용해야 바뀝니다.</p>
+            {sceneStale && sceneAssetId && !sceneCandidate && <p className="rounded-lg bg-orange-50 p-2 text-[11px] text-orange-700">오른쪽은 이전에 적용한 그림입니다. 새 구도를 반영하려면 다시 생성해주세요.</p>}
+          </section>
+        )}
+        <div className={expanded ? "max-h-[72vh] overflow-y-auto rounded-xl border border-[#EBE7E0] bg-white p-3 space-y-3" : "rounded-xl border border-[#EBE7E0] bg-white p-3 space-y-3"}>
           <div className="rounded-lg border border-[#EBE7E0] bg-[#FBF9F6] p-2">
             <div className="mb-2 flex items-center justify-between">
               <span className="flex items-center gap-1 text-[11px] font-bold text-[#514A45]"><Layers3 className="h-3.5 w-3.5" /> 레이어</span>
@@ -773,6 +849,7 @@ export default function StoryboardEditor({ document, characters, staleLayerIds =
               <div className={isOverlayElement(selected) ? "space-y-2 rounded-xl border border-[#E4DDF8] bg-[#FAF8FF] p-3" : "space-y-2"}>
                 <label className="visual-label">표시 내용</label>
                 <textarea value={selected.text} onChange={(event) => updateElement(selected.id, { text: event.target.value })} className="visual-input min-h-16 resize-none" />
+                {isOverlayElement(selected) && layoutStoryboardText(selected, webtoonFontStack(selected.fontFamily ?? defaultWebtoonFont(selected.type))).tooSmall && <p className="text-[11px] text-orange-700">대사가 길어 글자가 작아졌습니다. 말풍선을 키우거나 내용을 나눠주세요. 내용은 생략하지 않습니다.</p>}
                 {isOverlayElement(selected) && (
                   <div className="space-y-2 border-t border-[#E4DDF8] pt-2">
                     <div className="flex items-center justify-between">
@@ -881,5 +958,17 @@ export default function StoryboardEditor({ document, characters, staleLayerIds =
     </div>
   );
 
-  return editor;
+  return expanded ? (
+    <dialog ref={dialogRef} aria-labelledby="storyboard-compare-title" onCancel={(event) => { event.preventDefault(); setExpanded(false); }}
+      className="fixed inset-0 m-auto h-[94vh] max-h-none w-[96vw] max-w-none overflow-auto rounded-2xl border border-[#DCCCF5] bg-[#FBF9F6] p-5 shadow-2xl backdrop:bg-[#17131F]/60">
+      <div className="sticky -top-5 z-[3000] -mx-5 -mt-5 mb-4 flex items-center justify-between gap-4 border-b border-[#EBE7E0] bg-[#FBF9F6] px-5 py-3">
+        <div>
+          <h2 id="storyboard-compare-title" className="text-base font-bold text-[#1A1A1A]">콘티와 실제 그림 나란히 보기</h2>
+          <p className="mt-1 text-xs text-[#82798B]">왼쪽에서 편집하고 오른쪽에서 비교하세요. 닫아도 편집 내용은 유지됩니다.</p>
+        </div>
+        <button type="button" onClick={() => setExpanded(false)} className="editor-tool" aria-label="비교 화면 닫기"><X className="h-4 w-4" /> 닫기 · Esc</button>
+      </div>
+      {editor}
+    </dialog>
+  ) : editor;
 }
