@@ -39,6 +39,9 @@ import StoredImage, { BlobImage } from "@/components/visual/StoredImage";
 import { composeStoryboardPng } from "@/lib/storyboardComposite";
 import AiActivityBanner from "@/components/AiActivityBanner";
 import { pendingLayerIds } from "@/lib/layerBatch";
+import { balloonMarkup, textDecoration, textGradientId } from "@/lib/webtoonDecoration";
+import WebtoonStyleControls from "@/components/visual/WebtoonStyleControls";
+import { RESIZE_HANDLES, resizeCursor, resizeOverlay, type ResizeDirection } from "@/lib/storyboardResize";
 
 type Props = {
   document: StoryboardDocument;
@@ -70,6 +73,7 @@ type PointerAction = {
   mode: "drag" | "resize" | "joint" | "tail";
   elementId: string;
   jointKey?: CharacterJointKey;
+  resizeDirection?: ResizeDirection;
   startX: number;
   startY: number;
   original: StoryboardElement;
@@ -107,11 +111,15 @@ function SceneElement({
   const fontFamily = webtoonFontStack(element.fontFamily ?? defaultWebtoonFont(element.type));
   const multilineText = () => {
     const layout = layoutStoryboardText(element, fontFamily);
+    const ink = textDecoration(element);
     return (
-      <text xmlSpace="preserve" x={centerX} y={layout.startY} textAnchor="middle" dominantBaseline="middle" fontSize={layout.fontSize} fontWeight={layout.weight} fill="#222"
-        fontStyle={element.type === "sfx" ? "italic" : undefined} stroke={element.type === "sfx" ? "white" : undefined} strokeWidth={element.type === "sfx" ? 5 : undefined} paintOrder={element.type === "sfx" ? "stroke" : undefined} style={{ fontFamily: layout.fontFamily }}>
-        {layout.lines.map((line, index) => <tspan key={index} x={centerX} dy={index === 0 ? 0 : layout.lineHeight} textLength={layout.widths[index] || undefined} lengthAdjust="spacingAndGlyphs">{line || " "}</tspan>)}
-      </text>
+      <>
+        {ink.gradient && <defs><linearGradient id={textGradientId(element)} gradientUnits="userSpaceOnUse" x1={ink.x1} y1={ink.y1} x2={ink.x2} y2={ink.y2}><stop offset="0" stopColor={ink.color} /><stop offset="1" stopColor={ink.end} /></linearGradient></defs>}
+        <text xmlSpace="preserve" x={centerX} y={layout.startY} textAnchor="middle" dominantBaseline="middle" fontSize={layout.fontSize} fontWeight={layout.weight} fill={ink.gradient ? `url(#${textGradientId(element)})` : ink.color}
+          fontStyle={element.type === "sfx" ? "italic" : undefined} stroke={ink.stroke} strokeWidth={ink.strokeWidth} strokeLinejoin="round" paintOrder="stroke fill" style={{ fontFamily: layout.fontFamily }}>
+          {layout.lines.map((line, index) => <tspan key={index} x={centerX} dy={index === 0 ? 0 : layout.lineHeight} textLength={layout.widths[index] || undefined} lengthAdjust="spacingAndGlyphs">{line || " "}</tspan>)}
+        </text>
+      </>
     );
   };
   if (element.type === "character") {
@@ -174,36 +182,16 @@ function SceneElement({
     const style = element.balloonStyle ?? "normal";
     return (
       <>
-        {style === "thought" ? (
-          <>
-            <ellipse cx={balloon.centerX} cy={balloon.centerY} rx={balloon.radiusX} ry={balloon.radiusY} fill="white" stroke="#171717" strokeWidth={4} />
-            {balloon.thoughtDots.map((dot, index) => <circle key={index} cx={dot.x} cy={dot.y} r={dot.radius} fill="white" stroke="#171717" strokeWidth={3} />)}
-          </>
-        ) : style === "shout" ? (
-          <>
-            <polygon points={balloon.tailPoints} fill="white" stroke="#171717" strokeWidth={4} strokeLinejoin="round" />
-            <polygon points={balloon.spikePoints} fill="white" stroke="#171717" strokeWidth={4} strokeLinejoin="round" />
-          </>
-        ) : style === "whisper" ? (
-          <>
-            <path d={`M ${balloon.boundaryX} ${balloon.boundaryY} Q ${(balloon.boundaryX + balloon.tailX) / 2 + 8} ${(balloon.boundaryY + balloon.tailY) / 2} ${balloon.tailX} ${balloon.tailY}`} fill="none" stroke="#555" strokeWidth={3} strokeDasharray="8 7" />
-            <ellipse cx={balloon.centerX} cy={balloon.centerY} rx={balloon.radiusX} ry={balloon.radiusY} fill="white" stroke="#555" strokeWidth={3} strokeDasharray="9 7" />
-          </>
-        ) : (
-          <>
-            <polygon points={balloon.tailPoints} fill="white" stroke="#171717" strokeWidth={4} strokeLinejoin="round" />
-            <ellipse cx={balloon.centerX} cy={balloon.centerY} rx={balloon.radiusX} ry={balloon.radiusY} fill="white" stroke="#171717" strokeWidth={4} />
-          </>
-        )}
+        <g dangerouslySetInnerHTML={{ __html: balloonMarkup(element) }} />
         {multilineText()}
-        {selected && <circle cx={balloon.tailX} cy={balloon.tailY} r={11} fill="#FDE68A" stroke="#7C3AED" strokeWidth={4} className="cursor-crosshair" onPointerDown={onTailPointerDown} />}
+        {selected && !["none", "rounded", "shout"].includes(style) && <circle cx={balloon.tailX} cy={balloon.tailY} r={11} fill="#FDE68A" stroke="#7C3AED" strokeWidth={4} className="cursor-crosshair" onPointerDown={onTailPointerDown} />}
       </>
     );
   }
   if (element.type === "caption") {
     return (
       <>
-        <rect width={element.width} height={element.height} rx={8} fill="white" stroke="#171717" strokeWidth={4} />
+        <g dangerouslySetInnerHTML={{ __html: balloonMarkup(element) }} />
         {multilineText()}
       </>
     );
@@ -398,7 +386,7 @@ export default function StoryboardEditor({ document: savedDocument, characters, 
     return { x: localX, y: localY };
   };
 
-  const startPointer = (event: React.PointerEvent, element: StoryboardElement, mode: "drag" | "resize") => {
+  const startPointer = (event: React.PointerEvent, element: StoryboardElement, mode: "drag" | "resize", resizeDirection: ResizeDirection = "se") => {
     event.stopPropagation();
     setSelectedId(element.id);
     setFinalView(false);
@@ -408,6 +396,7 @@ export default function StoryboardEditor({ document: savedDocument, characters, 
     pointerSnapshot.current = structuredClone(document);
     pointerAction.current = {
       mode,
+      resizeDirection,
       elementId: element.id,
       startX: ((event.clientX - rect.left) / rect.width) * document.width,
       startY: ((event.clientY - rect.top) / rect.height) * document.height,
@@ -486,6 +475,10 @@ export default function StoryboardEditor({ document: savedDocument, characters, 
         y: Math.min(Math.max(minY, action.original.y + dy), maxY),
       }, false);
     } else {
+      if (isOverlayElement(action.original)) {
+        updateElement(action.elementId, resizeOverlay(action.original, action.resizeDirection ?? "se", dx, dy, document.width, document.height), false);
+        return;
+      }
       if (action.original.type === "background") {
         const width = Math.min(Math.max(document.width, action.original.width + dx), document.width * 2);
         const height = width * document.height / document.width;
@@ -608,9 +601,10 @@ export default function StoryboardEditor({ document: savedDocument, characters, 
           : ["콘티의 위치와 포즈 지시를 확인하고 있어요.", "캐릭터 시트와 참고 포즈를 비교하고 있어요.", "Gemini가 새 레이어를 그리고 있어요.", "생성된 그림에서 실제 관절 위치를 분석하고 있어요."]}
       />
 
-      <div className={`grid items-start gap-3 ${expanded ? "grid-cols-[minmax(0,1fr)_minmax(0,1fr)_240px]" : "xl:grid-cols-[minmax(0,1fr)_240px]"}`}>
-        <section className="min-w-0 space-y-2" aria-label="콘티 편집 화면">
-          <div className="flex min-h-9 flex-wrap items-center justify-between gap-2">
+      <div className={`grid min-h-0 items-start gap-3 ${expanded ? "grid-cols-[minmax(0,1fr)_minmax(0,1fr)_240px]" : "grid-cols-[minmax(0,1fr)_280px] grid-rows-[minmax(0,1fr)]"}`}
+        style={expanded ? undefined : { height: "min(760px, calc(100dvh - 160px))" }}>
+        <section className={expanded ? "min-w-0 space-y-2" : "flex h-full min-h-0 min-w-0 flex-col gap-2"} aria-label="콘티 편집 화면">
+          <div className="flex min-h-9 shrink-0 flex-wrap items-center justify-between gap-2">
             {expanded ? <h3 className="text-sm font-bold text-[#5B21B6]">콘티 · 직접 편집</h3> : (
               <div className="inline-flex rounded-xl bg-[#EDE9FE] p-1" aria-label="미리보기 화면 선택">
                 <button type="button" aria-pressed={!finalView} onClick={() => setFinalView(false)} className={`rounded-lg px-3 py-1.5 text-xs font-semibold ${!finalView ? "bg-white text-[#5B21B6] shadow-sm" : "text-[#82798B]"}`}>콘티 편집</button>
@@ -620,8 +614,9 @@ export default function StoryboardEditor({ document: savedDocument, characters, 
             {!expanded && sceneAssetId && finalView && <label className="flex items-center gap-1 text-[11px]"><input type="checkbox" checked={showTypography} onChange={event => setShowTypography(event.target.checked)} /> 말풍선·글자 표시</label>}
             {!expanded && <button ref={compareButtonRef} type="button" onClick={() => setExpanded(true)} className="editor-tool" aria-label="콘티와 실제 그림 크게 비교"><Expand className="h-3.5 w-3.5" /> 크게 비교</button>}
           </div>
-        <div className="relative bg-[#E9E4DC] rounded-xl p-3 min-h-[260px] flex items-center justify-center overflow-hidden">
-          <div className="relative w-full shrink-0 shadow-xl bg-white" style={{ aspectRatio: `${document.width}/${document.height}`, maxWidth: `${(expanded ? 62 : 76) * document.width / document.height}vh` }}>
+        <div className={`relative flex items-center justify-center overflow-hidden rounded-xl bg-[#E9E4DC] p-3 ${expanded ? "min-h-[260px]" : "min-h-0 flex-1"}`}
+          style={expanded ? undefined : { containerType: "size" }}>
+          <div className="relative w-full shrink-0 shadow-xl bg-white" style={{ aspectRatio: `${document.width}/${document.height}`, maxWidth: expanded ? `${62 * document.width / document.height}vh` : `calc(100cqh * ${document.width / document.height})` }}>
             {sceneAssetId && finalView && <StoredImage assetId={sceneAssetId} alt="생성된 웹툰 장면" className="absolute inset-0 w-full h-full object-contain" />}
             <svg
               ref={svgRef}
@@ -677,7 +672,22 @@ export default function StoryboardEditor({ document: savedDocument, characters, 
                   {selectedId === element.id && !finalView && !element.locked && (
                     <>
                       <rect x={-8} y={-8} width={element.width + 16} height={element.height + 16} fill="none" stroke="#7C3AED" strokeWidth={4} strokeDasharray="10 7" />
-                      <circle cx={element.width + 8} cy={element.height + 8} r={15} fill="#7C3AED" stroke="white" strokeWidth={4} onPointerDown={(event) => startPointer(event, element, "resize")} className="cursor-se-resize" />
+                      {isOverlayElement(element) ? RESIZE_HANDLES.map(handle => (
+                        <g key={handle.direction} aria-label={`${handle.label} 크기 조절`} role="button" tabIndex={0}
+                          style={{ cursor: resizeCursor(handle.direction, element.rotation) }}
+                          onPointerDown={event => startPointer(event, element, "resize", handle.direction)}
+                          onKeyDown={event => {
+                            const delta = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[event.key];
+                            if (!delta) return;
+                            event.preventDefault(); event.stopPropagation();
+                            const step = event.shiftKey ? 10 : 2;
+                            updateElement(element.id, resizeOverlay(element, handle.direction, delta[0] * step, delta[1] * step, document.width, document.height));
+                          }}>
+                          <title>{handle.label} 크기 조절 · 방향키로 미세 조절</title>
+                          <circle cx={handle.x * element.width} cy={handle.y * element.height} r={18} fill="transparent" />
+                          <circle cx={handle.x * element.width} cy={handle.y * element.height} r={9} fill="white" stroke="#7C3AED" strokeWidth={3} />
+                        </g>
+                      )) : <circle cx={element.width + 8} cy={element.height + 8} r={15} fill="#7C3AED" stroke="white" strokeWidth={4} onPointerDown={(event) => startPointer(event, element, "resize")} className="cursor-se-resize" />}
                     </>
                   )}
                 </g>
@@ -745,7 +755,10 @@ export default function StoryboardEditor({ document: savedDocument, characters, 
             {sceneStale && sceneAssetId && !sceneCandidate && <p className="rounded-lg bg-orange-50 p-2 text-[11px] text-orange-700">오른쪽은 이전에 적용한 그림입니다. 새 구도를 반영하려면 다시 생성해주세요.</p>}
           </section>
         )}
-        <div className={expanded ? "max-h-[72vh] overflow-y-auto rounded-xl border border-[#EBE7E0] bg-white p-3 space-y-3" : "rounded-xl border border-[#EBE7E0] bg-white p-3 space-y-3"}>
+        <div role="region" aria-label="레이어 및 대사 설정" tabIndex={0}
+          className={`min-h-0 overflow-y-auto overscroll-contain rounded-xl border border-[#EBE7E0] bg-white p-3 space-y-3 focus-visible:outline-2 focus-visible:outline-[#7C3AED] ${expanded ? "max-h-[72vh]" : "h-full"}`}
+          style={{ scrollbarGutter: "stable" }}>
+          <p className="text-[10px] text-[#8B7EAE]">미리보기는 고정되어 있습니다. 이 설정창 안에서 스크롤하세요.</p>
           <div className="rounded-lg border border-[#EBE7E0] bg-[#FBF9F6] p-2">
             <div className="mb-2 flex items-center justify-between">
               <span className="flex items-center gap-1 text-[11px] font-bold text-[#514A45]"><Layers3 className="h-3.5 w-3.5" /> 레이어</span>
@@ -770,7 +783,7 @@ export default function StoryboardEditor({ document: savedDocument, characters, 
                 <p className="mt-1 text-[10px]">중지는 진행 중인 요청을 취소하지 않습니다. 완료된 결과는 유지합니다.</p>
               </div>}
             </div>}
-            <div className="max-h-40 space-y-1 overflow-auto">
+            <div className="space-y-1">
               {document.elements.slice().sort((left, right) => right.zIndex - left.zIndex).map((layer) => (
                 <div key={layer.id} className={`flex items-center gap-1 rounded-md border px-1.5 py-1 ${selectedId === layer.id ? "border-[#A78BFA] bg-[#F5F3FF]" : "border-transparent bg-white"}`}>
                   <button type="button" onClick={() => { setSelectedId(layer.id); setFinalView(false); }} className="min-w-0 flex-1 truncate text-left text-[10px] font-medium text-[#514A45]">
@@ -909,6 +922,7 @@ export default function StoryboardEditor({ document: savedDocument, characters, 
                       className="w-full accent-[#7C3AED]" />
                     <button type="button" className="editor-tool" onClick={() => updateElement(selected.id, { fontSize: undefined })}>글자 크기 자동</button>
                     <p className="text-[10px] leading-relaxed text-[#8B7EAE]">현재 영역의 최대 크기: {selectedFontMaximum.toFixed(2)}px. 실제 표시 크기까지만 설정할 수 있습니다. 더 크게 쓰려면 영역을 넓히거나 대사를 줄여주세요.</p>
+                    <WebtoonStyleControls element={selected} onChange={changes => updateElement(selected.id, changes)} />
                     <label className="visual-label">글자 굵기</label>
                     <select
                       value={selected.fontWeight ?? (selected.type === "sfx" ? 900 : 600)}
@@ -935,6 +949,8 @@ export default function StoryboardEditor({ document: savedDocument, characters, 
                         ["thought", "생각"],
                         ["shout", "외침"],
                         ["whisper", "속삭임"],
+                        ["rounded", "둥근 상자"],
+                        ["none", "테두리 없음"],
                       ] as const).map(([value, label]) => (
                         <button
                           key={value}

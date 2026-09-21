@@ -1,4 +1,5 @@
 import type { StoryboardElement } from "@/lib/storage";
+import { textDecoration } from "@/lib/webtoonDecoration";
 
 export function defaultElementFontSize(element: StoryboardElement): number {
   if (element.type === "sfx") return Math.max(28, Math.min(72, element.height * 0.65));
@@ -21,8 +22,9 @@ export function layoutStoryboardText(element: StoryboardElement, stack: string) 
   const fontFamily = resolveFontStack(stack);
   const weight = elementFontWeight(element);
   const requestedSize = element.fontSize ?? defaultElementFontSize(element);
-  const availableWidth = Math.max(1, element.width * (element.type === "speech" ? element.balloonStyle === "shout" ? 0.54 : 0.64 : 0.84) - 6);
-  const availableHeight = Math.max(1, element.height * (element.type === "speech" ? element.balloonStyle === "shout" ? 0.50 : 0.60 : 0.8) - 6);
+  const padding = Math.max(6, textDecoration(element).strokeWidth + 2);
+  const availableWidth = Math.max(1, element.width * (element.type === "speech" ? element.balloonStyle === "shout" ? 0.54 : 0.64 : 0.84) - padding);
+  const availableHeight = Math.max(1, element.height * (element.type === "speech" ? element.balloonStyle === "shout" ? 0.50 : 0.60 : 0.8) - padding);
   const context = typeof window !== "undefined" && window.document?.createElement
     ? window.document.createElement("canvas").getContext("2d") : null;
   const measure = (text: string, size: number) => {
@@ -75,7 +77,7 @@ export function fitOverlayToCanvas(element: StoryboardElement, width: number, he
   const radians = element.rotation * Math.PI / 180;
   const cos = Math.cos(radians), sin = Math.sin(radians);
   const offsets = [[0,0], [element.width,0], [0,element.height], [element.width,element.height]];
-  if (element.type === "speech") offsets.push([(element.tailX ?? .25) * element.width, (element.tailY ?? 1.22) * element.height]);
+  if (element.type === "speech" && !["none", "rounded", "shout"].includes(element.balloonStyle ?? "normal")) offsets.push([(element.tailX ?? .25) * element.width, (element.tailY ?? 1.22) * element.height]);
   const rotated = offsets.map(([x,y]) => ({ x: (x - element.width / 2) * cos - (y - element.height / 2) * sin, y: (x - element.width / 2) * sin + (y - element.height / 2) * cos }));
   const minX = Math.min(...rotated.map(p => p.x)), maxX = Math.max(...rotated.map(p => p.x));
   const minY = Math.min(...rotated.map(p => p.y)), maxY = Math.max(...rotated.map(p => p.y));

@@ -5,7 +5,7 @@ const vm = require("node:vm");
 const ts = require("typescript");
 const cache = new Map(), requests = [], blobs = [], drawn = [];
 const httpRequests = [], assetReads = [];
-const context = new Proxy({}, { get: (_, key) => key === "measureText" ? text => ({ width: [...text].length * 20 }) : (...args) => drawn.push([key,...args]), set: () => true });
+const context = new Proxy({}, { get: (_, key) => key === "measureText" ? text => ({ width: [...text].length * 20 }) : key === "createLinearGradient" ? (...args) => { drawn.push([key, ...args]); return { addColorStop: (...stop) => drawn.push(["addColorStop", ...stop]) }; } : (...args) => drawn.push([key,...args]), set: (_, key, value) => { drawn.push(["set", key, value]); return true; } });
 const browser = { document: { fonts: { ready: Promise.resolve() }, createElement: () => ({ getContext: () => context, toBlob: callback => callback(new Blob(["canvas"], { type: "image/png" })) }) } };
 class FakeImage { set src(value) { queueMicrotask(() => this.onload()); } }
 function load(file) {
@@ -129,6 +129,42 @@ async function main() {
   const overlay=svg.storyboardToSvg({...doc,elements:[speech]}, {overlaysOnly:true,transparent:true});
   assert.ok(overlay.includes("textLength="));
   assert.ok(!overlay.includes("가이드비밀"));
+  const decoration = load("src/lib/webtoonDecoration.ts");
+  const styled = { ...speech, textColor: "#112233", textGradient: true, textGradientColor: "#ff0066", textGradientAngle: 45, textStrokeColor: "#eeeeff", textStrokeWidth: 7, balloonFill: "#ffeecc", balloonStroke: "#334455", balloonStrokeWidth: 6 };
+  const markup = svg.storyboardToSvg({ ...doc, elements: [styled] }, { overlaysOnly: true, transparent: true });
+  for (const token of ["linearGradient", "#112233", "#ff0066", "#eeeeff", "#ffeecc", "#334455", 'stroke-width="7"', 'paint-order="stroke fill"']) assert.ok(markup.includes(token), token);
+  assert.ok(decoration.balloonMarkup(styled).includes(" A "), "smooth joined balloon and tail");
+  const shapes = ["normal", "thought", "shout", "whisper", "rounded", "none"].map(balloonStyle => decoration.balloonMarkup({ ...styled, balloonStyle }));
+  assert.equal(new Set(shapes).size, 6);
+  assert.equal(shapes.at(-1), "");
+  assert.ok(shapes[1].includes("<circle") && shapes[1].includes(" Q "));
+  assert.ok(shapes[3].includes("stroke-dasharray"));
+  assert.ok(shapes[4].includes("<rect"));
+  const hostile = decoration.balloonMarkup({ ...styled, balloonFill: '"><script>bad</script>' });
+  assert.ok(!hostile.includes("<script>"));
+  drawn.length = 0;
+  await svg.drawStoryboardOverlays(context, { ...doc, elements: [styled] });
+  assert.ok(drawn.some(call => call[0] === "createLinearGradient"));
+  assert.ok(drawn.some(call => call[0] === "addColorStop" && call[2] === "#ff0066"));
+  assert.ok(drawn.some(call => call[0] === "strokeText"));
+  assert.ok(drawn.some(call => call[0] === "set" && call[1] === "strokeStyle" && call[2] === "#eeeeff"));
+  const restyledCut = structuredClone(cut);
+  Object.assign(restyledCut.storyboard.elements[2], styled);
+  assert.equal(sceneHash(project, ep, restyledCut), sceneHash(project, ep, cut), "styling does not require paid image regeneration");
+  console.log("PASS: six balloon shapes, sanitized paint, SVG and Canvas gradient/outline parity, typography-only hash stability");
+  if (process.argv.includes("--preview")) {
+    const styles = ["normal", "thought", "shout", "whisper", "rounded", "none"];
+    const labels = ["Hello!", "Dream...", "BOOM!", "Shh...", "Monologue", "LOVE"];
+    const gallery = { ...doc, width: 900, height: 900, elements: styles.map((balloonStyle, i) => ({
+      ...styled, id: "preview-" + i, balloonStyle, text: labels[i], x: 35 + i % 2 * 450, y: 25 + Math.floor(i / 2) * 290,
+      width: 380, height: 190, fontSize: 48, textStrokeWidth: i === 2 ? 3 : 0,
+      textColor: i === 4 ? "#ffffff" : "#be185d", textGradient: i === 2 || i === 5,
+      textGradientColor: "#fbbf24", balloonFill: i === 4 ? "#172554" : "#fff1f2",
+      balloonStroke: i === 4 ? "#60a5fa" : "#be185d", balloonStrokeWidth: 3,
+    })) };
+    await require("sharp")(Buffer.from(svg.storyboardToSvg(gallery))).png().toFile(".next/webtoon-style-preview.png");
+    console.log("Preview: .next/webtoon-style-preview.png");
+  }
   console.log("PASS: clean references, server prompt isolation, immutable data, art-only hashes, font layout/no truncation, safe margins and PNG text rendering (mock AI/canvas)");
 }
 main().catch(error=>{console.error(error);process.exitCode=1;});

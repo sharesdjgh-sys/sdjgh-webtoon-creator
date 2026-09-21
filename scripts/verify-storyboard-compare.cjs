@@ -42,7 +42,10 @@ function load(file) {
       if (name === "@/components/AiActivityBanner") return { default: () => null };
       if (name === "@/lib/mediaStorage") return {};
       if (name === "@/lib/storyboardComposite") return {};
-      if (name.startsWith("@/")) return load("src/" + name.slice(2) + ".ts");
+      if (name.startsWith("@/")) {
+        const path = "src/" + name.slice(2);
+        return load(path + (fs.existsSync(path + ".ts") ? ".ts" : ".tsx"));
+      }
       return require(name);
     },
   });
@@ -60,10 +63,22 @@ const button = (tree, label) => find(tree, n => n.type === "button" && (n.props[
 async function main() {
   let tree = render();
   assert.equal(tree.type, "div");
+  const inlinePreview = find(tree, n => n.props?.["aria-label"] === "콘티 편집 화면");
+  assert.ok(inlinePreview.props.className.includes("h-full"));
+  assert.ok(inlinePreview.props.className.includes("min-h-0"));
+  const inspector = find(tree, n => n.props?.["aria-label"] === "레이어 및 대사 설정");
+  assert.equal(inspector.props.role, "region");
+  assert.equal(inspector.props.tabIndex, 0);
+  for (const className of ["h-full", "overflow-y-auto", "overscroll-contain"]) assert.ok(inspector.props.className.includes(className));
+  assert.equal(inspector.props.style.scrollbarGutter, "stable");
+  assert.ok(find(tree, n => n.props?.style?.height === "min(760px, calc(100dvh - 160px))"));
+  assert.ok(find(inlinePreview, n => n.props?.style?.containerType === "size"));
+  assert.ok(find(inlinePreview, n => n.props?.style?.maxWidth?.includes("100cqh")));
   assert.ok(button(tree, "실제 그림").props["aria-pressed"]);
   button(tree, "콘티와 실제 그림 크게 비교").props.onClick();
   tree = render();
   assert.equal(tree.type, "dialog");
+  assert.ok(find(tree, n => n.props?.["aria-label"] === "레이어 및 대사 설정").props.className.includes("max-h-[72vh]"));
   const dialog = { showModal: () => shown++, close: () => closed++ };
   tree.props.ref.current = dialog;
   const cleanup = effects.find(fn => fn.toString().includes("showModal"))();
@@ -208,6 +223,66 @@ async function main() {
   button(tree, "콘티와 실제 그림 크게 비교").props.onClick();
   tree = render();
   assert.ok(find(tree, n => n.type === "p" && n.props.children === "장면을 생성하고 적용하면 여기에 표시됩니다."));
+  const StyleControls = load("src/components/visual/WebtoonStyleControls.tsx").default;
+  const styleNode = () => find(render(), n => n.type === StyleControls);
+  const controls = () => StyleControls(styleNode().props);
+  find(controls(), n => n.props?.["aria-label"] === "글자 색상").props.onChange({ target: { value: "#cc2255" } });
+  assert.equal(props.document.elements[0].textColor, "#cc2255");
+  button(render(), "실행 취소").props.onClick();
+  assert.equal(props.document.elements[0].textColor, undefined);
+  button(render(), "다시 실행").props.onClick();
+  assert.equal(props.document.elements[0].textColor, "#cc2255");
+  find(controls(), n => n.props?.["aria-label"] === "글자 그라데이션").props.onChange({ target: { checked: true } });
+  find(controls(), n => n.props?.["aria-label"] === "그라데이션 끝 색상").props.onChange({ target: { value: "#ffaa00" } });
+  find(controls(), n => n.props?.["aria-label"] === "글자 외곽선 두께").props.onChange({ target: { value: "8" } });
+  assert.equal(props.document.elements[0].textGradientColor, "#ffaa00");
+  assert.equal(props.document.elements[0].textStrokeWidth, 8);
+  const savedStyle = JSON.parse(JSON.stringify(props.document));
+  assert.equal(savedStyle.elements[0].textGradient, true);
+  button(controls(), "설렘").props.onClick();
+  assert.equal(props.document.elements[0].balloonStyle, "thought");
+  assert.equal(props.document.elements[0].fontFamily, "handwritten");
+  button(controls(), "색상·효과 초기화").props.onClick();
+  assert.equal(props.document.elements[0].textGradient, false);
+  const { RESIZE_HANDLES, resizeOverlay } = load("src/lib/storyboardResize.ts");
+  const anchor = (element, x, y) => {
+    const angle = element.rotation * Math.PI / 180, dx = (x - .5) * element.width, dy = (y - .5) * element.height;
+    return [element.x + element.width / 2 + dx * Math.cos(angle) - dy * Math.sin(angle), element.y + element.height / 2 + dx * Math.sin(angle) + dy * Math.cos(angle)];
+  };
+  for (const rotation of [0, 37, 90, -145]) for (const handle of RESIZE_HANDLES) {
+    const original = { ...props.document.elements[0], type: "speech", balloonStyle: "normal", x: 800, y: 800, width: 200, height: 120, rotation };
+    const angle = rotation * Math.PI / 180;
+    const resized = resizeOverlay(original, handle.direction, 20 * Math.cos(angle) - 30 * Math.sin(angle), 20 * Math.sin(angle) + 30 * Math.cos(angle), 2000, 2000);
+    const expectedWidth = 200 + (handle.x === 0 ? -20 : handle.x === 1 ? 20 : 0);
+    const expectedHeight = 120 + (handle.y === 0 ? -30 : handle.y === 1 ? 30 : 0);
+    assert.ok(Math.abs(resized.width - expectedWidth) < .00001);
+    assert.ok(Math.abs(resized.height - expectedHeight) < .00001);
+    const before = anchor(original, 1 - handle.x, 1 - handle.y), after = anchor(resized, 1 - handle.x, 1 - handle.y);
+    assert.ok(before.every((value, i) => Math.abs(value - after[i]) < .00001), "opposite anchor stays fixed");
+    const bounded = resizeOverlay(original, handle.direction, -10000, -10000, 2000, 2000);
+    assert.ok(bounded.width >= 50 && bounded.height >= 40);
+  }
+  props.document = { ...props.document, elements: props.document.elements.map(e => e.id === "speech" ? { ...e, type: "speech", balloonStyle: "normal", x: 300, y: 400, width: 200, height: 150, rotation: 0 } : e) };
+  const beforeResize = structuredClone(props.document);
+  const handles = () => all(render(), n => n.type === "g" && n.props.role === "button" && n.props["aria-label"]?.endsWith("크기 조절"));
+  assert.equal(handles().length, 8);
+  const nw = handles().find(n => n.props["aria-label"] === "왼쪽 위 크기 조절");
+  nw.props.onPointerDown({ ...pointer, clientX: 300, clientY: 400 });
+  find(render(), n => n.type === "svg" && n.props.onPointerMove).props.onPointerMove({ ...pointer, clientX: 280, clientY: 380 });
+  find(render(), n => n.type === "svg" && n.props.onPointerMove).props.onPointerMove({ ...pointer, clientX: 270, clientY: 370 });
+  find(render(), n => n.type === "svg" && n.props.onPointerMove).props.onPointerUp();
+  assert.equal(props.document.elements[0].x, 270);
+  assert.equal(props.document.elements[0].y, 370);
+  assert.equal(props.document.elements[0].width, 230);
+  assert.equal(props.document.elements[0].height, 180);
+  button(render(), "실행 취소").props.onClick();
+  assert.deepEqual(props.document, beforeResize, "multi-move resize is one undo");
+  handles().find(n => n.props["aria-label"] === "오른쪽 크기 조절").props.onKeyDown({ key: "ArrowRight", shiftKey: true, preventDefault() {}, stopPropagation() {} });
+  assert.equal(props.document.elements[0].width, 210);
+  props.document.elements[0].locked = true;
+  assert.equal(handles().length, 0);
+  console.log("PASS: eight resize handles, four rotation angles, anchored opposite edges, minimum sizes, pointer resize undo, keyboard resize and locked-element guard");
+  console.log("PASS: style controls, presets, color/gradient/outline serialization and undo/redo");
   console.log("PASS: inline switch, comparison dialog, live overlay, candidate apply/discard/stale guard, Escape, scroll/focus cleanup, edit/undo preservation, empty scene (mock component harness)");
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });

@@ -2,6 +2,7 @@ import type { PanelAspectRatio, StoryboardDocument, StoryboardElement, Storyboar
 import { fitOverlayToCanvas, layoutStoryboardText } from "@/lib/storyboardText";
 import { fitImageRect } from "@/lib/panelGeometry";
 import { resolveCharacterRig } from "@/lib/storyboardRig";
+import { balloonMarkup, textDecoration, textGradientId, textGradientSvg } from "@/lib/webtoonDecoration";
 
 export const WEBTOON_FONT_OPTIONS: Array<{ value: WebtoonFontFamily; label: string; description: string }> = [
   { value: "clean", label: "깔끔한 대사체", description: "일반 대사와 설명" },
@@ -109,8 +110,9 @@ export function speechBalloonGeometry(element: StoryboardElement) {
 
 function svgText(element: StoryboardElement): string {
   const layout = layoutStoryboardText(element, webtoonFontStack(element.fontFamily ?? defaultWebtoonFont(element.type)));
-  const effects = element.type === "sfx" ? ' font-style="italic" stroke="#fff" stroke-width="5" paint-order="stroke"' : "";
-  return `<text xml:space="preserve" x="${element.width / 2}" y="${layout.startY}" text-anchor="middle" dominant-baseline="middle" font-family="${escapeXml(layout.fontFamily)}" font-size="${layout.fontSize}" font-weight="${layout.weight}" fill="#222"${effects}>${layout.lines.map((line, index) => `<tspan x="${element.width / 2}" dy="${index === 0 ? 0 : layout.lineHeight}"${layout.widths[index] > 0 ? ` textLength="${layout.widths[index]}" lengthAdjust="spacingAndGlyphs"` : ""}>${escapeXml(line || " ")}</tspan>`).join("")}</text>`;
+  const ink = textDecoration(element);
+  const effects = ` stroke="${ink.stroke}" stroke-width="${ink.strokeWidth}" stroke-linejoin="round" paint-order="stroke fill"${element.type === "sfx" ? ' font-style="italic"' : ""}`;
+  return `${textGradientSvg(element)}<text xml:space="preserve" x="${element.width / 2}" y="${layout.startY}" text-anchor="middle" dominant-baseline="middle" font-family="${escapeXml(layout.fontFamily)}" font-size="${layout.fontSize}" font-weight="${layout.weight}" fill="${ink.gradient ? `url(#${textGradientId(element)})` : ink.color}"${effects}>${layout.lines.map((line, index) => `<tspan x="${element.width / 2}" dy="${index === 0 ? 0 : layout.lineHeight}"${layout.widths[index] > 0 ? ` textLength="${layout.widths[index]}" lengthAdjust="spacingAndGlyphs"` : ""}>${escapeXml(line || " ")}</tspan>`).join("")}</text>`;
 }
 
 function characterMarkup(element: StoryboardElement): string {
@@ -160,20 +162,8 @@ function elementMarkup(element: StoryboardElement): string {
     content = `<rect width="${element.width}" height="${element.height}" fill="#fff" stroke="#A8A29E" stroke-width="4" stroke-dasharray="16 10"/><text x="${element.width / 2}" y="${element.height / 2}" text-anchor="middle" dominant-baseline="middle" font-family="Pretendard, sans-serif" font-size="28" font-weight="700" fill="#78716C">${escapeXml(element.text || "배경")}</text>`;
   } else if (element.type === "character") {
     content = characterMarkup(element);
-  } else if (element.type === "speech") {
-    const balloon = speechBalloonGeometry(element);
-    const style = element.balloonStyle ?? "normal";
-    if (style === "thought") {
-      content = `<ellipse cx="${balloon.centerX}" cy="${balloon.centerY}" rx="${balloon.radiusX}" ry="${balloon.radiusY}" fill="#fff" stroke="#171717" stroke-width="4"/>${balloon.thoughtDots.map((dot) => `<circle cx="${dot.x}" cy="${dot.y}" r="${dot.radius}" fill="#fff" stroke="#171717" stroke-width="3"/>`).join("")}${svgText(element)}`;
-    } else if (style === "shout") {
-      content = `<polygon points="${balloon.tailPoints}" fill="#fff" stroke="#171717" stroke-width="4" stroke-linejoin="round"/><polygon points="${balloon.spikePoints}" fill="#fff" stroke="#171717" stroke-width="4" stroke-linejoin="round"/>${svgText(element)}`;
-    } else if (style === "whisper") {
-      content = `<path d="M ${balloon.boundaryX} ${balloon.boundaryY} Q ${(balloon.boundaryX + balloon.tailX) / 2 + 8} ${(balloon.boundaryY + balloon.tailY) / 2} ${balloon.tailX} ${balloon.tailY}" fill="none" stroke="#555" stroke-width="3" stroke-dasharray="8 7"/><ellipse cx="${balloon.centerX}" cy="${balloon.centerY}" rx="${balloon.radiusX}" ry="${balloon.radiusY}" fill="#fff" stroke="#555" stroke-width="3" stroke-dasharray="9 7"/>${svgText(element)}`;
-    } else {
-      content = `<polygon points="${balloon.tailPoints}" fill="#fff" stroke="#171717" stroke-width="4" stroke-linejoin="round"/><ellipse cx="${balloon.centerX}" cy="${balloon.centerY}" rx="${balloon.radiusX}" ry="${balloon.radiusY}" fill="#fff" stroke="#171717" stroke-width="4"/>${svgText(element)}`;
-    }
-  } else if (element.type === "caption") {
-    content = `<rect width="${element.width}" height="${element.height}" rx="8" fill="#fff" stroke="#171717" stroke-width="4"/>${svgText(element)}`;
+  } else if (element.type === "speech" || element.type === "caption") {
+    content = balloonMarkup(element) + svgText(element);
   } else if (element.type === "sfx") {
     content = svgText(element);
   } else if (element.type === "arrow") {
@@ -245,14 +235,22 @@ export async function drawStoryboardOverlays(context: CanvasRenderingContext2D, 
     context.font = `${element.type === "sfx" ? "italic " : ""}${layout.weight} ${layout.fontSize}px ${layout.fontFamily}`;
     context.textAlign = "center";
     context.textBaseline = "middle";
-    context.fillStyle = "#222";
-    context.strokeStyle = "#fff";
-    context.lineWidth = 5;
+    const ink = textDecoration(element);
+    let paint: string | CanvasGradient = ink.color;
+    if (ink.gradient) {
+      const gradient = context.createLinearGradient(ink.x1 - element.width / 2, ink.y1 - element.height / 2, ink.x2 - element.width / 2, ink.y2 - element.height / 2);
+      gradient.addColorStop(0, ink.color);
+      gradient.addColorStop(1, ink.end);
+      paint = gradient;
+    }
+    context.fillStyle = paint;
+    context.strokeStyle = ink.stroke;
+    context.lineWidth = ink.strokeWidth;
     context.lineJoin = "round";
     layout.lines.forEach((line, index) => {
       if (!line) return;
       const y = layout.startY + index * layout.lineHeight - element.height / 2;
-      if (element.type === "sfx") context.strokeText(line, 0, y, layout.availableWidth);
+      if (ink.strokeWidth > 0) context.strokeText(line, 0, y, layout.availableWidth);
       context.fillText(line, 0, y, layout.availableWidth);
     });
     context.restore();

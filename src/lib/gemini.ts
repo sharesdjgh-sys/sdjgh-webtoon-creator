@@ -97,7 +97,7 @@ const generatedElementSchema = z.object({
   pose: z.string().max(200).optional(),
   expression: z.string().max(200).optional(),
   characterRig: generatedRigSchema.optional(),
-  balloonStyle: z.enum(["normal", "thought", "shout", "whisper"]).optional(),
+  balloonStyle: z.enum(["normal", "thought", "shout", "whisper", "rounded", "none"]).optional(),
   tailX: z.number().optional(),
   tailY: z.number().optional(),
   speakerCharacterId: z.string().max(120).optional(),
