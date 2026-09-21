@@ -47,8 +47,16 @@ export function layoutStoryboardText(element: StoryboardElement, stack: string) 
   };
   let fontSize = requestedSize;
   let lines = wrap(fontSize);
-  for (let attempt = 0; attempt < 120 && (lines.length * fontSize * 1.2 > availableHeight || lines.some(line => measure(line, fontSize) > availableWidth)); attempt++) {
-    fontSize *= 0.9;
+  const fits = (size: number, wrapped: string[]) => wrapped.length * size * 1.2 <= availableHeight && wrapped.every(line => measure(line, size) <= availableWidth);
+  if (!fits(fontSize, lines)) {
+    let low = 0, high = requestedSize;
+    for (let attempt = 0; attempt < 24; attempt++) {
+      const middle = (low + high) / 2;
+      if (fits(middle, wrap(middle))) low = middle;
+      else high = middle;
+    }
+    // Round down so the displayed setting also fits without hidden shrinkage.
+    fontSize = Math.floor(low * 100) / 100 || low;
     lines = wrap(fontSize);
   }
   const lineHeight = fontSize * 1.2;

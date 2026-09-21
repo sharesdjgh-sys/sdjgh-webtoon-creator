@@ -127,6 +127,7 @@ const requestSchema = z.discriminatedUnion("action", [
   }),
   z.object({
     action: z.literal("scene-image"),
+    referenceMode: z.enum(["layers", "direct"]).default("layers"),
     context: projectVisualContextSchema,
     episode: episodeSchema,
     cut: cutSchema,

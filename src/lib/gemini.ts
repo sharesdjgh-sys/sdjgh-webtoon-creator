@@ -482,6 +482,7 @@ Prop: ${layer.text}. Use input image 1 for orientation and intended scale. Draw 
 }
 
 export async function generateSceneImage(input: {
+  referenceMode?: "layers" | "direct";
   context: ProjectVisualContext;
   episode: { number: number; title: string; synopsis: string };
   cut: { angle: string; description: string; dialogue: string; soundEffect: string; aspectRatio: PanelAspectRatio };
@@ -523,7 +524,7 @@ export async function generateSceneImage(input: {
     .sort((left, right) => left.zIndex - right.zIndex)
     .map((element) => {
       if (element.type !== "character") {
-        const purpose = element.type === "background" ? "environment fills the ENTIRE canvas; never draw its bounding box or label" : `physical prop=${element.text || "object"}; never render its label`;
+        const purpose = element.type === "background" ? `environment=${element.text || input.cut.description}; fills the ENTIRE canvas; never draw its bounding box or label` : `physical prop=${element.text || "object"}; never render its label`;
         return `- [${element.type.toUpperCase()} ${element.id}] ${elementBox(element)}; ${purpose}`;
       }
       const rig = resolveCharacterRig(element);
@@ -538,7 +539,10 @@ export async function generateSceneImage(input: {
     .join("\n");
   const characterCount = input.storyboard.elements.filter((element) => element.visible !== false && element.type === "character").length;
 
-  const prompt = `REDRAW the first image as one finished webtoon panel. This is a layout-locked image-to-image production task, not a new composition.
+  const task = input.referenceMode === "direct"
+    ? "CREATE one finished webtoon panel by applying ALL current artwork descriptions, poses, expressions and placements together in a SINGLE image generation. Reference image 1 is an intentionally PARTIAL canvas containing only up-to-date artwork; it may be completely blank. Missing artwork is NOT a request to omit an object. Draw EVERY object in the spatial contract from its description and canonical character references. Current descriptions and spatial coordinates override any reference pixels. Do not return separate layers, a collage, a contact sheet or intermediate drafts."
+    : "REDRAW the first image as one finished webtoon panel. This is a layout-locked image-to-image production task, not a new composition.";
+  const prompt = `${task}
 
 PROJECT
 - Title: ${input.context.title}
@@ -559,7 +563,7 @@ ${spatialContract}
 COMPOSITION LOCK:
 - Preserve the exact camera framing and canvas edges from reference image 1. Do not zoom, crop, pan, mirror, or choose a new angle.
 - Render exactly ${characterCount} character figure(s). Do not add, remove, merge, duplicate, or swap them.
-- Each character's head, hands, elbows, knees and feet must land on the listed JOINTS. Keep the complete body inside its listed bounding box.
+- ${input.referenceMode === "direct" ? "Use JOINTS as pose guidance, but if a current explicit pose description conflicts with an older rig, apply the described pose inside the same placement box. Do not keep an obsolete pose merely because its previous joints were supplied." : "Each character's head, hands, elbows, knees and feet must land on the listed JOINTS."} Keep the complete body inside its listed bounding box.
 - Preserve the listed ARTWORK objects, scale, rotation, overlap and front-to-back layer. The coordinate boxes are metadata, NOT rectangles to draw. Background perspective must support these placements. Fill the ENTIRE canvas edge-to-edge; never put the scene inside a smaller frame, page, border or blank margin.
 - IDENTITY LOCK HAS HIGHER PRIORITY THAN THE ROUGH LAYOUT. Reference image 1 supplies coordinates and pose only; never copy or invent a face, hairstyle, body design, outfit or color from its rough character drawings.
 - The characterId/design-sheet mapping is fixed. For each figure, reproduce the matching sheet's facial geometry, apparent age, eye shape, hair silhouette, body proportions, exact outfit construction, shoes, accessories and palette. Change only pose, expression, camera angle and scene lighting.

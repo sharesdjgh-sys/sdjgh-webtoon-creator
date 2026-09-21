@@ -4,20 +4,26 @@ const fs = require("node:fs");
 const vm = require("node:vm");
 const ts = require("typescript");
 const cache = new Map(), requests = [], blobs = [], drawn = [];
+const httpRequests = [], assetReads = [];
 const context = new Proxy({}, { get: (_, key) => key === "measureText" ? text => ({ width: [...text].length * 20 }) : (...args) => drawn.push([key,...args]), set: () => true });
-const browser = { document: { fonts: { ready: Promise.resolve() }, createElement: () => ({ getContext: () => context }) } };
+const browser = { document: { fonts: { ready: Promise.resolve() }, createElement: () => ({ getContext: () => context, toBlob: callback => callback(new Blob(["canvas"], { type: "image/png" })) }) } };
 class FakeImage { set src(value) { queueMicrotask(() => this.onload()); } }
 function load(file) {
   if (cache.has(file)) return cache.get(file);
   const mod = { exports: {} }; cache.set(file, mod.exports);
   vm.runInNewContext(ts.transpileModule(fs.readFileSync(file,"utf8"), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } }).outputText, {
     module: mod, exports: mod.exports, structuredClone, Blob, Image: FakeImage,
+    fetch: async (url, options) => { httpRequests.push(JSON.parse(options.body)); return { ok: true, json: async () => ({ data: "mock", mimeType: "image/png", prompt: "mock" }) }; },
     window: browser, document: browser.document, process: { env: { GEMINI_API_KEY: "mock-only" } },
     URL: { createObjectURL: blob => { blobs.push(blob); return "blob:test"; }, revokeObjectURL: () => {} },
     require(name) {
       if (name === "server-only") return {};
       if (name === "@google/genai") return { GoogleGenAI: class { interactions = { create: async input => { requests.push(input); return { output_image: { data: "mock", mime_type: "image/jpeg" } }; } }; } };
-      if (name === "@/lib/mediaStorage") return { sourceHash: JSON.stringify, getMediaAsset: async () => null };
+      if (name === "@/lib/mediaStorage") return {
+        sourceHash: JSON.stringify, getMediaAsset: async id => { assetReads.push(id); return null; },
+        blobToBase64: async () => "canvas", base64ToBlob: () => new Blob(["mock"], { type: "image/png" }),
+      };
+      if (name === "@/lib/panelGeometry") return { ...load("src/lib/panelGeometry.ts"), validatePanelImage: async () => {} };
       if (name.startsWith("@/")) return load("src/"+name.slice(2)+".ts");
       return require(name);
     },
@@ -64,6 +70,35 @@ async function main() {
   edited.storyboard.elements[1].x=123;
   assert.notEqual(sceneHash(project,ep,edited),hash);
   assert.notEqual(storyboardLayerHash(project,ep,cut,"prop"),storyboardLayerHash(project,ep,{...cut,storyboard:{...doc,elements:doc.elements.map(e=>e.id==="prop"?{...e,width:500}:e)}},"prop"));
+  // Multiple dirty/missing layers go through ONE scene request, never layer generation.
+  const directCut = structuredClone(cut);
+  directCut.storyboard.elements[0].assetId = "legacy-polluted";
+  directCut.storyboard.elements[0].assetSourceHash = "old";
+  directCut.storyboard.elements[0].text = "비 오는 도서관";
+  directCut.storyboard.elements[1].text = "붉은 우산";
+  const directBefore = JSON.stringify(directCut);
+  assetReads.length = 0;
+  const client = load("src/lib/visualClient.ts");
+  const directResult = await client.requestSceneImage(project, ep, directCut, "direct");
+  assert.equal(httpRequests.length, 1);
+  assert.equal(httpRequests[0].action, "scene-image");
+  assert.equal(httpRequests[0].referenceMode, "direct");
+  assert.equal(httpRequests[0].storyboard.elements.length, 2);
+  assert.equal(httpRequests[0].storyboard.elements[0].text, "비 오는 도서관");
+  assert.equal(httpRequests[0].storyboard.elements[1].text, "붉은 우산");
+  assert.ok(!assetReads.includes("legacy-polluted"), "stale raster never enters AI reference");
+  assert.equal(directResult.sourceHash, sceneHash(project, ep, directCut));
+  assert.equal(JSON.stringify(directCut), directBefore);
+  await assert.rejects(client.requestSceneImage(project, ep, directCut), /레이어를 먼저/);
+  assert.equal(httpRequests.length, 1, "strict mode remains guarded without an API call");
+  const callsBefore = requests.length;
+  await scene.generateSceneImage({ ...input, referenceMode: "direct", storyboard: directCut.storyboard });
+  assert.equal(requests.length, callsBefore + 1, "one model call for combined changes");
+  const directPrompt = requests.at(-1).input.find(item => item.type === "text").text;
+  assert.ok(directPrompt.includes("SINGLE image generation") && directPrompt.includes("PARTIAL canvas"));
+  assert.ok(directPrompt.includes("비 오는 도서관") && directPrompt.includes("붉은 우산"));
+  assert.ok(!directPrompt.includes("비밀대사") && !directPrompt.includes("가이드비밀"));
+  console.log("PASS: combined changes use one scene API/model request, stale raster exclusion, full current contract, source hash and strict-mode compatibility (mock)");
   // Regression from supplied SVG: x=510, width=390 touches right edge.
   const speech = {...base("speech","speech","...하은아, 전진 좌표가 아니라 좌측 회전 각도가 최대로 들어가 있어."),x:510,y:95,width:390,height:216};
   const fitted = typography.fitOverlayToCanvas(speech,900,1600);

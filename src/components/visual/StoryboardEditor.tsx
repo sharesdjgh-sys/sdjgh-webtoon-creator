@@ -38,6 +38,7 @@ import { downloadBlob, getMediaAsset } from "@/lib/mediaStorage";
 import StoredImage, { BlobImage } from "@/components/visual/StoredImage";
 import { composeStoryboardPng } from "@/lib/storyboardComposite";
 import AiActivityBanner from "@/components/AiActivityBanner";
+import { pendingLayerIds } from "@/lib/layerBatch";
 
 type Props = {
   document: StoryboardDocument;
@@ -57,6 +58,9 @@ type Props = {
   detectingAllPoses?: boolean;
   onChange: (document: StoryboardDocument) => void;
   onRegenerateLayer: (layerId: string) => void;
+  onRegenerateLayers?: (layerIds: string[]) => void;
+  layerBatchProgress?: { completed: number; total: number };
+  onCancelLayerBatch?: () => void;
   onDetectAllPoses: () => void;
   onSetPoseReference: (layerId: string, file: File | null) => void;
   onGenerateScene: () => void;
@@ -280,7 +284,7 @@ function LayoutControlOverlay({
   );
 }
 
-export default function StoryboardEditor({ document: savedDocument, characters, staleLayerIds = new Set(), generatingLayerIds = new Set(), sceneAssetId, sceneStale, sceneCandidate, sceneCandidateReviewed, onReviewScene, candidateStale, sceneFeedback, onAcceptScene, onDiscardScene, generatingScene, detectingAllPoses, onChange, onRegenerateLayer, onDetectAllPoses, onSetPoseReference, onGenerateScene }: Props) {
+export default function StoryboardEditor({ document: savedDocument, characters, staleLayerIds = new Set(), generatingLayerIds = new Set(), sceneAssetId, sceneStale, sceneCandidate, sceneCandidateReviewed, onReviewScene, candidateStale, sceneFeedback, onAcceptScene, onDiscardScene, generatingScene, detectingAllPoses, onChange, onRegenerateLayer, onRegenerateLayers, layerBatchProgress, onCancelLayerBatch, onDetectAllPoses, onSetPoseReference, onGenerateScene }: Props) {
   const document = useMemo(() => ({ ...savedDocument, elements: savedDocument.elements.map(element => fitOverlayToCanvas(element, savedDocument.width, savedDocument.height)) }), [savedDocument]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
@@ -303,9 +307,16 @@ export default function StoryboardEditor({ document: savedDocument, characters, 
   const undoStack = useRef<StoryboardDocument[]>([]);
   const redoStack = useRef<StoryboardDocument[]>([]);
   const pointerAction = useRef<PointerAction | null>(null);
+  const pointerSnapshot = useRef<StoryboardDocument | null>(null);
   const svgRef = useRef<SVGSVGElement>(null);
 
   const selected = document.elements.find((element) => element.id === selectedId);
+  const selectedFontStack = selected ? webtoonFontStack(selected.fontFamily ?? defaultWebtoonFont(selected.type)) : "";
+  const selectedFontMaximum = selected && isOverlayElement(selected)
+    ? layoutStoryboardText({ ...selected, fontSize: 200 }, selectedFontStack).fontSize : 200;
+  const selectedFontSize = selected && isOverlayElement(selected)
+    ? layoutStoryboardText(selected, selectedFontStack).fontSize : 28;
+  const clampSelectedFontSize = (value: number) => Math.min(selectedFontMaximum, Math.max(Math.min(8, selectedFontMaximum), value));
   const selectedCharacter = selected?.type === "character"
     ? characters.find((character) => character.id === selected.characterId)
     : undefined;
@@ -315,6 +326,7 @@ export default function StoryboardEditor({ document: savedDocument, characters, 
     .sort((left, right) => left.zIndex - right.zIndex);
   const hasImageLayers = visibleElements.some((element) => ["background", "character", "prop"].includes(element.type) && element.assetId);
   const generatingThisStoryboard = document.elements.some((element) => generatingLayerIds.has(element.id));
+  const pendingLayers = pendingLayerIds(document, staleLayerIds);
   const generationStep = generationSeconds < 8
     ? "콘티의 구도와 레이어를 확인하고 있어요"
     : generationSeconds < 22
@@ -347,11 +359,14 @@ export default function StoryboardEditor({ document: savedDocument, characters, 
   }, [expanded, restoreCompareFocus]);
 
   const apply = (next: StoryboardDocument, remember = true) => {
-    if (remember) {
-      undoStack.current.push(structuredClone(document));
+    const normalized = { ...next, elements: next.elements.map(element => fitOverlayToCanvas(element, next.width, next.height)) };
+    if (JSON.stringify(normalized) === JSON.stringify(document)) return;
+    if (remember || pointerSnapshot.current) {
+      undoStack.current.push(structuredClone(pointerSnapshot.current ?? document));
       redoStack.current = [];
+      pointerSnapshot.current = null;
     }
-    onChange({ ...next, elements: next.elements.map(element => fitOverlayToCanvas(element, next.width, next.height)) });
+    onChange(normalized);
   };
 
   const updateElement = (id: string, changes: Partial<StoryboardElement>, remember = true) => {
@@ -390,8 +405,7 @@ export default function StoryboardEditor({ document: savedDocument, characters, 
     if (element.locked) return;
     const rect = svgRef.current?.getBoundingClientRect();
     if (!rect) return;
-    undoStack.current.push(structuredClone(document));
-    redoStack.current = [];
+    pointerSnapshot.current = structuredClone(document);
     pointerAction.current = {
       mode,
       elementId: element.id,
@@ -409,8 +423,7 @@ export default function StoryboardEditor({ document: savedDocument, characters, 
     if (element.locked) return;
     const rect = svgRef.current?.getBoundingClientRect();
     if (!rect) return;
-    undoStack.current.push(structuredClone(document));
-    redoStack.current = [];
+    pointerSnapshot.current = structuredClone(document);
     pointerAction.current = {
       mode: "joint",
       elementId: element.id,
@@ -429,8 +442,7 @@ export default function StoryboardEditor({ document: savedDocument, characters, 
     if (element.locked) return;
     const rect = svgRef.current?.getBoundingClientRect();
     if (!rect) return;
-    undoStack.current.push(structuredClone(document));
-    redoStack.current = [];
+    pointerSnapshot.current = structuredClone(document);
     pointerAction.current = {
       mode: "tail",
       elementId: element.id,
@@ -565,8 +577,8 @@ export default function StoryboardEditor({ document: savedDocument, characters, 
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex flex-wrap items-center gap-1.5">
-          <button type="button" onClick={undo} title="실행 취소" className="editor-tool"><Undo2 className="w-3.5 h-3.5" /></button>
-          <button type="button" onClick={redo} title="다시 실행" className="editor-tool"><Redo2 className="w-3.5 h-3.5" /></button>
+          <button type="button" onClick={undo} disabled={!undoStack.current.length} title="실행 취소" className="editor-tool disabled:opacity-40"><Undo2 className="w-3.5 h-3.5" /> 실행 취소</button>
+          <button type="button" onClick={redo} disabled={!redoStack.current.length} title="다시 실행" className="editor-tool disabled:opacity-40"><Redo2 className="w-3.5 h-3.5" /> 다시 실행</button>
           <span className="w-px h-5 bg-[#EBE7E0] mx-1" />
           <button type="button" onClick={() => addElement("character")} className="editor-tool"><User className="w-3.5 h-3.5" /> 인물</button>
           <button type="button" onClick={() => addElement("prop")} className="editor-tool"><Square className="w-3.5 h-3.5" /> 소품</button>
@@ -587,7 +599,7 @@ export default function StoryboardEditor({ document: savedDocument, characters, 
         </div>
       </div>
 
-      <p className="text-[11px] text-[#82798B]">도형·동선은 편집 가이드로만 사용됩니다. 실제로 그릴 물건은 소품으로 추가해주세요. 기존 그림에 섞인 말풍선·가이드는 해당 레이어부터 다시 생성해야 합니다.</p>
+      <p className="text-[11px] text-[#82798B]">도형·동선은 편집 가이드로만 사용됩니다. 실제 물건은 소품으로 추가해주세요. 여러 수정을 모아 장면에 한 번에 반영하거나, 필요한 레이어만 개별로 다시 그릴 수 있습니다.</p>
       <AiActivityBanner
         active={generatingThisStoryboard || Boolean(detectingAllPoses)}
         title={detectingAllPoses ? "AI가 모든 캐릭터의 포즈를 맞추고 있어요" : "AI가 선택한 레이어를 다시 그리고 있어요"}
@@ -616,8 +628,8 @@ export default function StoryboardEditor({ document: savedDocument, characters, 
               viewBox={`0 0 ${document.width} ${document.height}`}
               className="absolute inset-0 z-[1000] w-full h-full touch-none select-none"
               onPointerMove={movePointer}
-              onPointerUp={() => { pointerAction.current = null; }}
-              onPointerCancel={() => { pointerAction.current = null; }}
+              onPointerUp={() => { pointerAction.current = null; pointerSnapshot.current = null; }}
+              onPointerCancel={() => { pointerAction.current = null; pointerSnapshot.current = null; }}
               onPointerDown={() => setSelectedId(null)}
             >
               {!finalView && !hasImageLayers && <rect width={document.width} height={document.height} fill="#FBF9F6" />}
@@ -739,6 +751,25 @@ export default function StoryboardEditor({ document: savedDocument, characters, 
               <span className="flex items-center gap-1 text-[11px] font-bold text-[#514A45]"><Layers3 className="h-3.5 w-3.5" /> 레이어</span>
               <span className="text-[9px] text-[#ADA8A0]">{document.elements.length}개</span>
             </div>
+            {onRegenerateLayers && <div className="mb-2 space-y-2">
+              <button type="button" onClick={onGenerateScene}
+                disabled={Boolean(generatingScene) || Boolean(layerBatchProgress) || generatingThisStoryboard || Boolean(detectingAllPoses)}
+                className="w-full rounded-lg bg-[#7C3AED] px-3 py-2 text-[11px] font-semibold text-white disabled:opacity-40">
+                {generatingScene ? "장면에 반영 중…" : "수정 사항 한 번에 장면 반영"}
+              </button>
+              <p className="text-[10px] leading-relaxed text-[#5B21B6]">레이어별 재생성 없이 현재 설명·포즈·배치를 이미지 생성 요청 1회로 반영합니다. 결과는 완성 장면 한 장이며, 편집용 레이어 그림은 바꾸지 않습니다. 생성 후 원본을 검수하고 적용하세요.</p>
+              <button type="button" disabled={!pendingLayers.length || Boolean(layerBatchProgress) || generatingThisStoryboard || Boolean(generatingScene) || Boolean(detectingAllPoses)}
+                onClick={() => onRegenerateLayers(pendingLayers)}
+                className="editor-tool w-full justify-center disabled:opacity-40">
+                <RefreshCw className="h-3.5 w-3.5" /> 레이어별 그림 순차 재생성 ({pendingLayers.length})
+              </button>
+              <p className="text-[10px] leading-relaxed text-[#7A7067]">편집용 레이어 그림도 각각 갱신해야 할 때만 사용하세요. 대상마다 별도 이미지 생성이 필요하며 인물은 포즈 분석이 추가될 수 있습니다. 장면 일괄 반영의 필수 단계가 아닙니다.</p>
+              {layerBatchProgress && <div role="status" className="text-[11px] text-[#7C3AED]">
+                일괄 처리 {layerBatchProgress.completed}/{layerBatchProgress.total}
+                <button type="button" onClick={onCancelLayerBatch} className="editor-tool ml-1">남은 작업 중지</button>
+                <p className="mt-1 text-[10px]">중지는 진행 중인 요청을 취소하지 않습니다. 완료된 결과는 유지합니다.</p>
+              </div>}
+            </div>}
             <div className="max-h-40 space-y-1 overflow-auto">
               {document.elements.slice().sort((left, right) => right.zIndex - left.zIndex).map((layer) => (
                 <div key={layer.id} className={`flex items-center gap-1 rounded-md border px-1.5 py-1 ${selectedId === layer.id ? "border-[#A78BFA] bg-[#F5F3FF]" : "border-transparent bg-white"}`}>
@@ -768,7 +799,7 @@ export default function StoryboardEditor({ document: savedDocument, characters, 
                 <div className="space-y-2 rounded-xl border border-[#DDD6FE] bg-[#FAF8FF] p-3">
                   <button
                     type="button"
-                    disabled={generatingLayerIds.has(selected.id)}
+                    disabled={generatingLayerIds.has(selected.id) || Boolean(layerBatchProgress) || Boolean(generatingScene)}
                     onClick={() => onRegenerateLayer(selected.id)}
                     className="flex w-full items-center justify-center gap-1.5 rounded-lg bg-[#7C3AED] px-3 py-2 text-[11px] font-semibold text-white transition hover:bg-[#6D28D9] active:scale-95 disabled:opacity-50"
                   >
@@ -817,7 +848,7 @@ export default function StoryboardEditor({ document: savedDocument, characters, 
                     <label className="visual-label">2. 말로 원하는 자세 설명</label>
                     <textarea value={selected.pose ?? ""} onChange={(event) => updateElement(selected.id, { pose: event.target.value, poseReferenceAssetId: undefined })} placeholder="예: 오른손에 사진을 들고 복도 안쪽으로 반걸음 먼저 내딛기" className="visual-input mt-1.5 min-h-20 resize-none" />
                     <input value={selected.expression ?? ""} onChange={(event) => updateElement(selected.id, { expression: event.target.value })} placeholder="표정: 무심한 척하지만 날카로운 눈빛" className="visual-input mt-2" />
-                    <button type="button" disabled={generatingLayerIds.has(selected.id)} onClick={() => onRegenerateLayer(selected.id)} className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-lg bg-[#7C3AED] px-3 py-2 text-[11px] font-semibold text-white disabled:opacity-50">
+                    <button type="button" disabled={generatingLayerIds.has(selected.id) || Boolean(layerBatchProgress) || Boolean(generatingScene)} onClick={() => onRegenerateLayer(selected.id)} className="mt-2 flex w-full items-center justify-center gap-1.5 rounded-lg bg-[#7C3AED] px-3 py-2 text-[11px] font-semibold text-white disabled:opacity-50">
                       <Sparkles className="h-3.5 w-3.5" /> 이 설명으로 다시 그리기
                     </button>
                   </div>
@@ -865,6 +896,19 @@ export default function StoryboardEditor({ document: savedDocument, characters, 
                         <option key={font.value} value={font.value}>{font.label} · {font.description}</option>
                       ))}
                     </select>
+                    <label className="visual-label flex items-center justify-between">
+                      글자 크기 (px)
+                      <input type="number" aria-label="글자 크기" min={Math.min(8, selectedFontMaximum)} max={selectedFontMaximum} step="0.01"
+                        value={Number(selectedFontSize.toFixed(2))}
+                        onChange={event => { const value = event.target.valueAsNumber; if (Number.isFinite(value)) updateElement(selected.id, { fontSize: clampSelectedFontSize(value) }); }}
+                        className="visual-input w-20" />
+                    </label>
+                    <input type="range" aria-label="글자 크기 슬라이더" min={Math.min(8, selectedFontMaximum)} max={selectedFontMaximum} step="0.01"
+                      value={selectedFontSize}
+                      onChange={event => updateElement(selected.id, { fontSize: clampSelectedFontSize(Number(event.target.value)) })}
+                      className="w-full accent-[#7C3AED]" />
+                    <button type="button" className="editor-tool" onClick={() => updateElement(selected.id, { fontSize: undefined })}>글자 크기 자동</button>
+                    <p className="text-[10px] leading-relaxed text-[#8B7EAE]">현재 영역의 최대 크기: {selectedFontMaximum.toFixed(2)}px. 실제 표시 크기까지만 설정할 수 있습니다. 더 크게 쓰려면 영역을 넓히거나 대사를 줄여주세요.</p>
                     <label className="visual-label">글자 굵기</label>
                     <select
                       value={selected.fontWeight ?? (selected.type === "sfx" ? 900 : 600)}
@@ -950,8 +994,8 @@ export default function StoryboardEditor({ document: savedDocument, characters, 
         <div className="flex items-center gap-2">
           {staleLayerIds.size > 0 && <span className="text-[10px] text-orange-600 bg-orange-50 px-2 py-1 rounded-full">수정 적용이 필요한 레이어 {staleLayerIds.size}개</span>}
           {sceneStale && sceneAssetId && <span className="text-[10px] text-orange-600 bg-orange-50 px-2 py-1 rounded-full">비율·구도가 변경되었습니다. 기존 그림은 여백을 두고 표시되며, 새 구도는 재생성해주세요.</span>}
-          <button type="button" disabled={generatingScene} onClick={onGenerateScene} className="inline-flex items-center gap-1.5 rounded-full bg-[#1A1A1A] text-white text-xs font-semibold px-4 py-2 hover:bg-black disabled:cursor-wait disabled:opacity-80">
-            {generatingScene ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />} {generatingScene ? `장면 생성 중 · ${generationSeconds}초` : sceneAssetId ? "이 콘티로 다시 생성" : "이 콘티 고정으로 장면 생성"}
+          <button type="button" disabled={Boolean(generatingScene) || Boolean(layerBatchProgress) || generatingThisStoryboard || Boolean(detectingAllPoses)} onClick={onGenerateScene} className="inline-flex items-center gap-1.5 rounded-full bg-[#1A1A1A] text-white text-xs font-semibold px-4 py-2 hover:bg-black disabled:cursor-wait disabled:opacity-80">
+            {generatingScene ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />} {generatingScene ? `장면 생성 중 · ${generationSeconds}초` : "수정 사항 한 번에 장면 반영"}
           </button>
         </div>
       </div>
