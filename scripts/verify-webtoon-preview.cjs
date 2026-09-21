@@ -5,7 +5,7 @@ const states = [], refs = [], urls = new Map(), rendered = [];
 let si = 0, ri = 0, effects = [], sequence = 0, exportsCount = 0;
 const browser = { body: { style: { overflow: "auto" } }, addEventListener() {}, removeEventListener() {} };
 const hooks = { ...React, useState(initial) { const i = si++; if (!(i in states)) states[i] = initial; return [states[i], v => { states[i] = typeof v === "function" ? v(states[i]) : v; }]; },
-  useRef(initial) { const i = ri++; return refs[i] ?? (refs[i] = { current: initial }); }, useEffect(fn) { effects.push(fn); } };
+  useCallback(fn) { return fn; }, useRef(initial) { const i = ri++; return refs[i] ?? (refs[i] = { current: initial }); }, useEffect(fn) { effects.push(fn); } };
 const cache = new Map();
 function load(file) {
   if (cache.has(file)) return cache.get(file);
@@ -50,6 +50,14 @@ async function main() {
   await assert.rejects(webtoonArchive([{ name: "a", blob: new Blob() }, { name: "a", blob: new Blob() }]), /이름/);
   assert.equal(webtoonFilename('1화: test/next?'), "1화- test-next-");
   let tree = render();
+  const sidebar = all(tree, n => n.type === "aside" && n.props["aria-label"] === "이어보기 도구와 안내")[0];
+  assert.ok(sidebar.props.className.includes("overflow-y-auto"), "controls scroll independently of artwork");
+  assert.ok(button(sidebar, "이 화 다운로드 준비"));
+  assert.ok(all(sidebar, n => n.props?.["aria-label"] === "미리보기 확대·축소").length);
+  assert.ok(all(sidebar, n => n.props?.["aria-label"] === "컷 바로가기").length);
+  const header = all(tree, n => n.type === "header")[0];
+  assert.equal(all(header, n => n.type === "button").length, 1, "header contains only title and close");
+  assert.ok(tree.props.className.includes("grid-rows-[48px_minmax(0,1fr)]"), "reader keeps all height below a compact title bar");
   assert.equal(button(tree, "이 화 다운로드 준비").props.disabled, true);
   const cleanups = effects.map(fn => fn());
   await settle(); tree = render();
@@ -61,6 +69,42 @@ async function main() {
   reader.current = { scrollTop: 456, querySelector(selector) { jumped = selector; return { scrollIntoView() {} }; } };
   button(tree, "2컷").props.onClick();
   assert.equal(jumped, '[data-cut-index="1"]');
+  let wheelHandler;
+  Object.assign(reader.current, { scrollLeft: 0, clientWidth: 1000, clientHeight: 600,
+    getBoundingClientRect: () => ({ left: 10, top: 20 }),
+    addEventListener(name, handler, options) { assert.equal(name, "wheel"); assert.equal(options.passive, false); wheelHandler = handler; },
+    removeEventListener(name, handler) { assert.equal(handler, wheelHandler); wheelHandler = undefined; },
+  });
+  const strip = all(tree, n => n.props?.["aria-label"] === "확대 가능한 원고")[0].props.ref;
+  strip.current = { style: { width: "560px" }, getBoundingClientRect() {
+    const width = parseFloat(this.style.width);
+    return { width, left: 10 + Math.max(0, (1000 - width) / 2) - reader.current.scrollLeft, top: 20 - reader.current.scrollTop };
+  } };
+  const zoomButton = label => all(tree, n => n.props?.["aria-label"] === label)[0];
+  zoomButton("미리보기 확대").props.onClick(); tree = render();
+  assert.equal(content(zoomButton("미리보기 배율")), "125%");
+  assert.ok(Math.abs(reader.current.scrollTop - 645) < .001, "button zoom preserves the point at viewport center");
+  assert.equal(strip.current.style.width, "700px");
+  button(tree, "배율 초기화").props.onClick(); tree = render();
+  assert.ok(Math.abs(reader.current.scrollTop - 456) < .001);
+  const removeWheel = effects[0]();
+  let prevented = false;
+  const wheelEvent = { ctrlKey: false, metaKey: false, deltaMode: 0, deltaY: -100, clientX: 510, clientY: 320, preventDefault() { prevented = true; } };
+  wheelHandler(wheelEvent);
+  assert.equal(prevented, false, "ordinary wheel remains native scrolling");
+  wheelHandler({ ...wheelEvent, ctrlKey: true }); tree = render();
+  assert.equal(prevented, true);
+  assert.equal(content(zoomButton("미리보기 배율")), "122%");
+  for (let i = 0; i < 20; i++) zoomButton("미리보기 확대").props.onClick();
+  tree = render(); assert.equal(zoomButton("미리보기 확대").props.disabled, true);
+  assert.equal(content(zoomButton("미리보기 배율")), "300%");
+  for (let i = 0; i < 20; i++) zoomButton("미리보기 축소").props.onClick();
+  tree = render(); assert.equal(content(zoomButton("미리보기 배율")), "50%");
+  assert.equal(zoomButton("미리보기 축소").props.disabled, true);
+  removeWheel(); assert.equal(wheelHandler, undefined);
+  button(tree, "배율 초기화").props.onClick(); tree = render();
+  reader.current.scrollTop = 456;
+  assert.deepEqual(rendered, ["cut-a", "cut-b"], "zoom does not rerender artwork or request AI");
   assert.deepEqual(all(tree, n => n.props?.["data-cut-index"] !== undefined).map(n => n.props["data-cut-index"]), [0, 1]);
   const download = button(tree, "이 화 다운로드 준비");
   const pending = download.props.onClick(); await download.props.onClick(); await pending;
@@ -78,6 +122,7 @@ async function main() {
   assert.equal(button(tree, "이 화 다운로드 준비").props.disabled, true);
   assert.ok(content(tree).includes("1컷 · 완성 그림이 없습니다."), content(tree));
   assert.ok(content(tree).includes("1컷의 완성 그림이 없거나"));
+  assert.ok(content(all(tree, n => n.type === "aside")[0]).includes("1컷의 완성 그림이 없거나"), "missing-art notice stays in the sidebar");
   assert.equal(reader.current.scrollTop, 456, "refresh does not reset the reader scroll position");
   assert.equal(all(tree, n => n.type === "a").length, 0, "old episode downloads are cleared");
   missingCleanups.forEach(fn => fn?.());

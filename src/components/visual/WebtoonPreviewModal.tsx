@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { Cut } from "@/lib/storage";
 import { renderWebtoonBlock, exportWebtoonStrip, legacyGap } from "@/lib/webtoonFlowRender";
 import { webtoonFlowLayout, editableWebtoonDocument } from "@/lib/webtoonFlow";
@@ -13,6 +13,9 @@ export default function WebtoonPreviewModal({ open, title, cuts, onClose }: Prop
   const [archive, setArchive] = useState("");
   const [exporting, setExporting] = useState(false);
   const [error, setError] = useState("");
+  const [zoom, setZoom] = useState(1);
+  const zoomRef = useRef(1);
+  const strip = useRef<HTMLDivElement>(null);
   const exportUrls = useRef<string[]>([]);
   const generation = useRef(0);
   const reader = useRef<HTMLDivElement>(null);
@@ -22,6 +25,36 @@ export default function WebtoonPreviewModal({ open, title, cuts, onClose }: Prop
   const missing = cuts.flatMap((cut, index) => !cut.sceneImageAssetId || images[cut.id]?.error ? [index + 1] : []);
   const warnings = cuts.flatMap((cut, index) => images[cut.id]?.warning ? [index + 1] : []);
   const ready = cuts.length > 0 && cuts.every(cut => cut.sceneImageAssetId && images[cut.id]?.url && !images[cut.id]?.warning);
+  const changeZoom = useCallback((value: number, pointer?: { x: number; y: number }) => {
+    const next = Math.max(.5, Math.min(3, Math.round(value * 100) / 100));
+    const viewport = reader.current, content = strip.current;
+    if (!viewport || !content || next === zoomRef.current) return;
+    const bounds = viewport.getBoundingClientRect(), old = content.getBoundingClientRect();
+    if (!old.width) return;
+    const x = pointer?.x ?? bounds.left + viewport.clientWidth / 2;
+    const y = pointer?.y ?? bounds.top + viewport.clientHeight / 2;
+    const relativeX = Math.max(0, Math.min(1, (x - old.left) / old.width));
+    const relativeY = (y - old.top) / old.width;
+    // Resize synchronously before restoring the point under the cursor (or viewport center).
+    content.style.width = `${560 * next}px`;
+    const updated = content.getBoundingClientRect();
+    viewport.scrollLeft += updated.left + relativeX * updated.width - x;
+    viewport.scrollTop += updated.top + relativeY * updated.width - y;
+    zoomRef.current = next;
+    setZoom(next);
+  }, []);
+  useEffect(() => {
+    const viewport = reader.current;
+    if (!open || !viewport) return;
+    const wheel = (event: WheelEvent) => {
+      if (!event.ctrlKey && !event.metaKey) return;
+      event.preventDefault();
+      const delta = event.deltaY * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? viewport.clientHeight : 1);
+      changeZoom(zoomRef.current * Math.exp(-Math.max(-100, Math.min(100, delta)) * .002), { x: event.clientX, y: event.clientY });
+    };
+    viewport.addEventListener("wheel", wheel, { passive: false });
+    return () => viewport.removeEventListener("wheel", wheel);
+  }, [open, changeZoom]);
   useEffect(() => {
     if (!open) return;
     const previous = document.body.style.overflow; document.body.style.overflow = "hidden";
@@ -71,24 +104,32 @@ export default function WebtoonPreviewModal({ open, title, cuts, onClose }: Prop
     } finally { if (current === generation.current) { exportingRef.current = false; setExporting(false); } }
   };
   if (!open) return null;
-  return <div className="fixed inset-0 z-[100] flex flex-col bg-[#17151C]/95" role="dialog" aria-modal="true" aria-label={`${title} 웹툰 미리보기`}>
-    <header className="flex items-center justify-between gap-4 border-b border-white/10 bg-[#211E29] px-6 py-4 text-white">
-      <div><h2 className="text-sm font-bold">{title || "세로 웹툰 원고"}</h2>
-        <p className="mt-1 text-xs text-white/60">총 {cuts.length}컷 · 완성 그림 {finished}컷 · 실제 그림에 최신 말풍선·자막을 표시합니다</p>
-        <p className="mt-1 text-xs text-white/60">현재 편집 내용의 그림·여백·대사를 반영합니다. 미리보기와 다운로드는 프로젝트 저장을 대신하지 않습니다.</p></div>
-      <div className="flex gap-2">
-        <button type="button" disabled={exporting || !ready} onClick={exportImages} className="rounded-full bg-[#7C3AED] px-4 py-2 text-xs disabled:opacity-50">{exporting ? "다운로드 준비 중…" : "이 화 다운로드 준비"}</button>
+  return <div className="fixed inset-0 z-[100] grid grid-cols-[minmax(0,1fr)_300px] grid-rows-[48px_minmax(0,1fr)] bg-[#17151C]/95" role="dialog" aria-modal="true" aria-label={`${title} 웹툰 미리보기`}>
+    <header className="col-span-2 flex min-w-0 items-center justify-between gap-4 border-b border-white/10 bg-[#211E29] px-5 text-white">
+      <h2 title={title || "세로 웹툰 원고"} className="truncate text-sm font-bold">{title || "세로 웹툰 원고"}</h2>
+      <div className="shrink-0">
         <button type="button" onClick={onClose} aria-label="미리보기 닫기" className="rounded-full bg-white/10 px-4 py-2 text-xs">닫기</button>
       </div>
     </header>
-    <div className="shrink-0 space-y-2 border-b border-white/10 bg-[#211E29] px-6 py-2 text-xs text-white/80">
+    <aside aria-label="이어보기 도구와 안내" className="col-start-2 row-start-2 min-h-0 min-w-0 space-y-5 overflow-y-auto overscroll-contain border-l border-white/10 bg-[#211E29] p-4 text-xs leading-relaxed text-white/80">
+      <div className="space-y-2">
+        <h3 className="text-sm font-semibold text-white">감상 설정</h3>
+        <p>총 {cuts.length}컷 · 완성 그림 {finished}컷</p>
+      </div>
+      <div role="group" aria-label="미리보기 확대·축소" className="flex flex-wrap items-center gap-2">
+        <button type="button" aria-label="미리보기 축소" disabled={zoom <= .5} onClick={() => changeZoom(zoomRef.current - .25)} className="rounded-lg bg-white/10 px-3 py-2 disabled:opacity-40">−</button>
+        <output aria-label="미리보기 배율" className="w-12 text-center tabular-nums">{Math.round(zoom * 100)}%</output>
+        <button type="button" aria-label="미리보기 확대" disabled={zoom >= 3} onClick={() => changeZoom(zoomRef.current + .25)} className="rounded-lg bg-white/10 px-3 py-2 disabled:opacity-40">+</button>
+        <button type="button" onClick={() => changeZoom(1)} className="rounded-lg bg-white/10 px-3 py-2">배율 초기화</button>
+        <span className="w-full text-white/60">Ctrl + 휠로 확대·축소 · 50~300%<br />일반 휠로 웹툰을 스크롤합니다.</span>
+      </div>
       <label className="flex items-center gap-2">컷으로 이동
         <select aria-label="미리보기 컷 이동" defaultValue="" onChange={event => { reader.current?.querySelector(`[data-cut-index="${Number(event.target.value)}"]`)?.scrollIntoView({ block: "start" }); event.target.value = ""; }} className="rounded-lg bg-[#373140] px-3 py-1.5">
           <option value="" disabled>컷 선택</option>
           {cuts.map((cut, index) => <option key={cut.id} value={index}>{index + 1}컷 · {cut.sceneImageAssetId ? "완성 그림" : "그림 없음"}</option>)}
         </select>
       </label>
-      <nav aria-label="컷 바로가기" className="flex gap-2 overflow-x-auto pb-1">
+      <nav aria-label="컷 바로가기" className="flex flex-wrap gap-2">
         {cuts.map((cut, index) => <button key={cut.id} type="button"
           onClick={() => reader.current?.querySelector(`[data-cut-index="${index}"]`)?.scrollIntoView({ block: "start" })}
           className={`shrink-0 rounded-lg border px-3 py-2 ${missing.includes(index + 1) ? "border-amber-400/50 text-amber-200" : "border-white/20 bg-white/10"}`}>
@@ -98,14 +139,18 @@ export default function WebtoonPreviewModal({ open, title, cuts, onClose }: Prop
       {missing.length > 0 && <p role="alert" className="text-amber-200">{missing.join(", ")}컷의 완성 그림이 없거나 파일을 불러올 수 없습니다. 콘티로 대체하지 않습니다. 전체 다운로드 전에 해당 컷을 확인해주세요.</p>}
       {warnings.length > 0 && <p role="alert" className="text-amber-200">{warnings.join(", ")}컷의 말풍선·자막이 영역을 벗어났습니다. 실제 그림은 표시하며, 식자 위치를 조정한 뒤 다운로드할 수 있습니다.</p>}
       <p>{ready ? "아래로 스크롤하면 한 화 전체가 이어집니다." : "완성 그림이 있는 컷부터 표시합니다."}</p>
-    </div>
-    {(error || files.length > 0) && <div className="flex flex-wrap gap-3 bg-white p-3 text-xs" role="status">
+      <div className="space-y-3 border-t border-white/10 pt-4">
+        <button type="button" disabled={exporting || !ready} onClick={exportImages} className="w-full rounded-xl bg-[#7C3AED] px-4 py-2.5 text-xs font-semibold text-white disabled:opacity-50">{exporting ? "다운로드 준비 중…" : "이 화 다운로드 준비"}</button>
+        <p className="text-white/50">실제 그림에 최신 말풍선·자막을 표시합니다. 미리보기와 다운로드는 프로젝트 저장을 대신하지 않습니다.</p>
+      </div>
+    {(error || files.length > 0) && <div className="flex flex-wrap gap-3 rounded-xl bg-white p-3 text-xs text-[#373140]" role="status">
       {error || <span>900px 폭 · 높이 최대 4096px의 PNG {files.length}개입니다. 번호 순서로 이어지는 한 화의 원고입니다.</span>}
       {archive && <a href={archive} download={`${filename}.zip`} className="rounded-full bg-[#7C3AED] px-4 py-2 font-semibold text-white">한 화 전체 ZIP 다운로드</a>}
       {files.map((url, index) => <a key={url} href={url} download={`${filename}-${String(index + 1).padStart(3, "0")}.png`} className="text-[#7C3AED] underline">PNG {index + 1}</a>)}
     </div>}
-    <div ref={reader} aria-label="한 화 세로 스크롤 원고" className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
-      <div className="mx-auto min-h-full w-full max-w-[560px] bg-white">
+    </aside>
+    <div ref={reader} aria-label="한 화 세로 스크롤 원고" className="col-start-1 row-start-2 min-h-0 min-w-0 overflow-auto overscroll-contain" style={{ overflowAnchor: "none" }}>
+      <div ref={strip} aria-label="확대 가능한 원고" className="mx-auto min-h-full bg-white" style={{ width: 560 * zoom }}>
         {cuts.map((cut, index) => {
           const size = cut.storyboard ? webtoonFlowLayout(editableWebtoonDocument(cut.storyboard)).document : { width: 900, height: 1200 };
           const preview = images[cut.id];

@@ -287,6 +287,46 @@ export default function StoryboardEditor({ document: savedDocument, characters, 
     width: `${100 * art.width / canvas.width}%`, height: `${100 * art.height / canvas.height}%` };
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
+  const [previewZoom, setPreviewZoom] = useState(1);
+  const previewZoomRef = useRef(1);
+  const editViewport = useRef<HTMLDivElement>(null);
+  const compareViewport = useRef<HTMLDivElement>(null);
+  const zoomPreview = useCallback((value: number, source?: HTMLDivElement, pointer?: { x: number; y: number }) => {
+    const next = Math.max(.5, Math.min(3, Math.round(value * 100) / 100));
+    const previous = previewZoomRef.current;
+    if (next === previous) return;
+    for (const viewport of [editViewport.current, compareViewport.current]) {
+      const content = viewport?.firstElementChild as HTMLDivElement | null;
+      if (!viewport || !content) continue;
+      const old = content.getBoundingClientRect(), bounds = viewport.getBoundingClientRect();
+      if (!old.width) continue;
+      const x = source === viewport && pointer ? pointer.x : bounds.left + viewport.clientWidth / 2;
+      const y = source === viewport && pointer ? pointer.y : bounds.top + viewport.clientHeight / 2;
+      const rx = Math.max(0, Math.min(1, (x - old.left) / old.width)), ry = (y - old.top) / old.width;
+      content.style.width = `${old.width * next / previous}px`;
+      content.style.maxWidth = "none";
+      const updated = content.getBoundingClientRect();
+      viewport.scrollLeft += updated.left + rx * updated.width - x;
+      viewport.scrollTop += updated.top + ry * updated.width - y;
+    }
+    previewZoomRef.current = next;
+    setPreviewZoom(next);
+  }, []);
+  useEffect(() => {
+    const cleanups = [editViewport.current, compareViewport.current].flatMap(viewport => {
+      if (!viewport) return [];
+      const wheel = (event: WheelEvent) => {
+        if (!event.ctrlKey && !event.metaKey) return;
+        event.preventDefault();
+        const delta = event.deltaY * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? viewport.clientHeight : 1);
+        zoomPreview(previewZoomRef.current * Math.exp(-Math.max(-100, Math.min(100, delta)) * .002), viewport, { x: event.clientX, y: event.clientY });
+      };
+      viewport.addEventListener("wheel", wheel, { passive: false });
+      return [() => viewport.removeEventListener("wheel", wheel)];
+    });
+    return () => cleanups.forEach(cleanup => cleanup());
+  }, [expanded, zoomPreview]);
+  const previewWidth = `calc(min(100cqw, 100cqh * ${canvas.width / canvas.height}) * ${previewZoom})`;
   const [applyingScene, setApplyingScene] = useState(false);
   const [singleFinalView, setFinalView] = useState(Boolean(sceneAssetId));
   const finalView = !expanded && singleFinalView;
@@ -621,6 +661,13 @@ export default function StoryboardEditor({ document: savedDocument, characters, 
       </div>
 
       <p className="text-[11px] text-[#82798B]">도형·동선은 편집 가이드로만 사용됩니다. 실제 물건은 소품으로 추가해주세요. 여러 수정을 모아 장면에 한 번에 반영하거나, 필요한 레이어만 개별로 다시 그릴 수 있습니다.</p>
+      <div role="group" aria-label="콘티 미리보기 확대·축소" className="flex flex-wrap items-center gap-2">
+        <button type="button" aria-label="콘티 미리보기 축소" disabled={previewZoom <= .5} onClick={() => zoomPreview(previewZoomRef.current - .25)} className="editor-tool disabled:opacity-40">−</button>
+        <output aria-label="콘티 미리보기 배율" className="w-12 text-center text-xs tabular-nums">{Math.round(previewZoom * 100)}%</output>
+        <button type="button" aria-label="콘티 미리보기 확대" disabled={previewZoom >= 3} onClick={() => zoomPreview(previewZoomRef.current + .25)} className="editor-tool disabled:opacity-40">+</button>
+        <button type="button" onClick={() => zoomPreview(1)} className="editor-tool">미리보기 배율 초기화</button>
+        <span className="text-[11px] text-[#82798B]">Ctrl + 휠 · 50~300% · 크게 비교 양쪽에 같은 배율 적용</span>
+      </div>
       <AiActivityBanner
         active={generatingThisStoryboard || Boolean(detectingAllPoses)}
         title={detectingAllPoses ? "AI가 모든 캐릭터의 포즈를 맞추고 있어요" : "AI가 선택한 레이어를 다시 그리고 있어요"}
@@ -642,9 +689,9 @@ export default function StoryboardEditor({ document: savedDocument, characters, 
             {!expanded && sceneAssetId && finalView && <label className="flex items-center gap-1 text-[11px]"><input type="checkbox" checked={showTypography} onChange={event => setShowTypography(event.target.checked)} /> 말풍선·글자 표시</label>}
             {!expanded && <button ref={compareButtonRef} type="button" onClick={() => setExpanded(true)} className="editor-tool" aria-label="콘티와 실제 그림 크게 비교"><Expand className="h-3.5 w-3.5" /> 크게 비교</button>}
           </div>
-        <div className={`relative flex items-center justify-center overflow-hidden rounded-xl bg-[#E9E4DC] p-3 ${expanded ? "min-h-[260px]" : "min-h-0 flex-1"}`}
-          style={expanded ? undefined : { containerType: "size" }}>
-          <div className="relative w-full shrink-0 shadow-xl bg-white" style={{ aspectRatio: `${canvas.width}/${canvas.height}`, maxWidth: expanded ? `${62 * canvas.width / canvas.height}vh` : `calc(100cqh * ${canvas.width / canvas.height})` }}>
+        <div ref={editViewport} aria-label="콘티 미리보기 스크롤" className={`relative overflow-auto overscroll-contain rounded-xl bg-[#E9E4DC] p-3 ${expanded ? "min-h-[260px]" : "min-h-0 flex-1"}`}
+          style={{ containerType: "size", overflowAnchor: "none", ...(expanded ? { height: "62vh" } : {}) }}>
+          <div className="relative mx-auto shadow-xl bg-white" style={{ aspectRatio: `${canvas.width}/${canvas.height}`, width: previewWidth, maxWidth: previewWidth }}>
             <div className="absolute overflow-hidden" style={artStyle}>
             {sceneAssetId && finalView && <StoredImage assetId={sceneAssetId} alt="생성된 웹툰 장면" className="absolute inset-0 w-full h-full object-contain" />}
             {!finalView && document.sceneSketchAssetId && <StoredImage assetId={document.sceneSketchAssetId} alt="장면 전체 스케치" className="absolute inset-0 w-full h-full object-contain" />}
@@ -753,8 +800,8 @@ export default function StoryboardEditor({ document: savedDocument, characters, 
               <h3 className="text-sm font-bold text-[#5B21B6]">실제 그림 · 결과 확인</h3>
               <span className="text-[10px] text-[#82798B]">{generatingScene ? "생성 중" : sceneCandidate ? "새 생성 결과 · 적용 전" : sceneStale ? "재생성 필요" : sceneAssetId ? "적용된 그림" : "아직 생성 전"}</span>
             </div>
-            <div className="flex min-h-[260px] items-center justify-center overflow-hidden rounded-xl bg-[#E9E4DC] p-3">
-              <div className="relative w-full shrink-0 bg-white shadow-xl" style={{ aspectRatio: `${canvas.width}/${canvas.height}`, maxWidth: `${62 * canvas.width / canvas.height}vh` }}>
+            <div ref={compareViewport} aria-label="실제 그림 미리보기 스크롤" className="min-h-[260px] overflow-auto overscroll-contain rounded-xl bg-[#E9E4DC] p-3" style={{ containerType: "size", overflowAnchor: "none", height: "62vh" }}>
+              <div className="relative mx-auto bg-white shadow-xl" style={{ aspectRatio: `${canvas.width}/${canvas.height}`, width: previewWidth, maxWidth: previewWidth }}>
                 <div className="absolute overflow-hidden" style={artStyle}>
                 {sceneCandidate ? <BlobImage blob={sceneCandidate} alt="새로 생성한 장면 후보" className="absolute inset-0 h-full w-full object-contain" /> : sceneAssetId ? <StoredImage assetId={sceneAssetId} alt="콘티와 비교할 실제 그림" className="absolute inset-0 h-full w-full object-contain" /> : (
                   <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 p-4 text-center">

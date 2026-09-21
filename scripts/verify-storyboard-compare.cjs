@@ -374,6 +374,51 @@ async function main() {
   assert.equal(props.document.elements[0].balloonStyle, "none");
   assert.equal(sketchCalls, 2, "margin and lettering edits never call AI");
   assert.ok(!fs.existsSync("src/components/visual/ScrollLayoutEditor.tsx"));
+  const beforeZoom = JSON.stringify(props.document);
+  const previewNode = label => find(render(), n => n.props?.["aria-label"] === label);
+  const mockViewport = () => {
+    const view = { scrollLeft: 0, scrollTop: 100, clientWidth: 500, clientHeight: 400,
+      getBoundingClientRect: () => ({ left: 0, top: 0 }),
+      addEventListener(name, fn, options) { assert.equal(options.passive, false); this.wheel = fn; },
+      removeEventListener() { this.wheel = undefined; },
+    };
+    view.firstElementChild = { style: { width: "300px" }, getBoundingClientRect() {
+      return { width: parseFloat(this.style.width), left: 0, top: -view.scrollTop };
+    } };
+    return view;
+  };
+  const leftZoom = mockViewport(), rightZoom = mockViewport();
+  previewNode("콘티 미리보기 스크롤").props.ref.current = leftZoom;
+  previewNode("실제 그림 미리보기 스크롤").props.ref.current = rightZoom;
+  button(render(), "콘티 미리보기 확대").props.onClick();
+  assert.equal(textContent(previewNode("콘티 미리보기 배율")), "125%");
+  assert.equal(leftZoom.firstElementChild.style.width, "375px");
+  assert.equal(rightZoom.firstElementChild.style.width, "375px", "comparison sides zoom together");
+  assert.equal(leftZoom.scrollTop, 175, "keep the viewed center when zooming");
+  render(); const removeZoomWheel = effects[0]();
+  let zoomPrevented = false;
+  const zoomWheel = { ctrlKey: false, metaKey: false, deltaY: -100, deltaMode: 0, clientX: 150, clientY: 100, preventDefault() { zoomPrevented = true; } };
+  leftZoom.wheel(zoomWheel); assert.equal(zoomPrevented, false);
+  leftZoom.wheel({ ...zoomWheel, ctrlKey: true }); assert.equal(zoomPrevented, true);
+  assert.equal(textContent(previewNode("콘티 미리보기 배율")), "153%");
+  for (let i = 0; i < 20; i++) button(render(), "콘티 미리보기 확대").props.onClick();
+  assert.ok(button(render(), "콘티 미리보기 확대").props.disabled);
+  for (let i = 0; i < 20; i++) button(render(), "콘티 미리보기 축소").props.onClick();
+  assert.ok(button(render(), "콘티 미리보기 축소").props.disabled);
+  button(render(), "미리보기 배율 초기화").props.onClick();
+  assert.equal(JSON.stringify(props.document), beforeZoom, "zoom must not edit fonts, lettering coordinates or artwork");
+  removeZoomWheel(); assert.equal(leftZoom.wheel, undefined); assert.equal(rightZoom.wheel, undefined);
+  // A 100-screen-pixel drag at 200% changes the authored position by only 50 pixels.
+  props.document = { ...props.document, elements: props.document.elements.map(e => e.id === "speech" ? { ...e, x: 300, y: 500 } : e) };
+  for (let i = 0; i < 4; i++) button(render(), "콘티 미리보기 확대").props.onClick();
+  editingSvg().props.ref.current = { getBoundingClientRect: () => ({ left: 20, top: 30, width: 1800, height: flowLib.webtoonFlowLayout(props.document).document.height * 2 }), setPointerCapture() {} };
+  textLayer().props.onPointerDown({ ...pointer, clientX: 720, clientY: 1070 });
+  editingSvg().props.onPointerMove({ ...pointer, clientX: 820, clientY: 1070 });
+  editingSvg().props.onPointerUp();
+  assert.equal(props.document.elements[0].x, 350);
+  assert.equal(props.document.elements[0].y, 500);
+  assert.equal(sketchCalls, 2);
+  console.log("PASS: editor/comparison zoom sync, Ctrl-wheel, limits/reset, center preservation, unchanged font data and scaled drag coordinates");
   console.log("PASS: one canvas for art and whitespace; free drag across both margins, comparison parity, inset coordinates, undo/redo, margin options and no AI calls");
   console.log("PASS: inline switch, comparison dialog, live overlay, candidate apply/discard/stale guard, Escape, scroll/focus cleanup, edit/undo preservation, empty scene (mock component harness)");
 }
