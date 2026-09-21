@@ -347,6 +347,7 @@ export function getProjects(): Project[] {
 
 export function saveProjects(projects: Project[]): void {
   localStorage.setItem(KEY, JSON.stringify(projects.map(normalizeProject)));
+  window.dispatchEvent?.(new Event("webtoon-projects-changed"));
 }
 
 export function getProject(id: string): Project | null {
