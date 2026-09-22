@@ -2,7 +2,7 @@ import type { StoryboardDocument, StoryboardElement } from "@/lib/storage";
 import { resolveCharacterRig, sceneCharacterRig } from "@/lib/storyboardRig";
 
 export const CLEAN_ART_VERSION = "clean-art-v1";
-export const SCENE_REFERENCE_VERSION = "raster-pose-with-explicit-controls-v4";
+export const SCENE_REFERENCE_VERSION = "rough-storyboard-pose-lock-v5";
 export const isArtworkElement = (element: StoryboardElement) =>
   element.visible !== false && ["background", "character", "prop"].includes(element.type);
 

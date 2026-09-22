@@ -582,12 +582,12 @@ export async function generateSceneImage(input: {
   const characterCount = input.storyboard.elements.filter((element) => element.visible !== false && element.type === "character").length;
 
   const task = input.stage === "sketch"
-    ? "DRAW a complete grayscale storyboard scene using reference image 1 and the edited control map. Existing artwork is a composition reference, not separate pieces to paste. Keep all people, hands and connected objects in a single coherent perspective. Draw the environment visibly rather than writing its name. Never add dialogue, balloons, labels or guides."
+    ? "DRAW a complete ROUGH PRE-PRODUCTION STORYBOARD scene using reference image 1 and the edited control map. Existing artwork is a composition reference, not separate pieces to paste. Keep all people, hands and connected objects in a single coherent perspective. Draw the environment visibly rather than writing its name. Never add dialogue, balloons, labels or guides."
     : input.referenceMode === "direct"
     ? "FINISH the complete user-edited storyboard as one webtoon panel in a SINGLE image generation. This is faithful rendering, NOT recomposition. Reference image 1 contains the full current layer composition including existing images of edited layers. Missing raster assets are represented by control geometry rather than omitted. Preserve the user's framing, figure sizes, positions, hand contacts, props, desk/monitor layout and overlaps. Draw EVERY object in the spatial contract. Do not return separate layers, a collage, a contact sheet or intermediate drafts."
     : "REDRAW the first image as one finished webtoon panel. This is a layout-locked image-to-image production task, not a new composition.";
   const stageDirection = input.stage === "sketch"
-    ? "STORYBOARD SKETCH STAGE: Draw ONE coherent grayscale scene, including ALL people, their hands, contact objects and environment together in a single perspective. This is one art region of a vertical-scroll webtoon, never a four-panel comic, page grid or contact sheet. Draw whole connected objects: laptop screen/hinge/keyboard must connect; tablet front/back/stand must be physically consistent; hands must contact the correct surface. Do not separate people or props onto independent canvases. Grayscale rough artwork with opaque surfaces, no green-screen or transparency."
+    ? "STORYBOARD SKETCH STAGE — NEVER FINISHED ART: Draw ONE coherent grayscale production storyboard, including ALL people, their hands, contact objects and environment together in a single perspective. Use loose searching pencil strokes, visible construction lines, simplified values, sparse gray hatching and deliberately unfinished edges. Keep faces and acting readable, but do not use polished ink, clean cel shading, painterly rendering, glossy lighting, detailed color art or a finished illustration look. This is one art region of a vertical-scroll webtoon, never a four-panel comic, page grid or contact sheet. Draw whole connected objects: laptop screen/hinge/keyboard must connect; tablet front/back/stand must be physically consistent; hands must contact the correct surface. Do not separate people or props onto independent canvases. White paper, graphite-gray lines and rough blocking only; no color, green-screen or transparency."
     : "FINISH STAGE: Color and finish the approved full-scene sketch. Preserve object topology, visible front/back, hand contacts, laptop screen/hinge/keyboard and tablet/stand orientation. Do not redesign the scene or complete clipped objects by changing camera framing. This is one art region within a vertical-scroll webtoon, not a page grid.";
   const prompt = `${stageDirection}
 ${task}
@@ -596,7 +596,7 @@ PROJECT
 - Title: ${input.context.title}
 - Genre: ${input.context.genre}
 - Setting: ${input.context.setting}
-- Art direction: ${input.stage === "sketch" ? "Grayscale storyboard line art in the project's established drawing style; no color." : artStyle(input.context)}
+- Art direction: ${input.stage === "sketch" ? "Loose monochrome webtoon production storyboard. Preserve only the project's character design language; do not inherit its finished rendering, coloring or polish." : artStyle(input.context)}
 
 PANEL
 - Aspect ratio: ${input.cut.aspectRatio}
@@ -624,6 +624,7 @@ COMPOSITION LOCK:
 - Preserve the listed ARTWORK objects, scale, rotation, overlap and front-to-back layer. The coordinate boxes are metadata, NOT rectangles to draw. Background perspective must support these placements. Fill the ENTIRE canvas edge-to-edge; never put the scene inside a smaller frame, page, border or blank margin.
 - The control map and spatial contract govern placement, scale and pose. Character sheets govern face, hairstyle, outfit and palette ONLY; never resize, move or re-pose a figure to imitate a sheet. Reference image 1 governs composition and object detail, not new character identity.
 - The characterId/design-sheet mapping is fixed. For each figure, reproduce the matching sheet's facial geometry, apparent age, eye shape, hair silhouette, body proportions, exact outfit construction, shoes, accessories and palette. Change only pose, expression, camera angle and scene lighting.
+- Character sheets are IDENTITY references only. Ignore every sample pose, gesture and camera framing shown on those sheets. The control map and the requested pose for each positioned figure are the sole pose authority; never copy the canonical standing pose from a sheet.
 - Never average or blend features between reference sheets. Never turn distinct cast members into similar-looking generic students. Never redesign a school uniform, remove a signature feature, or substitute a different hairstyle.
 - No typography or editorial guides are part of the artwork. Speech balloons, empty balloons, captions, effect letters, arrows, handles, skeletons, labels, dashed rectangles and page frames must not appear, even if a reference accidentally contains them.
 - Replace diagram figures and boxes with finished art, but do not reinterpret their blocking. If written scene prose conflicts with the spatial contract, the spatial contract wins.

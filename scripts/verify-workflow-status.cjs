@@ -57,7 +57,7 @@ let activeSubscribe;
 const Component = compile("src/components/progress-tracker/StepIndicator.tsx", {
   react: { ...React, useCallback: fn => fn, useSyncExternalStore: (subscribe, snapshot) => { activeSubscribe = subscribe; return snapshot(); } },
   "@/lib/utils": { STEPS },
-  "@/lib/storage": { getProject: () => project },
+  "@/lib/storage": { getProject: () => project, projectHref: (_project, stage) => `/project/test/${stage}` },
   "@/lib/workflowProgress": { workflowStatuses },
   "next/link": { default: ({ children, ...props }) => React.createElement("a", props, children) },
 }).default;
@@ -81,5 +81,7 @@ assert.equal(notifications, 2, "same-tab saves and cross-tab updates notify");
 unsubscribe();
 assert.equal(listeners.size, 0, "unmount removes both listeners");
 const storage = fs.readFileSync("src/lib/storage.ts", "utf8");
-assert.ok(storage.indexOf('window.dispatchEvent?.(new Event("webtoon-projects-changed"))') > storage.indexOf("localStorage.setItem(KEY, JSON.stringify(projects.map(normalizeProject)))"));
+assert.ok(storage.indexOf('window.dispatchEvent?.(new Event("webtoon-projects-changed"))') > storage.indexOf("localStorage.setItem(KEY"));
+const episodesPage = fs.readFileSync("src/app/project/[id]/episodes/page.tsx", "utf8");
+assert.ok(!/setEpisodes\(\(current\) => \{[\s\S]{0,500}?updateProject/.test(episodesPage), "state updaters must not synchronously notify StepIndicator while React is rendering EpisodesPage");
 console.log("PASS: default/partial/ready/review/completed stages, page visits, rendered badges, dirty state, saved progress, storage notification placement");

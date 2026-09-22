@@ -102,8 +102,18 @@ export async function requestCharacterRig(assetId: string): Promise<CharacterRig
   return response.characterRig;
 }
 
+function referencedCharacterIds(cut: Cut): string[] {
+  const storyboardIds = cut.storyboard?.elements
+    .filter((element) => element.visible !== false && element.type === "character" && element.characterId)
+    .map((element) => element.characterId as string) ?? [];
+  return [...new Set([...storyboardIds, ...cut.characterIds])].slice(0, 4);
+}
+
 async function characterReferences(project: Project, cut: Cut) {
-  const selected = project.characters.filter((character) => cut.characterIds.includes(character.id)).slice(0, 4);
+  const selectedIds = referencedCharacterIds(cut);
+  const selected = selectedIds
+    .map((characterId) => project.characters.find((character) => character.id === characterId))
+    .filter((character): character is Character => Boolean(character));
   return (await Promise.all(selected.map(async (character) => {
     const asset = await getMediaAsset(character.imageAssetId);
     if (!asset) return null;
@@ -186,8 +196,9 @@ export async function requestStoryboardLayer(project: Project, episode: Episode,
 }
 
 export function sceneHash(project: Project, episode: Episode, cut: Cut): string {
+  const selectedIds = new Set(referencedCharacterIds(cut));
   const references = project.characters
-    .filter((character) => cut.characterIds.includes(character.id))
+    .filter((character) => selectedIds.has(character.id))
     .map((character) => ({ id: character.id, imageAssetId: character.imageAssetId, imageSourceHash: character.imageSourceHash }));
   return sourceHash({ renderer: SCENE_REFERENCE_VERSION, context: context(project), episode: { number: episode.episodeNumber, title: episode.title, synopsis: episode.synopsis }, cut: { ...cutData(cut), dialogue: "", soundEffect: "" }, storyboard: cut.storyboard ? artworkOnlyStoryboard(cut.storyboard) : undefined, references });
 }

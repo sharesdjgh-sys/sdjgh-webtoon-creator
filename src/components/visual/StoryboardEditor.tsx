@@ -872,20 +872,21 @@ export default function StoryboardEditor({ document: savedDocument, characters, 
               onClick={() => onRegenerateLayers(missingPeople.map(element => element.id))}>누락 인물 스케치 생성 ({missingPeople.length})</button>}
             <p className="text-[10px] text-orange-800">누락 인물만 생성하며, 인물별 이미지 생성 비용이 발생합니다. 기존 배경·인물·말풍선은 유지됩니다.</p>
           </section>}
-          {backgroundLayer && !document.sceneSketchAssetId && <section aria-label="배경 스케치" className="space-y-2 rounded-xl border border-[#DDD6FE] bg-[#FAF8FF] p-3">
+          {backgroundLayer && <section aria-label="배경 스케치" className="space-y-2 rounded-xl border border-[#DDD6FE] bg-[#FAF8FF] p-3">
             <div className="flex items-center justify-between">
               <h3 className="text-xs font-bold text-[#5B21B6]">배경 스케치</h3>
               <button type="button" className="editor-tool" onClick={() => { setSelectedId(backgroundLayer.id); setFinalView(false); }}>배경 연출 편집</button>
             </div>
-            {backgroundLayer.assetId ? <StoredImage assetId={backgroundLayer.assetId} alt="배경 스케치 미리보기" className="max-h-48 w-full rounded-lg bg-white object-contain" /> : <p className="rounded-lg border border-dashed border-[#C4B5FD] bg-white p-4 text-[11px] leading-5 text-[#7A7067]">아직 배경 그림이 없습니다. 배경 스케치를 생성하면 장소·원근·조명·주요 시설을 그림으로 확인할 수 있습니다.</p>}
+            <p className="whitespace-pre-wrap rounded-lg border border-[#E4DDF8] bg-white p-3 text-[11px] leading-5 text-[#514A45]">{backgroundLayer.text || "배경 연출 정보가 없습니다. 장소·원근·시설·조명을 입력해 주세요."}</p>
+            {!document.sceneSketchAssetId && (backgroundLayer.assetId ? <StoredImage assetId={backgroundLayer.assetId} alt="배경 스케치 미리보기" className="max-h-48 w-full rounded-lg bg-white object-contain" /> : <p className="rounded-lg border border-dashed border-[#C4B5FD] bg-white p-4 text-[11px] leading-5 text-[#7A7067]">아직 배경 그림이 없습니다. 배경 스케치를 생성하면 장소·원근·조명·주요 시설을 그림으로 확인할 수 있습니다.</p>)}
             {backgroundLayer.visible === false && <p className="text-[11px] text-orange-700">배경이 숨겨져 있습니다. 레이어의 표시 버튼을 켜면 콘티에 보입니다.</p>}
             {staleLayerIds.has(backgroundLayer.id) && <p className="text-[11px] text-orange-700">변경한 배경 연출이 아직 그림에 반영되지 않았습니다.</p>}
-            <button type="button" onClick={() => onRegenerateLayer(backgroundLayer.id)}
+            {!document.sceneSketchAssetId && <button type="button" onClick={() => onRegenerateLayer(backgroundLayer.id)}
               disabled={generatingThisStoryboard || Boolean(layerBatchProgress) || Boolean(generatingScene) || Boolean(detectingAllPoses)}
               className="w-full rounded-lg bg-[#7C3AED] px-3 py-2 text-[11px] font-semibold text-white disabled:opacity-50">
               {generatingLayerIds.has(backgroundLayer.id) ? "배경 스케치 생성 중…" : backgroundLayer.assetId ? "배경 스케치만 다시 그리기" : "배경 스케치 생성"}
-            </button>
-            <p className="text-[10px] leading-4 text-[#82798B]">배경만 AI로 그립니다. 인물·말풍선은 유지되며 이미지 생성 비용이 발생합니다.</p>
+            </button>}
+            <p className="text-[10px] leading-4 text-[#82798B]">{document.sceneSketchAssetId ? "배경 연출을 수정한 뒤 장면 스케치를 다시 그리면 인물·소품과 같은 원근으로 반영됩니다." : "배경만 AI로 그립니다. 인물·말풍선은 유지되며 이미지 생성 비용이 발생합니다."}</p>
           </section>}
           <div className="rounded-lg border border-[#EBE7E0] bg-[#FBF9F6] p-2">
             <div className="mb-2 flex items-center justify-between">

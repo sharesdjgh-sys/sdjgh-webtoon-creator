@@ -23,7 +23,7 @@ function load(file) {
       if (name === "@google/genai") return { GoogleGenAI: class { interactions = { create: async input => { requests.push(input); return layoutResponse ? { output_text: JSON.stringify(layoutResponse) } : { output_image: { data: "mock", mime_type: "image/jpeg" } }; } }; } };
       if (name === "@/lib/mediaStorage") return {
         sourceHash: JSON.stringify, getMediaAsset: async id => { assetReads.push(id); return assets.get(id) ?? null; },
-        blobToBase64: async () => "canvas", base64ToBlob: () => new Blob(["mock"], { type: "image/png" }),
+        blobToBase64: async () => "canvas", base64ToBlob: () => new Blob(["mock"], { type: "image/png" }), cropImageBlob: async blob => blob,
       };
       if (name === "@/lib/panelGeometry") return { ...load("src/lib/panelGeometry.ts"), validatePanelImage: async () => {} };
       if (name.startsWith("@/")) return load("src/"+name.slice(2)+".ts");
@@ -99,6 +99,15 @@ async function main() {
   assert.equal(httpRequests[0].storyboard.elements[1].text, "붉은 우산");
   assert.ok(assetReads.includes("edited-background") && blobs.includes(originalRaster), "edited raster still enters full composition");
   assert.equal(httpRequests[0].structureImage.mimeType, "image/png");
+  const selectedInEditor = { id: "editor-person", name: "편집기 선택 인물", role: "주연", age: "17", appearance: "단발머리", personality: "차분함", backstory: "", visualProfile: {}, imageAssetId: "editor-person-sheet", imageSourceHash: "sheet-v1" };
+  assets.set("editor-person-sheet", { blob: new Blob(["character sheet"], { type: "image/png" }), mimeType: "image/png" });
+  const editorSelectedCut = { ...directCut, characterIds: [], storyboard: { ...directCut.storyboard, elements: [...directCut.storyboard.elements, { ...hero, characterId: selectedInEditor.id }] } };
+  const editorProject = { ...project, characters: [selectedInEditor] };
+  const editorReferenceHash = sceneHash(editorProject, ep, editorSelectedCut);
+  await client.requestSceneImage(editorProject, ep, editorSelectedCut, "direct", "sketch");
+  assert.equal(httpRequests.at(-1).references.length, 1, "character chosen inside the storyboard editor must be sent even when the cut checkbox list is stale");
+  assert.equal(httpRequests.at(-1).references[0].character.id, selectedInEditor.id);
+  assert.notEqual(editorReferenceHash, sceneHash({ ...editorProject, characters: [{ ...selectedInEditor, imageSourceHash: "sheet-v2" }] }, ep, editorSelectedCut), "editor-selected character sheet changes must stale the scene");
   const svgInputs = await Promise.all(blobs.filter(blob => blob.type.startsWith("image/svg")).map(blob => blob.text()));
   assert.ok(svgInputs.some(value => value.includes('width="300" height="200"') && value.includes('translate(0 0)')), "missing prop has geometry instead of disappearing");
   const rigModule = load("src/lib/storyboardRig.ts");
@@ -125,8 +134,9 @@ async function main() {
   for (const secret of ["비밀대사", "가이드비밀", "동선비밀", "효과음비밀", "<text"]) assert.ok(!geometry.includes(secret));
   assert.equal(directResult.sourceHash, sceneHash(project, ep, directCut));
   assert.equal(JSON.stringify(directCut), directBefore);
+  const beforeStrictRequest = httpRequests.length;
   await assert.rejects(client.requestSceneImage(project, ep, directCut), /레이어를 먼저/);
-  assert.equal(httpRequests.length, 1, "strict mode remains guarded without an API call");
+  assert.equal(httpRequests.length, beforeStrictRequest, "strict mode remains guarded without an API call");
   const callsBefore = requests.length;
   await scene.generateSceneImage({ ...input, referenceMode: "direct", storyboard: directCut.storyboard, structureImage: { data: "geometry-map", mimeType: "image/png" } });
   assert.equal(requests.length, callsBefore + 1, "one model call for combined changes");
@@ -279,6 +289,8 @@ async function main() {
   await scene.generateSceneImage({ ...input, stage: "sketch", referenceMode: "direct" });
   const sketchPrompt = requests.at(-1).input.find(item => item.type === "text").text;
   assert.ok(sketchPrompt.includes("STORYBOARD SKETCH STAGE") && sketchPrompt.includes("grayscale"));
+  assert.ok(sketchPrompt.includes("NEVER FINISHED ART") && sketchPrompt.includes("visible construction lines") && sketchPrompt.includes("rough blocking only"));
+  assert.ok(sketchPrompt.includes("IDENTITY references only") && sketchPrompt.includes("sole pose authority"));
   assert.ok(!sketchPrompt.includes("FINISH the complete"));
   const verbalPose = { ...hero, assetId: "existing-person", pose: "두 손으로 노트북을 들기", poseDescriptionEdited: true };
   await scene.generateSceneImage({ ...input, storyboard: { ...coherent.storyboard, elements: [verbalPose] } });
@@ -297,6 +309,9 @@ async function main() {
   assert.equal(flowProposal.elements[1].balloonStyle, "none");
   assert.equal(flowProposal.elements[1].flowSpacing, 180);
   layoutResponse = undefined;
+  const editorSource = fs.readFileSync("src/components/visual/StoryboardEditor.tsx", "utf8");
+  assert.ok(editorSource.includes("{backgroundLayer && <section"), "background direction remains visible after a whole-scene sketch exists");
+  assert.ok(!editorSource.includes("backgroundLayer && !document.sceneSketchAssetId && <section"));
   console.log("PASS: single whole-scene raster, first-sketch and finish requests, AI flow proposal, caption styles and AI-free whitespace edits (mock)");
   if (process.argv.includes("--preview")) {
     const styles = ["normal", "thought", "shout", "whisper", "rounded", "none"];

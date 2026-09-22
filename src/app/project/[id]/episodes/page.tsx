@@ -296,13 +296,11 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
 
   const removeCut = (cutIdx: number) => {
     const removed = episodes[activeEp]?.cuts?.[cutIdx];
-    setEpisodes((current) => {
-      const next = current.map((episode, episodeIndex) => episodeIndex === activeEp
-        ? { ...episode, cuts: (episode.cuts ?? []).filter((_, index) => index !== cutIdx) }
-        : episode);
-      updateProject(id, { episodes: next });
-      return next;
-    });
+    const next = episodes.map((episode, episodeIndex) => episodeIndex === activeEp
+      ? { ...episode, cuts: (episode.cuts ?? []).filter((_, index) => index !== cutIdx) }
+      : episode);
+    setEpisodes(next);
+    updateProject(id, { episodes: next });
     setIsDirty(true);
     if (removed) deleteMediaByOwner(removed.id).catch(() => {});
   };
@@ -569,13 +567,11 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
     try {
       const asset = await saveMediaAsset({ projectId: id, ownerId: cut.id, ownerType: "scene", mimeType: candidate.blob.type || "image/jpeg", blob: candidate.blob });
       // Do not delete the last saved artwork before project persistence succeeds.
-      setEpisodes((current) => {
-        const next = current.map((episode, episodeIndex) => episodeIndex === activeEp
-          ? { ...episode, cuts: (episode.cuts ?? []).map((item, index) => index === cutIdx ? { ...item, sceneImageAssetId: asset.id, sceneSourceHash: candidate.sourceHash } : item) }
-          : episode);
-        updateProject(id, { episodes: next });
-        return next;
-      });
+      const next = episodes.map((episode, episodeIndex) => episodeIndex === activeEp
+        ? { ...episode, cuts: (episode.cuts ?? []).map((item, index) => index === cutIdx ? { ...item, sceneImageAssetId: asset.id, sceneSourceHash: candidate.sourceHash } : item) }
+        : episode);
+      setEpisodes(next);
+      updateProject(id, { episodes: next });
       setSceneCandidates((current) => { const next = { ...current }; delete next[cut.id]; return next; });
     } catch {
       setVisualError("브라우저 이미지 저장 공간을 확인해주세요.");
