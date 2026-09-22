@@ -8,6 +8,7 @@ import { STEPS } from "@/lib/utils";
 import { getProject } from "@/lib/storage";
 import { workflowStatuses, type WorkflowStatus } from "@/lib/workflowProgress";
 import { Check } from "lucide-react";
+import CompanySignature from "@/components/CompanySignature";
 
 interface StepIndicatorProps {
   currentStep: number;
@@ -85,6 +86,9 @@ export default function StepIndicator({ currentStep, activeStep, projectId, isDi
             </Link>
           ) : <div key={step.id}>{inner}</div>;
         })}
+      </div>
+      <div className="mt-4 flex justify-center border-t border-[#EEEAE5] pt-4">
+        <CompanySignature className="opacity-70" />
       </div>
     </nav>
   );

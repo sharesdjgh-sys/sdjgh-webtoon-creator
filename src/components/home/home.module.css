@@ -61,8 +61,11 @@
 .closing { display: flex; align-items: center; justify-content: space-between; gap: 40px; padding: 44px 56px; background: #e9ddff; border: 2px solid var(--ink); box-shadow: 5px 5px 0 var(--ink); width: calc(100% - 64px); }
 .closing h2 { font-size: 34px; line-height: 1.4; letter-spacing: -1px; font-weight: 900; margin: 0; }
 .closing .chapter { margin-bottom: 12px; }
-.footer { display: flex; justify-content: space-between; align-items: center; max-width: 1280px; padding: 36px 32px; margin: 24px auto 0; font-size: 11px; color: #655c6f; }
-.footer > span:first-child { color: var(--ink); font-weight: 800; }
+.footer { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 28px; max-width: 1280px; padding: 36px 32px; margin: 24px auto 0; font-size: 11px; color: #655c6f; }
+.footerCopy { display: flex; align-items: center; gap: 14px; }
+.footerCopy span { color: var(--ink); font-weight: 800; }
+.footerCopy p { margin: 0; }
+.footerCopyright { justify-self: end; }
 .projectCard { border: 2px solid #302342; border-radius: 6px; box-shadow: 7px 7px 0 #d5c6f0; }
 .comicPreview { display: grid; grid-template-columns: 1.3fr 1fr; gap: 9px; height: 100%; padding: 16px; background: #fff8d9; }
 .comicMain { position: relative; overflow: hidden; display: flex; flex-direction: column; justify-content: space-between; align-items: flex-start; padding: 12px; border: 2px solid #302342; border-radius: 5px; background: radial-gradient(#976dd3 1px, transparent 1px) 0 0 / 8px 8px, #bfa1ff; }
@@ -77,5 +80,5 @@
 .storyPanel { display: block; padding: 7px 12px; background: white; font-size: 11px; line-height: 1.5; }
 .storyPanel strong { color: #713de3; font-size: 19px; font-weight: 900; }
 @media (min-width: 1600px) { .cover { max-width: 1456px; margin-left: auto; margin-right: auto; } }
-@media (max-width: 1150px) { .header { padding: 0 32px; } .nav { gap: 18px; } .coverCopy { padding: 38px 28px 30px; } .coverGrid { min-height: 520px; } .workspace { gap: 48px; padding-left: 40px; padding-right: 40px; grid-template-columns: 1fr 400px; } .workspaceNotes h2 { font-size: 39px; } .stepStrip li { padding: 15px 10px; } }
+@media (max-width: 1150px) { .header { padding: 0 32px; } .nav { gap: 18px; } .coverCopy { padding: 38px 28px 30px; } .coverGrid { min-height: 520px; } .workspace { gap: 48px; padding-left: 40px; padding-right: 40px; grid-template-columns: 1fr 400px; } .workspaceNotes h2 { font-size: 39px; } .stepStrip li { padding: 15px 10px; } .footer { gap: 18px; } .footerCopy { align-items: flex-start; flex-direction: column; gap: 4px; } }
 @media (prefers-reduced-motion: reduce) { .startButton { transition: none; } }

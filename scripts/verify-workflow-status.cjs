@@ -60,6 +60,7 @@ const Component = compile("src/components/progress-tracker/StepIndicator.tsx", {
   "@/lib/storage": { getProject: () => project, projectHref: (_project, stage) => `/project/test/${stage}` },
   "@/lib/workflowProgress": { workflowStatuses },
   "next/link": { default: ({ children, ...props }) => React.createElement("a", props, children) },
+  "@/components/CompanySignature": { default: () => React.createElement("span", { "data-company-signature": true }) },
 }).default;
 const render = props => renderToStaticMarkup(React.createElement(Component, { currentStep: 7, activeStep: 2, projectId: "test", ...props }));
 let html = render({});
@@ -67,6 +68,7 @@ assert.equal((html.match(/href=/g) ?? []).length, 7);
 assert.ok(html.includes("시작 전") && html.includes("작성 중"));
 assert.ok(html.includes('aria-valuenow="0"'));
 assert.ok(html.includes('aria-current="step"'));
+assert.ok(html.indexOf("검수·완성") < html.indexOf("data-company-signature"), "company signature stays below the final production step");
 assert.ok(render({ isDirty: true }).includes("저장 필요"));
 project.characters = [{ name: "민서", goal: "친구", visualProfile: {} }];
 html = render({});

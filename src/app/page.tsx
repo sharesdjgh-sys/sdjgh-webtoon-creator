@@ -5,6 +5,7 @@ import HomeProjectPanel from "@/components/home/HomeProjectPanel";
 import styles from "@/components/home/home.module.css";
 import { STEPS } from "@/lib/utils";
 import { CREATION_GUIDE } from "@/lib/creationGuide";
+import CompanySignature from "@/components/CompanySignature";
 
 export default function HomePage() {
   return (
@@ -80,7 +81,11 @@ export default function HomePage() {
           <Link href="/dashboard" className={styles.startButton}>첫 컷 시작하기 <ArrowRight size={20} /></Link>
         </section>
       </main>
-      <footer className={styles.footer}><span>웹툰 메이커 AI</span><p>당신의 상상에, 다음 장면을.</p><span>© 2026</span></footer>
+      <footer className={styles.footer}>
+        <div className={styles.footerCopy}><span>웹툰 메이커 AI</span><p>당신의 상상에, 다음 장면을.</p></div>
+        <CompanySignature />
+        <span className={styles.footerCopyright}>© 2026</span>
+      </footer>
     </div>
   );
 }
