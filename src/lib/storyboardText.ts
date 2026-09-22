@@ -91,6 +91,9 @@ export function layoutStoryboardText(element: StoryboardElement, stack: string) 
 
 /** Validate reading-canvas coordinates without moving or shrinking authored lettering. */
 export function overlayOutsideCanvas(element: StoryboardElement, width: number, height: number): boolean {
+  // Canvas and flow transforms produce fractional coordinates. A sub-pixel edge
+  // cannot be seen and must not keep the editor in a permanent overflow state.
+  const tolerance = Math.max(1, Math.min(width, height) * .001);
   const radians = element.rotation * Math.PI / 180;
   const cos = Math.cos(radians), sin = Math.sin(radians);
   const points = [[0, 0], [element.width, 0], [0, element.height], [element.width, element.height]];
@@ -101,7 +104,7 @@ export function overlayOutsideCanvas(element: StoryboardElement, width: number, 
     const dx = x - element.width / 2, dy = y - element.height / 2;
     const px = element.x + element.width / 2 + dx * cos - dy * sin;
     const py = element.y + element.height / 2 + dx * sin + dy * cos;
-    return px < -.001 || py < -.001 || px > width + .001 || py > height + .001;
+    return px < -tolerance || py < -tolerance || px > width + tolerance || py > height + tolerance;
   });
 }
 

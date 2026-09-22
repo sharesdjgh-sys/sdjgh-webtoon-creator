@@ -85,7 +85,7 @@ async function main() {
   assert.equal(ordered.art.y, 150);
   assert.ok(ordered.overflow?.includes("최대 300px"));
   assert.ok(ordered.document.height > source.height + 400);
-  const { renderWebtoonBlock, exportWebtoonStrip, legacyGap } = load("src/lib/webtoonFlowRender.ts");
+  const { renderWebtoonBlock, exportWebtoonStrip, exportWebtoonImage, legacyGap } = load("src/lib/webtoonFlowRender.ts");
   const freeform = editableWebtoonDocument(orderDoc);
   assert.ok(freeform.elements.every(e => e.placement === "canvas"));
   assert.equal(freeform.elements.length, orderDoc.elements.length, "legacy lettering is preserved, including hidden text");
@@ -102,6 +102,10 @@ async function main() {
   assert.equal(tailEditable.elements[0].y, 1300, "a long tail must not shift the body by 112px");
   assert.equal(tailEditable.elements[0].height, 100);
   assert.ok(webtoonFlowLayout(tailEditable).overflow);
+  const subpixelEdge = { ...element("subpixel", "caption", "canvas"), balloonStyle: "none", x: -.4, y: 20 };
+  assert.equal(webtoonFlowLayout({ ...source, elements: [subpixelEdge] }).overflow, undefined, "invisible sub-pixel rounding must not warn");
+  const visibleEdge = { ...subpixelEdge, x: -2 };
+  assert.ok(webtoonFlowLayout({ ...source, elements: [visibleEdge] }).overflow?.includes("subpixel"), "warning identifies the actual overflowing element");
   await assert.rejects(renderWebtoonBlock({ storyboard: tailDoc }), /꼬리/);
   const authored = { ...source, elements: [{ ...longTail, y: 1100, rotation: 8 }] };
   let reopened = authored;
@@ -136,6 +140,16 @@ async function main() {
   assert.equal(urls.size, 0);
   await assert.rejects(exportWebtoonStrip([cut], 900, 0), /크기/);
   assert.equal((await exportWebtoonStrip([])).length, 0);
+  canvases.length = 0;
+  const episode = await exportWebtoonImage([cut, cut], 900);
+  assert.equal(episode.width, 900);
+  assert.equal(episode.height, 2460);
+  assert.deepEqual(JSON.parse(await episode.blob.text()), { width: 900, height: 2460 });
+  assert.equal(canvases.at(-1).draws.length, 2, "each cut is drawn once into the continuous episode canvas");
+  assert.equal(canvases.at(-1).draws[1][2], 1230, "second cut begins immediately after the first cut");
+  assert.equal(urls.size, 0);
+  await assert.rejects(exportWebtoonImage([], 900), /장면/);
+  await assert.rejects(exportWebtoonImage(Array(27).fill(cut), 900), /단일 PNG 한도/);
   const artObject = { ...element("hero", "character", "art"), x: 100, y: 200, width: 200, height: 400 };
   const editable = editableWebtoonDocument({ ...doc, elements: [...doc.elements, artObject] });
   const viewHero = editorSceneElements(editable).find(e => e.id === "hero");
@@ -151,6 +165,6 @@ async function main() {
   assert.equal(JSON.stringify(changed.elements.find(e => e.id === "hero")), JSON.stringify(artObject));
   assert.equal(JSON.stringify(editableWebtoonDocument(editable)), JSON.stringify(editable), "reopening never accumulates whitespace offsets");
   console.log("PASS: legacy preservation, whitespace, boundary lettering, alignment, monologue, order, spacing, hidden overlays and shared preview/export layout");
-  console.log("PASS: continuous PNG segmentation, exact row coverage, legacy gaps, missing-file errors and URL cleanup (mock canvas)");
+  console.log("PASS: continuous single-episode PNG, legacy segmentation compatibility, exact row coverage, missing-file errors and URL cleanup (mock canvas)");
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });

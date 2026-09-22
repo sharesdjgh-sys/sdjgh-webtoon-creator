@@ -1,4 +1,4 @@
-/* eslint-disable @typescript-eslint/no-require-imports -- Offline component and ZIP harness. */
+/* eslint-disable @typescript-eslint/no-require-imports -- Offline component and download harness. */
 const assert = require("node:assert/strict"), fs = require("node:fs"), vm = require("node:vm");
 const ts = require("typescript"), React = require("react"), { spawnSync } = require("node:child_process");
 const states = [], refs = [], urls = new Map(), rendered = [];
@@ -18,7 +18,7 @@ function load(file) {
       if (name === "react") return hooks;
       if (name === "@/lib/webtoonFlowRender") return {
         renderWebtoonBlock: async (cut, options) => { rendered.push(cut.id); assert.equal(options.finishedOnly, true); assert.equal(options.preview, true); if (!cut.sceneImageAssetId) throw new Error("완성 그림이 없습니다."); return { blob: new Blob([cut.id]), width: 900, height: 1500 }; },
-        exportWebtoonStrip: async (cuts, width, height, options) => { exportsCount++; assert.equal(options.finishedOnly, true); assert.equal(cuts.length, 2); return [new Blob(["first"]), new Blob(["second"])]; },
+        exportWebtoonImage: async (cuts, width, options) => { exportsCount++; assert.equal(width, 900); assert.equal(options.finishedOnly, true); assert.equal(cuts.length, 2); return { blob: new Blob(["episode"], { type: "image/png" }), width: 900, height: 3000 }; },
         legacyGap: () => 0,
       };
       if (name.startsWith("@/")) return load("src/" + name.slice(2) + ".ts");
@@ -52,17 +52,17 @@ async function main() {
   let tree = render();
   const sidebar = all(tree, n => n.type === "aside" && n.props["aria-label"] === "이어보기 도구와 안내")[0];
   assert.ok(sidebar.props.className.includes("overflow-y-auto"), "controls scroll independently of artwork");
-  assert.ok(button(sidebar, "이 화 다운로드 준비"));
+  assert.ok(button(sidebar, "이 화 단일 PNG 만들기"));
   assert.ok(all(sidebar, n => n.props?.["aria-label"] === "미리보기 확대·축소").length);
   assert.ok(all(sidebar, n => n.props?.["aria-label"] === "컷 바로가기").length);
   const header = all(tree, n => n.type === "header")[0];
   assert.equal(all(header, n => n.type === "button").length, 1, "header contains only title and close");
   assert.ok(tree.props.className.includes("grid-rows-[48px_minmax(0,1fr)]"), "reader keeps all height below a compact title bar");
-  assert.equal(button(tree, "이 화 다운로드 준비").props.disabled, true);
+  assert.equal(button(tree, "이 화 단일 PNG 만들기").props.disabled, true);
   const cleanups = effects.map(fn => fn());
   await settle(); tree = render();
   assert.deepEqual(rendered, ["cut-a", "cut-b"], "current episode order is preserved");
-  assert.equal(button(tree, "이 화 다운로드 준비").props.disabled, false);
+  assert.equal(button(tree, "이 화 단일 PNG 만들기").props.disabled, false);
   assert.ok(!content(tree).includes("콘티가 포함된 초안"));
   let jumped;
   const reader = all(tree, n => n.props?.["aria-label"] === "한 화 세로 스크롤 원고")[0].props.ref;
@@ -106,20 +106,20 @@ async function main() {
   reader.current.scrollTop = 456;
   assert.deepEqual(rendered, ["cut-a", "cut-b"], "zoom does not rerender artwork or request AI");
   assert.deepEqual(all(tree, n => n.props?.["data-cut-index"] !== undefined).map(n => n.props["data-cut-index"]), [0, 1]);
-  const download = button(tree, "이 화 다운로드 준비");
+  const download = button(tree, "이 화 단일 PNG 만들기");
   const pending = download.props.onClick(); await download.props.onClick(); await pending;
   assert.equal(exportsCount, 1, "rapid repeated click starts only one export");
   tree = render();
   const links = all(tree, n => n.type === "a");
-  assert.equal(links.length, 3);
-  assert.equal(links[0].props.download, "1화 · 시작.zip");
-  assert.ok(links[1].props.download.endsWith("-001.png")); assert.ok(links[2].props.download.endsWith("-002.png"));
-  assert.equal(urls.get(links[0].props.href).type, "application/zip");
+  assert.equal(links.length, 1);
+  assert.equal(links[0].props.download, "1화 · 시작.png");
+  assert.equal(urls.get(links[0].props.href).type, "image/png");
+  assert.ok(content(tree).includes("900px × 3,000px PNG 한 장"));
   all(tree, n => n.props?.["aria-label"] === "미리보기 닫기")[0].props.onClick(); assert.equal(closed, 1);
   cleanups.forEach(fn => fn?.()); assert.equal(urls.size, 0); assert.equal(browser.body.style.overflow, "auto");
   props.cuts = [{ id: "missing", storyboard }]; render(); const missingCleanups = effects.map(fn => fn());
   await settle(); tree = render();
-  assert.equal(button(tree, "이 화 다운로드 준비").props.disabled, true);
+  assert.equal(button(tree, "이 화 단일 PNG 만들기").props.disabled, true);
   assert.ok(content(tree).includes("1컷 · 완성 그림이 없습니다."), content(tree));
   assert.ok(content(tree).includes("1컷의 완성 그림이 없거나"));
   assert.ok(content(all(tree, n => n.type === "aside")[0]).includes("1컷의 완성 그림이 없거나"), "missing-art notice stays in the sidebar");
@@ -127,6 +127,6 @@ async function main() {
   assert.equal(all(tree, n => n.type === "a").length, 0, "old episode downloads are cleared");
   missingCleanups.forEach(fn => fn?.());
   props.open = false; assert.equal(render(), null);
-  console.log("PASS: UTF-8 ZIP extraction/CRC, filename safety, episode order, draft warning, complete-download gate, duplicate prevention, episode change and URL cleanup (mock UI, no AI)");
+  console.log("PASS: archive compatibility, filename safety, single-episode PNG, episode order, complete-download gate, duplicate prevention, episode change and URL cleanup (mock UI, no AI)");
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });

@@ -30,7 +30,7 @@ import {
   User,
   X,
 } from "lucide-react";
-import { layoutStoryboardText, sizeBalloonForFont } from "@/lib/storyboardText";
+import { fitOverlayToCanvas, layoutStoryboardText, sizeBalloonForFont } from "@/lib/storyboardText";
 import type { Character, CharacterJointKey, StoryboardDocument, StoryboardElement, StoryboardElementType } from "@/lib/storage";
 import { defaultWebtoonFont, isOverlayElement, speechBalloonGeometry, storyboardToSvg, WEBTOON_FONT_OPTIONS, webtoonFontStack } from "@/lib/storyboardSvg";
 import { CHARACTER_POSE_PRESETS, resolveCharacterRig } from "@/lib/storyboardRig";
@@ -432,8 +432,8 @@ export default function StoryboardEditor({ document: savedDocument, characters, 
   const elementLocalPoint = (event: React.PointerEvent, element: StoryboardElement) => {
     const rect = svgRef.current?.getBoundingClientRect();
     if (!rect) return { x: 0, y: 0 };
-    const canvasX = ((event.clientX - rect.left) / rect.width) * canvas.width;
-    const canvasY = ((event.clientY - rect.top) / rect.height) * canvas.height;
+    const canvasX = Math.max(0, Math.min(canvas.width, ((event.clientX - rect.left) / rect.width) * canvas.width));
+    const canvasY = Math.max(0, Math.min(canvas.height, ((event.clientY - rect.top) / rect.height) * canvas.height));
     const centerX = element.x + element.width / 2;
     const centerY = element.y + element.height / 2;
     const radians = -element.rotation * Math.PI / 180;
@@ -532,10 +532,15 @@ export default function StoryboardEditor({ document: savedDocument, characters, 
       const minY = area.y + (background ? Math.min(0, area.height - action.original.height) : 0);
       const maxX = area.x + (background ? Math.max(0, area.width - action.original.width) : area.width - action.original.width);
       const maxY = area.y + (background ? Math.max(0, area.height - action.original.height) : area.height - action.original.height);
-      updateElement(action.elementId, {
+      let changes: Partial<StoryboardElement> = {
         x: Math.min(Math.max(minX, action.original.x + dx), maxX),
         y: Math.min(Math.max(minY, action.original.y + dy), maxY),
-      }, false);
+      };
+      if (isOverlayElement(action.original)) {
+        const fitted = fitOverlayToCanvas({ ...action.original, ...changes }, canvas.width, canvas.height);
+        changes = { x: fitted.x, y: fitted.y, width: fitted.width, height: fitted.height };
+      }
+      updateElement(action.elementId, changes, false);
     } else {
       if (isOverlayElement(action.original)) {
         updateElement(action.elementId, resizeOverlay(action.original, action.resizeDirection ?? "se", dx, dy, canvas.width, canvas.height), false);
@@ -653,9 +658,9 @@ export default function StoryboardEditor({ document: savedDocument, characters, 
         </div>
         <div className="flex items-center gap-1.5">
           {!finalView && visibleElements.some((element) => element.type === "character") && <button type="button" onClick={() => setShowBlocking((value) => !value)} className={`editor-tool ${showBlocking ? "border-[#7C3AED] bg-[#F5F3FF] text-[#5B21B6]" : ""}`}><User className="w-3.5 h-3.5" /> {showBlocking ? "전체 포즈 닫기" : "전체 포즈 보기"}</button>}
-          {!finalView && !document.sceneSketchAssetId && visibleElements.some((element) => element.type === "character" && element.assetId) && (
+          {!finalView && visibleElements.some((element) => element.type === "character" && (document.sceneSketchAssetId || element.assetId)) && (
             <button type="button" disabled={detectingAllPoses} onClick={onDetectAllPoses} className="editor-tool">
-              <RefreshCw className={`h-3.5 w-3.5 ${detectingAllPoses ? "animate-spin" : ""}`} /> {detectingAllPoses ? "모두 맞추는 중..." : "그림에 포즈 모두 맞추기"}
+              <RefreshCw className={`h-3.5 w-3.5 ${detectingAllPoses ? "animate-spin" : ""}`} /> {detectingAllPoses ? "모두 맞추는 중..." : document.sceneSketchAssetId ? "스케치에 포즈 좌표 맞추기" : "그림에 포즈 모두 맞추기"}
             </button>
           )}
 
@@ -874,7 +879,7 @@ export default function StoryboardEditor({ document: savedDocument, characters, 
           </section>}
           {backgroundLayer && <section aria-label="배경 스케치" className="space-y-2 rounded-xl border border-[#DDD6FE] bg-[#FAF8FF] p-3">
             <div className="flex items-center justify-between">
-              <h3 className="text-xs font-bold text-[#5B21B6]">배경 스케치</h3>
+              <h3 className="text-xs font-bold text-[#5B21B6]">배경 연출 정보</h3>
               <button type="button" className="editor-tool" onClick={() => { setSelectedId(backgroundLayer.id); setFinalView(false); }}>배경 연출 편집</button>
             </div>
             <p className="whitespace-pre-wrap rounded-lg border border-[#E4DDF8] bg-white p-3 text-[11px] leading-5 text-[#514A45]">{backgroundLayer.text || "배경 연출 정보가 없습니다. 장소·원근·시설·조명을 입력해 주세요."}</p>
@@ -898,7 +903,7 @@ export default function StoryboardEditor({ document: savedDocument, characters, 
               <p className="text-xs font-semibold text-[#5B21B6]">장면 단위 콘티</p>
               <p className="text-[11px] leading-5 text-[#7A7067]">인물·손·소품·배경을 함께 그립니다. 레이어는 배치 지시이며 그림 조각이 아닙니다. 구도 변경은 스케치를 다시 그린 뒤 확인하세요. 여백과 말풍선은 이 미리보기에서 바로 편집합니다.</p>
               <button type="button" disabled={generatingSketch || generatingScene} onClick={onRegenerateSketch} className="editor-tool w-full justify-center">{generatingSketch ? "장면 스케치 생성 중…" : "수정한 구도로 장면 스케치 다시 그리기"}</button>
-              <button type="button" disabled={generatingSketch || generatingScene} onClick={onGenerateScene} className="editor-tool w-full justify-center">현재 스케치 채색·마감</button>
+              <button type="button" disabled={generatingSketch || generatingScene} onClick={onGenerateScene} className="editor-tool w-full justify-center">AI 마무리 작화 생성</button>
             </div>}
             {onRegenerateLayers && !document.sceneSketchAssetId && <div className="mb-2 space-y-2">
               <button type="button" onClick={onGenerateScene}
@@ -1136,7 +1141,7 @@ export default function StoryboardEditor({ document: savedDocument, characters, 
           {!document.sceneSketchAssetId && staleLayerIds.size > 0 && <span className="text-[10px] text-orange-600 bg-orange-50 px-2 py-1 rounded-full">수정 적용이 필요한 레이어 {staleLayerIds.size}개</span>}
           {sceneStale && sceneAssetId && <span className="text-[10px] text-orange-600 bg-orange-50 px-2 py-1 rounded-full">비율·구도가 변경되었습니다. 기존 그림은 여백을 두고 표시되며, 새 구도는 재생성해주세요.</span>}
           <button type="button" disabled={Boolean(generatingScene) || Boolean(generatingSketch) || Boolean(layerBatchProgress) || generatingThisStoryboard || Boolean(detectingAllPoses)} onClick={onGenerateScene} className="inline-flex items-center gap-1.5 rounded-full bg-[#1A1A1A] text-white text-xs font-semibold px-4 py-2 hover:bg-black disabled:cursor-wait disabled:opacity-80">
-            {generatingScene ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />} {generatingScene ? `장면 생성 중 · ${generationSeconds}초` : "수정 사항 한 번에 장면 반영"}
+            {generatingScene ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />} {generatingScene ? `장면 생성 중 · ${generationSeconds}초` : document.sceneSketchAssetId ? "AI 마무리 작화 생성" : "수정 사항 한 번에 장면 반영"}
           </button>
         </div>
       </div>

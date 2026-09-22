@@ -1,6 +1,6 @@
 import { artworkOnlyStoryboard, layerReferenceSvg, sceneStructureSvg, CLEAN_ART_VERSION, SCENE_REFERENCE_VERSION } from "@/lib/cleanGeneration";
 import { validatePanelImage } from "@/lib/panelGeometry";
-import type { Character, CharacterRig, Cut, Episode, Project, StoryboardDocument } from "@/lib/storage";
+import type { Character, CharacterRig, Cut, Episode, Project, StoryboardDocument, StoryboardElement } from "@/lib/storage";
 import { base64ToBlob, blobToBase64, cropImageBlob, getMediaAsset, sourceHash } from "@/lib/mediaStorage";
 import { svgToPngBlob, webtoonFontStack, defaultWebtoonFont } from "@/lib/storyboardSvg";
 import { sizeBalloonForFont } from "@/lib/storyboardText";
@@ -92,14 +92,68 @@ export async function requestStoryboardLayout(project: Project, episode: Episode
     sizeBalloonForFont(element, canvas.width, canvas.height, webtoonFontStack(element.fontFamily ?? defaultWebtoonFont(element.type)))) };
 }
 
+async function requestCharacterRigFromBlob(blob: Blob, mimeType = blob.type || "image/jpeg"): Promise<CharacterRig> {
+  const response = await postVisual<{ characterRig: CharacterRig }>({
+    action: "detect-character-rig",
+    image: { data: await blobToBase64(blob), mimeType },
+  });
+  return response.characterRig;
+}
+
 export async function requestCharacterRig(assetId: string): Promise<CharacterRig> {
   const asset = await getMediaAsset(assetId);
   if (!asset) throw new Error("포즈를 분석할 캐릭터 그림을 찾지 못했습니다.");
-  const response = await postVisual<{ characterRig: CharacterRig }>({
-    action: "detect-character-rig",
-    image: { data: await blobToBase64(asset.blob), mimeType: asset.mimeType },
-  });
-  return response.characterRig;
+  return requestCharacterRigFromBlob(asset.blob, asset.mimeType);
+}
+
+function rotatedBounds(element: StoryboardElement, document: StoryboardDocument) {
+  const centerX = element.x + element.width / 2;
+  const centerY = element.y + element.height / 2;
+  const radians = element.rotation * Math.PI / 180;
+  const corners = [[element.x, element.y], [element.x + element.width, element.y], [element.x, element.y + element.height], [element.x + element.width, element.y + element.height]]
+    .map(([x, y]) => ({
+      x: centerX + (x - centerX) * Math.cos(radians) - (y - centerY) * Math.sin(radians),
+      y: centerY + (x - centerX) * Math.sin(radians) + (y - centerY) * Math.cos(radians),
+    }));
+  const padding = Math.max(8, Math.min(element.width, element.height) * .04);
+  const left = Math.max(0, Math.min(...corners.map(point => point.x)) - padding);
+  const top = Math.max(0, Math.min(...corners.map(point => point.y)) - padding);
+  const right = Math.min(document.width, Math.max(...corners.map(point => point.x)) + padding);
+  const bottom = Math.min(document.height, Math.max(...corners.map(point => point.y)) + padding);
+  return { x: left, y: top, width: Math.max(1, right - left), height: Math.max(1, bottom - top) };
+}
+
+function rigFromSceneCrop(rig: CharacterRig, crop: ReturnType<typeof rotatedBounds>, element: StoryboardElement): CharacterRig {
+  const centerX = element.x + element.width / 2;
+  const centerY = element.y + element.height / 2;
+  const radians = element.rotation * Math.PI / 180;
+  const clamp = (value: number) => Math.max(0, Math.min(1, value));
+  return Object.fromEntries(Object.entries(rig).map(([joint, point]) => {
+    const sceneX = crop.x + point.x * crop.width;
+    const sceneY = crop.y + point.y * crop.height;
+    const dx = sceneX - centerX;
+    const dy = sceneY - centerY;
+    const localX = centerX + dx * Math.cos(radians) + dy * Math.sin(radians) - element.x;
+    const localY = centerY - dx * Math.sin(radians) + dy * Math.cos(radians) - element.y;
+    const normalizedX = clamp(localX / element.width);
+    return [joint, { x: element.flipX ? 1 - normalizedX : normalizedX, y: clamp(localY / element.height) }];
+  })) as CharacterRig;
+}
+
+export async function requestSceneCharacterRigs(scene: Blob, storyboard: StoryboardDocument): Promise<Record<string, CharacterRig>> {
+  const characters = storyboard.elements.filter(element => element.visible !== false && element.type === "character");
+  const entries = await Promise.all(characters.map(async element => {
+    const crop = rotatedBounds(element, storyboard);
+    const cropped = await cropImageBlob(scene, {
+      x: crop.x / storyboard.width,
+      y: crop.y / storyboard.height,
+      width: crop.width / storyboard.width,
+      height: crop.height / storyboard.height,
+    });
+    const rig = await requestCharacterRigFromBlob(cropped, cropped.type || "image/jpeg");
+    return [element.id, rigFromSceneCrop(rig, crop, element)] as const;
+  }));
+  return Object.fromEntries(entries);
 }
 
 function referencedCharacterIds(cut: Cut): string[] {

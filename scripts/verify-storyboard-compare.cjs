@@ -337,7 +337,7 @@ async function main() {
   button(tree, "수정한 구도로 장면 스케치 다시 그리기").props.onClick();
   assert.equal(sketchCalls, 2);
   props.generatingSketch = true;
-  assert.ok(button(render(), "현재 스케치 채색·마감").props.disabled);
+  assert.ok(button(render(), "AI 마무리 작화 생성").props.disabled);
   props.document = { ...props.document, flow: { before: 150, after: 150, inset: 90 }, elements: props.document.elements.map(e => e.id === "speech" ? { ...e, placement: "canvas", locked: false, x: 300, y: 500, width: 200, height: 100, tailY: .5 } : e) };
   const flowLib = load("src/lib/webtoonFlow.ts");
   const editingSvg = () => find(render(), n => n.type === "svg" && n.props.onPointerMove);

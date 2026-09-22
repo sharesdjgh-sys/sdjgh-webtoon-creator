@@ -3,10 +3,15 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const vm = require("node:vm");
 const ts = require("typescript");
-const cache = new Map(), requests = [], blobs = [], drawn = [];
+const cache = new Map(), requests = [], blobs = [], drawn = [], cropRequests = [];
 const httpRequests = [], assetReads = [];
 const assets = new Map();
 let layoutResponse;
+const detectedRig = {
+  head:{x:.5,y:.12},neck:{x:.5,y:.23},leftShoulder:{x:.38,y:.29},leftElbow:{x:.29,y:.46},leftHand:{x:.25,y:.63},
+  rightShoulder:{x:.62,y:.29},rightElbow:{x:.71,y:.46},rightHand:{x:.75,y:.63},leftHip:{x:.44,y:.56},rightHip:{x:.56,y:.56},
+  leftKnee:{x:.42,y:.76},leftFoot:{x:.38,y:.95},rightKnee:{x:.58,y:.76},rightFoot:{x:.62,y:.95},
+};
 const context = new Proxy({}, { get: (_, key) => key === "measureText" ? text => ({ width: [...text].length * 20 }) : key === "createLinearGradient" ? (...args) => { drawn.push([key, ...args]); return { addColorStop: (...stop) => drawn.push(["addColorStop", ...stop]) }; } : (...args) => drawn.push([key,...args]), set: (_, key, value) => { drawn.push(["set", key, value]); return true; } });
 const browser = { document: { fonts: { ready: Promise.resolve() }, createElement: () => ({ getContext: () => context, toBlob: callback => callback(new Blob(["canvas"], { type: "image/png" })) }) } };
 class FakeImage { naturalWidth = 900; naturalHeight = 1600; set src(value) { queueMicrotask(() => this.onload()); } }
@@ -15,7 +20,7 @@ function load(file) {
   const mod = { exports: {} }; cache.set(file, mod.exports);
   vm.runInNewContext(ts.transpileModule(fs.readFileSync(file,"utf8"), { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 } }).outputText, {
     module: mod, exports: mod.exports, structuredClone, Blob, Image: FakeImage, crypto: require("node:crypto").webcrypto,
-    fetch: async (url, options) => { httpRequests.push(JSON.parse(options.body)); return { ok: true, json: async () => ({ data: "mock", mimeType: "image/png", prompt: "mock" }) }; },
+    fetch: async (url, options) => { const body = JSON.parse(options.body); httpRequests.push(body); return { ok: true, json: async () => body.action === "detect-character-rig" ? { characterRig: detectedRig } : ({ data: "mock", mimeType: "image/png", prompt: "mock" }) }; },
     window: browser, document: browser.document, process: { env: { GEMINI_API_KEY: "mock-only" } },
     URL: { createObjectURL: blob => { blobs.push(blob); return "blob:test"; }, revokeObjectURL: () => {} },
     require(name) {
@@ -23,7 +28,7 @@ function load(file) {
       if (name === "@google/genai") return { GoogleGenAI: class { interactions = { create: async input => { requests.push(input); return layoutResponse ? { output_text: JSON.stringify(layoutResponse) } : { output_image: { data: "mock", mime_type: "image/jpeg" } }; } }; } };
       if (name === "@/lib/mediaStorage") return {
         sourceHash: JSON.stringify, getMediaAsset: async id => { assetReads.push(id); return assets.get(id) ?? null; },
-        blobToBase64: async () => "canvas", base64ToBlob: () => new Blob(["mock"], { type: "image/png" }), cropImageBlob: async blob => blob,
+        blobToBase64: async () => "canvas", base64ToBlob: () => new Blob(["mock"], { type: "image/png" }), cropImageBlob: async (blob, crop) => { cropRequests.push(crop); return blob; },
       };
       if (name === "@/lib/panelGeometry") return { ...load("src/lib/panelGeometry.ts"), validatePanelImage: async () => {} };
       if (name.startsWith("@/")) return load("src/"+name.slice(2)+".ts");
@@ -57,6 +62,7 @@ async function main() {
   let prompt = requests[0].input.find(item=>item.type==="text").text;
   for(const secret of ["비밀대사","가이드비밀","동선비밀","효과음비밀","RESERVED TYPOGRAPHY"]) assert.ok(!prompt.includes(secret));
   assert.ok(prompt.includes("ENTIRE canvas") && prompt.includes("empty balloons"));
+  assert.ok(prompt.includes("PUBLICATION-READY FINISH") && prompt.includes("cast shadows") && prompt.includes("scene-appropriate finishing details"));
   await scene.generateStoryboardLayer({...input,layerId:"bg"});
   prompt = requests[1].input.find(item=>item.type==="text").text;
   assert.ok(prompt.includes("clean empty canvas"));
@@ -127,6 +133,10 @@ async function main() {
   for (const preset of rigModule.CHARACTER_POSE_PRESETS) {
     assert.equal(Object.keys(rigModule.sceneCharacterRig({ ...hero, characterRig: preset.rig })).length, 14);
   }
+  const measured = await client.requestSceneCharacterRigs(new Blob(["whole scene"], { type: "image/jpeg" }), { ...doc, elements: [{ ...hero, id: "measured", x: 100, y: 200, rotation: 12, flipX: true }] });
+  assert.equal(Object.keys(measured.measured).length, 14);
+  assert.equal(httpRequests.at(-1).action, "detect-character-rig");
+  assert.ok(cropRequests.at(-1).x > 0 && cropRequests.at(-1).width < 1, "pose detection crops the character region from the whole scene");
   const structureHero = { ...hero, x: 123, y: 456, rotation: 17, flipX: true, characterRig: { ...exactRig, head: { x: .2, y: .3 } } };
   const geometry = clean.sceneStructureSvg({ ...doc, elements: [...doc.elements, structureHero, { ...hero, id: "hidden", visible: false }] });
   assert.ok(geometry.includes("translate(123 456) rotate(17 150 300)"));
@@ -288,8 +298,8 @@ async function main() {
   layoutResponse = undefined;
   await scene.generateSceneImage({ ...input, stage: "sketch", referenceMode: "direct" });
   const sketchPrompt = requests.at(-1).input.find(item => item.type === "text").text;
-  assert.ok(sketchPrompt.includes("STORYBOARD SKETCH STAGE") && sketchPrompt.includes("grayscale"));
-  assert.ok(sketchPrompt.includes("NEVER FINISHED ART") && sketchPrompt.includes("visible construction lines") && sketchPrompt.includes("rough blocking only"));
+  assert.ok(sketchPrompt.includes("STORYBOARD PEN-LINE STAGE") && sketchPrompt.includes("monochrome"));
+  assert.ok(sketchPrompt.includes("LINE ART ONLY") && sketchPrompt.includes("Do NOT add flat color") && sketchPrompt.includes("White paper and monochrome lines only"));
   assert.ok(sketchPrompt.includes("IDENTITY references only") && sketchPrompt.includes("sole pose authority"));
   assert.ok(!sketchPrompt.includes("FINISH the complete"));
   const verbalPose = { ...hero, assetId: "existing-person", pose: "두 손으로 노트북을 들기", poseDescriptionEdited: true };
@@ -312,6 +322,7 @@ async function main() {
   const editorSource = fs.readFileSync("src/components/visual/StoryboardEditor.tsx", "utf8");
   assert.ok(editorSource.includes("{backgroundLayer && <section"), "background direction remains visible after a whole-scene sketch exists");
   assert.ok(!editorSource.includes("backgroundLayer && !document.sceneSketchAssetId && <section"));
+  assert.ok(editorSource.includes("배경 연출 정보") && editorSource.includes("스케치에 포즈 좌표 맞추기") && editorSource.includes("AI 마무리 작화 생성"));
   console.log("PASS: single whole-scene raster, first-sketch and finish requests, AI flow proposal, caption styles and AI-free whitespace edits (mock)");
   if (process.argv.includes("--preview")) {
     const styles = ["normal", "thought", "shout", "whisper", "rounded", "none"];

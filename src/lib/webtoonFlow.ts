@@ -47,8 +47,10 @@ export function webtoonFlowLayout(source: StoryboardDocument) {
       y += element.height;
     });
   }
-  if (!overflow && elements.some(e => overlayOutsideCanvas(e, width, canvasHeight))) {
-    overflow = "말풍선·글자 또는 꼬리가 이 컷의 그림과 여백 영역을 벗어났습니다. 위치는 자동 변경하지 않습니다. 해당 요소를 안쪽으로 옮기거나 크기·꼬리·여백을 조절해주세요.";
+  const outside = !overflow ? elements.find(e => overlayOutsideCanvas(e, width, canvasHeight)) : undefined;
+  if (outside) {
+    const label = outside.text.trim().replace(/\s+/g, " ").slice(0, 24) || (outside.type === "speech" ? "빈 말풍선" : "빈 글자 요소");
+    overflow = `“${label}${outside.text.trim().length > 24 ? "…" : ""}”의 회전된 외곽 또는 말풍선 꼬리가 이 컷의 그림과 여백 영역을 벗어났습니다. 해당 요소의 꼬리 끝과 회전된 모서리를 확인해주세요.`;
   }
   // Resolved coordinates must never be fitted again by SVG/PNG renderers.
   return { art, overflow, document: { ...source, flow, width, height: canvasHeight,

@@ -27,8 +27,8 @@ import WebtoonPreviewModal from "@/components/visual/WebtoonPreviewModal";
 import CutNavigator from "@/components/visual/CutNavigator";
 import AiActivityBanner from "@/components/AiActivityBanner";
 import { BlobImage } from "@/components/visual/StoredImage";
-import { requestCharacterRig, requestSceneImage, requestStoryboardLayer, requestStoryboardLayout, sceneHash, storyboardLayerHash } from "@/lib/visualClient";
-import { deleteMediaAsset, deleteMediaByOwner, saveMediaAsset, whiteToTransparentPng } from "@/lib/mediaStorage";
+import { requestCharacterRig, requestSceneCharacterRigs, requestSceneImage, requestStoryboardLayer, requestStoryboardLayout, sceneHash, storyboardLayerHash } from "@/lib/visualClient";
+import { deleteMediaAsset, deleteMediaByOwner, getMediaAsset, saveMediaAsset, whiteToTransparentPng } from "@/lib/mediaStorage";
 import { resizeStoryboard } from "@/lib/storyboardSvg";
 import { hasGeneratedStoryboardLayers } from "@/lib/storyboardComposite";
 import { cleanCharacterMentions } from "@/lib/characterMentions";
@@ -351,18 +351,24 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
         : await requestStoryboardLayout(currentProject, episode, cut);
       const draft = { ...cut, storyboard };
       const result = await requestSceneImage(currentProject, episode, draft, "direct", "sketch");
+      const measuredRigs = await requestSceneCharacterRigs(result.blob, storyboard);
       const asset = await saveMediaAsset({ projectId: id, ownerId: cut.id, ownerType: "storyboard", mimeType: result.blob.type, blob: result.blob });
       const sceneStoryboard: StoryboardDocument = {
         ...storyboard, sceneSketchAssetId: asset.id,
         flow: normalizeWebtoonFlow(storyboard.flow),
-        elements: storyboard.elements.map(element => ({ ...element, poseControlEdited: false, poseDescriptionEdited: false })),
+        elements: storyboard.elements.map(element => ({
+          ...element,
+          characterRig: element.type === "character" ? measuredRigs[element.id] ?? element.characterRig : element.characterRig,
+          poseControlEdited: false,
+          poseDescriptionEdited: false,
+        })),
       };
       setEpisodes(current => current.map(ep => ({ ...ep, cuts: ep.cuts.map(item =>
         item.id === cut.id && sceneHash({ ...project, episodes: current }, ep, item) === inputHash
           && JSON.stringify({ storyboard: item.storyboard, dialogue: item.dialogue, soundEffect: item.soundEffect }) === editorSnapshot
           ? { ...item, storyboard: sceneStoryboard } : item) })));
       setIsDirty(true);
-      setVisualError("장면 전체 스케치를 생성했습니다. 인물·손·소품·배경을 함께 그렸습니다. 생성 중 변경한 콘티는 덮어쓰지 않습니다. 콘티 미리보기에서 대사와 여백을 확인해주세요.");
+      setVisualError("장면 전체 스케치를 생성하고 실제 인물 자세에 포즈 좌표를 맞췄습니다. 생성 중 변경한 콘티는 덮어쓰지 않습니다. 콘티 미리보기에서 대사와 여백을 확인해주세요.");
       return true;
     } catch (error) {
       setVisualError(error instanceof Error ? error.message : "장면 스케치 생성에 실패했습니다. 기존 콘티는 유지됩니다.");
@@ -443,17 +449,19 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
     if (!project) return;
     const episode = episodes[activeEp];
     const cut = episode?.cuts[cutIdx];
-    const targets = cut?.storyboard?.elements.filter((element) => element.type === "character" && element.visible !== false && element.assetId) ?? [];
+    const sceneSketch = cut?.storyboard?.sceneSketchAssetId;
+    const targets = cut?.storyboard?.elements.filter((element) => element.type === "character" && element.visible !== false && (sceneSketch || element.assetId)) ?? [];
     if (!episode || !cut?.storyboard || targets.length === 0) return;
     if (layerBatches.current.has(cut.id)) { setVisualError("레이어 일괄 반영이 끝난 뒤 포즈를 분석해주세요."); return; }
     setVisualError("");
     setLoadingId(setPoseDetectingIds, cut.id, true);
     targets.forEach((element) => setLoadingId(setLayerGeneratingIds, element.id, true));
     try {
-      const detected = await Promise.all(targets.map(async (element) => ({
-        id: element.id,
-        rig: await requestCharacterRig(element.assetId!),
-      })));
+      const sceneAsset = sceneSketch ? await getMediaAsset(sceneSketch) : null;
+      if (sceneSketch && !sceneAsset) throw new Error("포즈를 맞출 장면 스케치 파일을 찾지 못했습니다.");
+      const sceneRigs = sceneAsset ? await requestSceneCharacterRigs(sceneAsset.blob, cut.storyboard) : null;
+      const detected = sceneRigs ? Object.entries(sceneRigs).map(([layerId, rig]) => ({ id: layerId, rig }))
+        : await Promise.all(targets.map(async (element) => ({ id: element.id, rig: await requestCharacterRig(element.assetId!) })));
       const rigs = new Map(detected.map(({ id: layerId, rig }) => [layerId, rig]));
       replaceCut(cutIdx, (current) => {
         if (!current.storyboard) return current;
@@ -462,7 +470,7 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
           elements: current.storyboard.elements.map((element) => ({
             ...element,
             characterRig: rigs.get(element.id) ?? element.characterRig,
-            poseControlEdited: rigs.has(element.id) ? true : element.poseControlEdited,
+            poseControlEdited: rigs.has(element.id) ? !sceneSketch : element.poseControlEdited,
           })),
         };
         const cutWithRigs = { ...current, storyboard: storyboardWithRigs };
@@ -477,7 +485,7 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
           },
         };
       });
-      setVisualError(`캐릭터 ${targets.length}명의 포즈 핸들을 실제 그림에 맞췄습니다.`);
+      setVisualError(`캐릭터 ${targets.length}명의 포즈 좌표를 실제 ${sceneSketch ? "장면 스케치" : "레이어 그림"}에 맞췄습니다.`);
     } catch (error) {
       setVisualError(error instanceof Error ? error.message : "캐릭터 포즈를 분석하지 못했습니다.");
     } finally {
@@ -756,7 +764,7 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
           {ep && <section aria-label="한 화 원고 미리보기와 다운로드" className="flex items-center justify-between gap-5 rounded-2xl border border-[#DDD6FE] bg-[#F5F3FF] p-5">
             <div>
               <h2 className="text-sm font-bold text-[#5B21B6]">{ep.episodeNumber}화 전체를 웹툰처럼 읽어보세요</h2>
-              <p className="mt-1 text-xs leading-6 text-[#7A7067]">{ep.cuts.length}개의 컷과 대사·독백·여백을 현재 순서대로 이어 보여줍니다. 미리보기에서 한 화의 PNG를 ZIP으로 받을 수 있어요.</p>
+              <p className="mt-1 text-xs leading-6 text-[#7A7067]">{ep.cuts.length}개의 컷과 대사·독백·여백을 현재 순서대로 이어 보여줍니다. 미리보기에서 한 화 전체를 세로 PNG 한 장으로 받을 수 있어요.</p>
               <p className="text-[11px] text-[#82798B]">완성 그림이 없는 컷은 콘티로 표시하며, 미제작 컷은 위치를 알려줍니다. AI 추가 호출은 없습니다.</p>
             </div>
             <button type="button" disabled={!ep.cuts.length} onClick={() => setPreviewOpen(true)} className="flex shrink-0 items-center gap-2 rounded-full bg-[#7C3AED] px-5 py-3 text-xs font-semibold text-white hover:bg-[#6D28D9] disabled:opacity-40">

@@ -88,3 +88,33 @@ export async function exportWebtoonStrip(cuts: Cut[], width = 900, pageHeight = 
   }
   return pages;
 }
+
+/** Export one complete episode as a single continuous vertical PNG. */
+export async function exportWebtoonImage(cuts: Cut[], width = 900, options: { finishedOnly?: boolean } = {}) {
+  if (!Number.isInteger(width) || width < 1 || width > 4000) throw new Error("원고 출력 폭이 올바르지 않습니다.");
+  if (!cuts.length) throw new Error("다운로드할 장면이 없습니다.");
+  const rendered: Array<{ image: HTMLImageElement; height: number }> = [];
+  let totalHeight = 0;
+  for (const cut of cuts) {
+    const block = await renderWebtoonBlock(cut, options);
+    const image = await imageFromBlob(block.blob);
+    const height = Math.max(1, Math.round(block.height * width / block.width));
+    rendered.push({ image, height });
+    totalHeight += height;
+  }
+  // Chromium's reliable 2D-canvas dimension limit is 32,767px per axis.
+  if (totalHeight > 32767) throw new Error(`이 화의 전체 높이(${totalHeight.toLocaleString()}px)가 단일 PNG 한도를 넘습니다. 컷 수나 위·아래 여백을 줄여주세요.`);
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = totalHeight;
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("한 화 원고 캔버스를 만들지 못했습니다.");
+  context.fillStyle = "#ffffff";
+  context.fillRect(0, 0, width, totalHeight);
+  let y = 0;
+  for (const block of rendered) {
+    context.drawImage(block.image, 0, y, width, block.height);
+    y += block.height;
+  }
+  return { blob: await png(canvas), width, height: totalHeight };
+}
