@@ -1,5 +1,7 @@
 "use client";
 
+import { projectHref } from "@/lib/storage";
+
 import { useState, useEffect, use } from "react";
 import Link from "next/link";
 import StageIntro from "@/components/creation/StageIntro";
@@ -25,7 +27,7 @@ export default function IdeaPage({ params }: { params: Promise<{ id: string }> }
     if (project) {
       updateProject(id, { currentStep: Math.max(2, project.currentStep) });
     }
-    router.push(`/project/${id}/characters`);
+    router.push(projectHref(id, "characters"));
   };
 
   return (

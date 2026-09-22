@@ -1,5 +1,7 @@
 "use client";
 
+import { projectHref } from "@/lib/storage";
+
 import { useState, useEffect, use, useRef } from "react";
 import Link from "next/link";
 import AiFillButton from "@/components/creation/AiFillButton";
@@ -311,7 +313,7 @@ export default function ScriptPage({ params }: { params: Promise<{ id: string }>
                 {ep.synopsis && <p className="text-[10px] text-[#7A7067] mt-0.5 line-clamp-1">{ep.synopsis}</p>}
               </div>
               <Link
-                href={`/project/${id}/episodes`}
+                href={projectHref(id, "episodes")}
                 className="ml-auto text-[10px] text-[#ADA8A0] hover:text-[#7C3AED] transition-colors whitespace-nowrap"
               >
                 콘티 보기 →
@@ -393,7 +395,7 @@ export default function ScriptPage({ params }: { params: Promise<{ id: string }>
           </div>
 
           <div className="flex justify-between gap-3">
-            <Link href={`/project/${id}/story`} onClick={event => { if (isDirty && !confirm("저장하지 않은 변경사항이 있어요. 이동하시겠어요?")) event.preventDefault(); }}>
+            <Link href={projectHref(id, "story")} onClick={event => { if (isDirty && !confirm("저장하지 않은 변경사항이 있어요. 이동하시겠어요?")) event.preventDefault(); }}>
               <button className="flex items-center gap-2 text-xs font-medium px-4 py-2.5 rounded-full border border-[#EBE7E0] text-[#7A7067] hover:bg-[#F4F1EC] transition-all duration-200">
                 <ArrowLeft className="w-3.5 h-3.5" /> 이전: 스토리 구조
               </button>
@@ -406,7 +408,7 @@ export default function ScriptPage({ params }: { params: Promise<{ id: string }>
               >
                 저장
               </button>
-              <Link href={`/project/${id}/episodes`} onClick={save}>
+              <Link href={projectHref(id, "episodes")} onClick={save}>
                 <button className="flex items-center gap-2 text-xs font-semibold px-5 py-2.5 rounded-full bg-[#7C3AED] text-white hover:bg-[#6D28D9] transition-all duration-300">
                   다음: 콘티 · 작화 <ArrowRight className="w-3.5 h-3.5" />
                 </button>

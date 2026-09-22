@@ -1,5 +1,7 @@
 "use client";
 
+import { projectHref } from "@/lib/storage";
+
 import { useState, useEffect, use, useRef } from "react";
 import Link from "next/link";
 import { mergeAiFields } from "@/lib/aiFill";
@@ -22,6 +24,7 @@ import { normalizeWebtoonFlow, changeWebtoonFlow } from "@/lib/webtoonFlow";
 import ShotSelector from "@/components/visual/ShotSelector";
 import AspectRatioSelector from "@/components/visual/AspectRatioSelector";
 import WebtoonPreviewModal from "@/components/visual/WebtoonPreviewModal";
+import CutNavigator from "@/components/visual/CutNavigator";
 import AiActivityBanner from "@/components/AiActivityBanner";
 import { BlobImage } from "@/components/visual/StoredImage";
 import { requestCharacterRig, requestSceneImage, requestStoryboardLayer, requestStoryboardLayout, sceneHash, storyboardLayerHash } from "@/lib/visualClient";
@@ -76,6 +79,13 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
     { episodeNumber: 1, title: "", synopsis: "", cuts: [], script: "", isCompleted: false },
   ]);
   const [activeEp, setActiveEp] = useState(0);
+  const cutCards = useRef(new Map<string, HTMLDivElement>());
+  const navigateToCut = (cutId: string) => {
+    const card = cutCards.current.get(cutId);
+    if (!card) return;
+    card.focus({ preventScroll: true });
+    card.scrollIntoView({ block: "start", behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth" });
+  };
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -639,7 +649,7 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
       setShowEmptyModal(true);
     } else {
       save();
-      router.push(`/project/${id}/submit`);
+      router.push(projectHref(id, "submit"));
     }
   };
 
@@ -795,6 +805,8 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
             </div>
           )}
 
+          <CutNavigator cuts={ep?.cuts ?? []} onNavigate={navigateToCut} />
+
           {project && (
             <ArtDirectionEditor
               compact
@@ -905,7 +917,8 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
               ) : (
                 <div className="space-y-3">
                   {ep.cuts.map((cut, cutIdx) => (
-                    <div key={cut.id} className="relative rounded-xl border border-[#EBE7E0] bg-white">
+                    <div key={cut.id} ref={node => { if (node) cutCards.current.set(cut.id, node); else cutCards.current.delete(cut.id); }}
+                      tabIndex={-1} aria-label={`${cutIdx + 1}컷 편집`} className="relative scroll-mt-40 rounded-xl border border-[#EBE7E0] bg-white focus:outline-none focus:ring-2 focus:ring-[#A78BFA]">
                       <div className="flex flex-col gap-2 px-4 py-2.5 bg-[#FBF9F6] border-b border-[#EBE7E0] sm:flex-row sm:items-center sm:justify-between">
                         <div className="flex flex-wrap items-center gap-2 sm:gap-3">
                           <span className="text-xs font-bold text-[#7C3AED] w-10">컷 {cutIdx + 1}</span>
@@ -1128,7 +1141,7 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
           description="아이디어 발굴 대화 내용을 바탕으로 AI가 각 화의 제목과 줄거리를 자동으로 채워드릴 수 있어요."
           onAutofill={() => { setShowEmptyModal(false); autofill(); }}
           onAskMentor={() => { setShowEmptyModal(false); mobileChatRef.current?.openAndFocus(); }}
-          onGoAnyway={() => { setShowEmptyModal(false); router.push(`/project/${id}/submit`); }}
+          onGoAnyway={() => { setShowEmptyModal(false); router.push(projectHref(id, "submit")); }}
           onClose={() => setShowEmptyModal(false)}
           autofilling={autofilling}
         />

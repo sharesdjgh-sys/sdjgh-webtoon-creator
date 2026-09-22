@@ -402,6 +402,7 @@ Return a practical SVG scene graph using only the supplied JSON schema.
 - For every speech element, choose balloonStyle: normal for ordinary dialogue, thought for inner monologue, shout for yelling, or whisper for quiet/breathing dialogue. Set speakerCharacterId to the exact cast ID and aim tailX/tailY toward that speaker. tail coordinates are local to the balloon: (0,0) top-left, (1,1) bottom-right, and may extend outside the box.
 - text for character and prop elements is a short Korean label. Include concise pose and expression notes for characters.
 - Avoid overlaps that obscure faces or key action. Keep 10% safe margins for text.
+- Allocate speech/caption bodies for 35px lettering at the final reading-canvas scale, including line wrapping and inner padding. Do not use tiny boxes that require 18px text. Reserve enough space between neighboring balloons; never shorten or omit supplied dialogue to make it fit.
 - zIndex must describe back-to-front order.`;
 
   const interaction = await client().interactions.create({

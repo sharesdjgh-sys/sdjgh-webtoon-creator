@@ -1,5 +1,7 @@
 "use client";
 
+import { projectHref } from "@/lib/storage";
+
 import { useState, useEffect, use, useRef } from "react";
 import Link from "next/link";
 import AiFillButton from "@/components/creation/AiFillButton";
@@ -359,7 +361,7 @@ export default function CharactersPage({ params }: { params: Promise<{ id: strin
       setShowEmptyModal(true);
     } else {
       save();
-      router.push(`/project/${id}/world`);
+      router.push(projectHref(id, "world"));
     }
   };
 
@@ -704,7 +706,7 @@ export default function CharactersPage({ params }: { params: Promise<{ id: strin
           description="아이디어 발굴 대화 내용을 바탕으로 AI가 주인공 등 주요 캐릭터를 자동으로 만들어드릴 수 있어요."
           onAutofill={() => { setShowEmptyModal(false); autofill(); }}
           onAskMentor={() => { setShowEmptyModal(false); mobileChatRef.current?.openAndFocus(); }}
-          onGoAnyway={() => { setShowEmptyModal(false); router.push(`/project/${id}/world`); }}
+          onGoAnyway={() => { setShowEmptyModal(false); router.push(projectHref(id, "world")); }}
           onClose={() => setShowEmptyModal(false)}
           autofilling={autofilling}
         />

@@ -1,5 +1,7 @@
 "use client";
 
+import { projectHref } from "@/lib/storage";
+
 import styles from "./home.module.css";
 import { useEffect, useState } from "react";
 import Link from "next/link";
@@ -64,7 +66,7 @@ export default function HomeProjectPanel() {
   const cover = scene?.sceneImageAssetId || scene?.storyboardImageAssetId || project?.characters.find(character => character.imageAssetId)?.imageAssetId;
   const completedCount = checks.filter(Boolean).length;
   const episodeCount = project?.episodes.filter(episode => episode.title || episode.synopsis || episode.script || episode.cuts.length).length ?? 0;
-  const destination = project ? `/project/${project.id}/${stage.route}` : "/dashboard";
+  const destination = project ? projectHref(project.id, stage.route) : "/dashboard";
 
   return <section aria-label="내 작품 작업실" aria-busy={!loaded} className={`${styles.projectCard} overflow-hidden bg-white`}>
     <div className="flex items-center justify-between gap-3 border-b-2 border-[#302342] bg-[#F2EAFF] px-5 py-4 sm:px-6">
@@ -100,7 +102,7 @@ export default function HomeProjectPanel() {
         </div>
         <div>
           <div className="mb-2 flex justify-between text-[11px] text-[#625B72]"><span>내용이 채워진 단계</span><span className="tabular-nums">{completedCount} / {STEPS.length}</span></div>
-          <div className="grid grid-cols-7 gap-1.5">{STEPS.map((item, index) => <Link key={item.id} href={`/project/${project.id}/${item.route}`} aria-label={`${item.label}: ${checks[index] ? "내용 있음" : "작성할 내용 있음"}`} title={item.label} className={`flex h-7 items-center justify-center rounded-md border text-[10px] transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#713DE3] ${checks[index] ? "border-[#713DE3] bg-[#713DE3] text-white" : index === nextIndex ? "border-[#9B72EA] bg-[#FFF0A6] text-[#713DE3]" : "border-[#E6DDF6] bg-[#F6F2FC] text-[#70647F]"}`}>{checks[index] ? <Check className="h-3 w-3" /> : item.id}</Link>)}</div>
+          <div className="grid grid-cols-7 gap-1.5">{STEPS.map((item, index) => <Link key={item.id} href={projectHref(project.id, item.route)} aria-label={`${item.label}: ${checks[index] ? "내용 있음" : "작성할 내용 있음"}`} title={item.label} className={`flex h-7 items-center justify-center rounded-md border text-[10px] transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#713DE3] ${checks[index] ? "border-[#713DE3] bg-[#713DE3] text-white" : index === nextIndex ? "border-[#9B72EA] bg-[#FFF0A6] text-[#713DE3]" : "border-[#E6DDF6] bg-[#F6F2FC] text-[#70647F]"}`}>{checks[index] ? <Check className="h-3 w-3" /> : item.id}</Link>)}</div>
         </div>
         <div className="rounded-xl bg-[#FFF4B8] p-4">
           <p className="text-xs font-bold text-[#713DE3]">{project.isCompleted ? "완성한 이야기를 다시 만나보세요" : `다음 한 걸음 · ${stage.label}`}</p>

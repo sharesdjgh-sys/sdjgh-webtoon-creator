@@ -2,7 +2,9 @@ import { artworkOnlyStoryboard, layerReferenceSvg, sceneStructureSvg, CLEAN_ART_
 import { validatePanelImage } from "@/lib/panelGeometry";
 import type { Character, CharacterRig, Cut, Episode, Project, StoryboardDocument } from "@/lib/storage";
 import { base64ToBlob, blobToBase64, cropImageBlob, getMediaAsset, sourceHash } from "@/lib/mediaStorage";
-import { svgToPngBlob } from "@/lib/storyboardSvg";
+import { svgToPngBlob, webtoonFontStack, defaultWebtoonFont } from "@/lib/storyboardSvg";
+import { sizeBalloonForFont } from "@/lib/storyboardText";
+import { editableWebtoonDocument, webtoonFlowLayout } from "@/lib/webtoonFlow";
 import { composeStoryboardPng } from "@/lib/storyboardComposite";
 
 type GeneratedImageResponse = { data: string; mimeType: string; prompt: string; characterRig?: CharacterRig };
@@ -84,7 +86,10 @@ export async function requestStoryboardLayout(project: Project, episode: Episode
     cut: { ...cutData(cut), scrollGap: cut.scrollGap },
     characters: selected.map(characterData),
   });
-  return response.storyboard;
+  const storyboard = editableWebtoonDocument(response.storyboard);
+  const canvas = webtoonFlowLayout(storyboard).document;
+  return { ...storyboard, elements: storyboard.elements.map(element =>
+    sizeBalloonForFont(element, canvas.width, canvas.height, webtoonFontStack(element.fontFamily ?? defaultWebtoonFont(element.type)))) };
 }
 
 export async function requestCharacterRig(assetId: string): Promise<CharacterRig> {

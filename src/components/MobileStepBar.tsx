@@ -1,5 +1,7 @@
 "use client";
 
+import { projectHref } from "@/lib/storage";
+
 import Link from "next/link";
 import { STEPS } from "@/lib/utils";
 import { Check } from "lucide-react";
@@ -21,7 +23,7 @@ export default function MobileStepBar({ currentStep, activeStep, projectId, isDi
           const isDone = false; // Visiting a page does not complete its work.
           const isCurrent = step.id === active;
           const isClickable = true;
-          const href = `/project/${projectId}/${step.route}`;
+          const href = projectHref(projectId, step.route);
 
           const inner = (
             <div

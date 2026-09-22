@@ -1,5 +1,7 @@
 "use client";
 
+import { projectHref } from "@/lib/storage";
+
 import Link from "next/link";
 import { useCallback, useSyncExternalStore } from "react";
 import { STEPS } from "@/lib/utils";
@@ -75,7 +77,7 @@ export default function StepIndicator({ currentStep, activeStep, projectId, isDi
             </div>
           );
           return projectId ? (
-            <Link key={step.id} className="block rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#7C3AED]" href={`/project/${projectId}/${step.route}`} aria-current={isCurrent ? "step" : undefined}
+            <Link key={step.id} className="block rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#7C3AED]" href={projectHref(projectId, step.route)} aria-current={isCurrent ? "step" : undefined}
               onClick={(event) => {
                 if (isDirty && !confirm("저장하지 않은 변경사항이 있어요. 이동하시겠어요?")) event.preventDefault();
               }}>

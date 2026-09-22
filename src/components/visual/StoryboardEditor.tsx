@@ -30,7 +30,7 @@ import {
   User,
   X,
 } from "lucide-react";
-import { layoutStoryboardText } from "@/lib/storyboardText";
+import { layoutStoryboardText, sizeBalloonForFont } from "@/lib/storyboardText";
 import type { Character, CharacterJointKey, StoryboardDocument, StoryboardElement, StoryboardElementType } from "@/lib/storage";
 import { defaultWebtoonFont, isOverlayElement, speechBalloonGeometry, storyboardToSvg, WEBTOON_FONT_OPTIONS, webtoonFontStack } from "@/lib/storyboardSvg";
 import { CHARACTER_POSE_PRESETS, resolveCharacterRig } from "@/lib/storyboardRig";
@@ -41,6 +41,7 @@ import AiActivityBanner from "@/components/AiActivityBanner";
 import { pendingLayerIds } from "@/lib/layerBatch";
 import { balloonMarkup, textDecoration, textGradientId } from "@/lib/webtoonDecoration";
 import WebtoonStyleControls from "@/components/visual/WebtoonStyleControls";
+import BalloonStylePicker from "@/components/visual/BalloonStylePicker";
 import { RESIZE_HANDLES, resizeCursor, resizeOverlay, type ResizeDirection } from "@/lib/storyboardResize";
 import { artworkOnlyStoryboard, sceneStructureSvg } from "@/lib/cleanGeneration";
 import { webtoonFlowLayout, editableWebtoonDocument, editorSceneElements, artworkEditFromCanvas, changeWebtoonFlow, MAX_WEBTOON_GAP } from "@/lib/webtoonFlow";
@@ -579,7 +580,8 @@ export default function StoryboardEditor({ document: savedDocument, characters, 
       opacity: 1,
       flipX: false,
     };
-    apply({ ...document, elements: [...document.elements, element] });
+    const sized = sizeBalloonForFont(element, canvas.width, canvas.height, webtoonFontStack(defaultWebtoonFont(type)));
+    apply({ ...document, elements: [...document.elements, sized] });
     setSelectedId(element.id);
     setFinalView(false);
     if (["character", "prop"].includes(element.type)) setShowBlocking(true);
@@ -1027,15 +1029,23 @@ export default function StoryboardEditor({ document: savedDocument, characters, 
                   </div>
                 </div>
               )}
-              <div className={isOverlayElement(selected) ? "space-y-2 rounded-xl border border-[#E4DDF8] bg-[#FAF8FF] p-3" : "space-y-2"}>
+              <div aria-label={isOverlayElement(selected) ? "대사 설정" : undefined} className={isOverlayElement(selected) ? "space-y-2 rounded-xl border border-[#E4DDF8] bg-[#FAF8FF] p-3" : "space-y-2"}>
                 {isOverlayElement(selected) && <p className="text-[11px] text-[#5B21B6]">그림 안과 위·아래 흰 여백 어디든 직접 옮길 수 있습니다. 모서리·변의 핸들로 크기도 조절하세요.</p>}
-                <label className="visual-label">{selected.type === "background" ? "배경 연출 지시 (장소·원근·시설·조명)" : "표시 내용"}</label>
-                <textarea value={selected.text} onChange={(event) => updateElement(selected.id, { text: event.target.value })} className="visual-input min-h-16 resize-none" />
-                {isOverlayElement(selected) && <div className="flex flex-wrap gap-1">
-                  <button type="button" className="editor-tool" onClick={() => updateElement(selected.id, { type: "speech", balloonStyle: "normal" })}>대사</button>
-                  <button type="button" className="editor-tool" onClick={() => updateElement(selected.id, { type: "caption", balloonStyle: "rounded" })}>독백 상자</button>
-                  <button type="button" className="editor-tool" onClick={() => updateElement(selected.id, { type: "caption", balloonStyle: "none" })}>테두리 없는 글</button>
-                </div>}
+                {isOverlayElement(selected) ? <h3 className="visual-label">대사 설정</h3> : <label className="visual-label">{selected.type === "background" ? "배경 연출 지시 (장소·원근·시설·조명)" : "표시 내용"}</label>}
+                <textarea aria-label={isOverlayElement(selected) ? "대사 내용" : "레이어 내용"} value={selected.text} onChange={(event) => updateElement(selected.id, { text: event.target.value })} className="visual-input min-h-16 resize-none" />
+                {isOverlayElement(selected) && <BalloonStylePicker key={selected.id} element={selected} onChange={changes => updateElement(selected.id, changes)} />}
+              {selected.type === "speech" && (
+                <div className="space-y-2.5 rounded-xl border border-[#F1D5B9] bg-[#FFF9F2] p-3">
+                  <div>
+                    <label className="visual-label">화자와 꼬리 방향</label>
+                    <select aria-label="화자와 꼬리 방향" value={selected.speakerCharacterId ?? ""} onChange={event => setSpeechSpeaker(selected, event.target.value)} className="visual-input mt-1.5">
+                      <option value="">화자 직접 지정 안 함</option>
+                      {characters.map(character => <option key={character.id} value={character.id}>{character.name || "이름 없음"}</option>)}
+                    </select>
+                    <p className="mt-1.5 text-[10px] leading-relaxed text-[#9A7654]">화자를 선택하면 꼬리가 인물을 향합니다. 캔버스의 노란 핸들로 방향을 조절하세요.</p>
+                  </div>
+                </div>
+              )}
                 {isOverlayElement(selected) && layoutStoryboardText(selected, webtoonFontStack(selected.fontFamily ?? defaultWebtoonFont(selected.type))).tooSmall && <p className="text-[11px] text-orange-700">대사가 길어 글자가 작아졌습니다. 말풍선을 키우거나 내용을 나눠주세요. 내용은 생략하지 않습니다.</p>}
                 {isOverlayElement(selected) && (
                   <div className="space-y-2 border-t border-[#E4DDF8] pt-2">
@@ -1064,6 +1074,11 @@ export default function StoryboardEditor({ document: savedDocument, characters, 
                       onChange={event => updateElement(selected.id, { fontSize: clampSelectedFontSize(Number(event.target.value)) })}
                       className="w-full accent-[#7C3AED]" />
                     <button type="button" className="editor-tool" onClick={() => updateElement(selected.id, { fontSize: undefined })}>글자 크기 자동</button>
+                    {(selected.type === "speech" || selected.type === "caption") && <button type="button" disabled={selected.locked} className="editor-tool" onClick={() => {
+                      const sized = sizeBalloonForFont(selected, canvas.width, canvas.height, selectedFontStack);
+                      updateElement(selected.id, sized);
+                    }}>35px에 맞춰 말풍선 키우기</button>}
+                    {(selected.type === "speech" || selected.type === "caption") && selectedFontMaximum < 34.99 && <p className="text-[10px] text-orange-700">현재 말풍선에는 35px 글자가 들어가지 않습니다. 위 버튼으로 말풍선을 키우거나 대사를 나눠주세요.</p>}
                     <p className="text-[10px] leading-relaxed text-[#8B7EAE]">현재 영역의 최대 크기: {selectedFontMaximum.toFixed(2)}px. 실제 표시 크기까지만 설정할 수 있습니다. 더 크게 쓰려면 영역을 넓히거나 대사를 줄여주세요.</p>
                     <WebtoonStyleControls element={selected} onChange={changes => updateElement(selected.id, changes)} />
                     <label className="visual-label">글자 굵기</label>
@@ -1082,44 +1097,6 @@ export default function StoryboardEditor({ document: savedDocument, characters, 
                   </div>
                 )}
               </div>
-              {selected.type === "speech" && (
-                <div className="space-y-2.5 rounded-xl border border-[#F1D5B9] bg-[#FFF9F2] p-3">
-                  <div>
-                    <label className="visual-label">말풍선 종류</label>
-                    <div className="mt-1.5 grid grid-cols-2 gap-1.5">
-                      {([
-                        ["normal", "일반 대사"],
-                        ["thought", "생각"],
-                        ["shout", "외침"],
-                        ["whisper", "속삭임"],
-                        ["rounded", "둥근 상자"],
-                        ["none", "테두리 없음"],
-                      ] as const).map(([value, label]) => (
-                        <button
-                          key={value}
-                          type="button"
-                          onClick={() => updateElement(selected.id, { balloonStyle: value })}
-                          className={`rounded-lg border px-2 py-1.5 text-[10px] font-semibold transition active:scale-95 ${selected.balloonStyle === value || (!selected.balloonStyle && value === "normal") ? "border-[#7C3AED] bg-[#F5F3FF] text-[#5B21B6]" : "border-[#E8DCCF] bg-white text-[#7A7067] hover:border-[#C4B5FD]"}`}
-                        >
-                          {label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                  <div>
-                    <label className="visual-label">화자와 꼬리 방향</label>
-                    <select
-                      value={selected.speakerCharacterId ?? ""}
-                      onChange={(event) => setSpeechSpeaker(selected, event.target.value)}
-                      className="visual-input mt-1.5"
-                    >
-                      <option value="">화자 직접 지정 안 함</option>
-                      {characters.map((character) => <option key={character.id} value={character.id}>{character.name || "이름 없음"}</option>)}
-                    </select>
-                    <p className="mt-1.5 text-[10px] leading-relaxed text-[#9A7654]">화자를 선택하면 꼬리가 인물을 향합니다. 캔버스의 노란 핸들을 드래그해 정확한 방향을 조절할 수 있어요.</p>
-                  </div>
-                </div>
-              )}
               <label className="visual-label">회전 {Math.round(selected.rotation)}°</label>
               <input type="range" min="-180" max="180" value={selected.rotation} onChange={(event) => updateElement(selected.id, { rotation: Number(event.target.value) })} className="w-full accent-[#7C3AED]" />
               <div className="grid grid-cols-2 gap-2">
@@ -1144,7 +1121,6 @@ export default function StoryboardEditor({ document: savedDocument, characters, 
           )}
         </div>
       </div>
-
       {exportError && <p role="alert" className="text-xs text-red-700">{exportError}</p>}
       <p className="text-[11px] text-[#82798B]">그림과 여백을 한 캔버스에서 편집합니다. 말풍선 위치는 크게 비교·한 화 이어보기·PNG·SVG에 동일하게 반영됩니다.</p>
       <div className="flex flex-wrap items-center justify-between gap-2">

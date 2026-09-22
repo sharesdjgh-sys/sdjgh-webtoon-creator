@@ -1,4 +1,5 @@
 import { normalizeWebtoonShot } from "@/lib/webtoonShots";
+import { ensureProjectAddresses } from "@/lib/projectAddress";
 import { DEFAULT_BRIEF, DEFAULT_WORLD, type CreativeBrief, type WorldBible } from "@/lib/creation";
 
 export type ChatMessage = {
@@ -201,6 +202,7 @@ export type Episode = {
 
 export type Project = {
   id: string;
+  shortId?: string;
   workflowVersion?: number;
   brief: CreativeBrief;
   world: WorldBible;
@@ -352,7 +354,7 @@ export function getProjects(): Project[] {
     const stored = localStorage.getItem(KEY) ?? "[]";
     const parsed = JSON.parse(stored) as Project[];
     if (!Array.isArray(parsed)) return [];
-    const normalized = parsed.map(normalizeProject);
+    const normalized = ensureProjectAddresses(parsed.map(normalizeProject));
     const normalizedJson = JSON.stringify(normalized);
     if (normalizedJson !== JSON.stringify(parsed)) localStorage.setItem(KEY, normalizedJson);
     return normalized;
@@ -362,12 +364,19 @@ export function getProjects(): Project[] {
 }
 
 export function saveProjects(projects: Project[]): void {
-  localStorage.setItem(KEY, JSON.stringify(projects.map(normalizeProject)));
+  localStorage.setItem(KEY, JSON.stringify(ensureProjectAddresses(projects.map(normalizeProject))));
   window.dispatchEvent?.(new Event("webtoon-projects-changed"));
 }
 
 export function getProject(id: string): Project | null {
-  return getProjects().find((p) => p.id === id) ?? null;
+  const projects = getProjects();
+  return projects.find(p => p.id === id) ?? projects.find(p => p.shortId === id) ?? null;
+}
+
+export function projectHref(project: string | Project, stage: string): string {
+  const resolved = typeof project === "string" ? getProject(project) : project;
+  return resolved?.shortId ? `/p/${encodeURIComponent(resolved.shortId)}/${encodeURIComponent(stage)}`
+    : `/project/${encodeURIComponent(typeof project === "string" ? project : project.id)}/${encodeURIComponent(stage)}`;
 }
 
 export function updateProject(id: string, updates: Partial<Project>): void {
@@ -406,6 +415,7 @@ export function createProject(data: {
     ideaChat: [],
   };
   const projects = getProjects();
+  project.shortId = ensureProjectAddresses([...projects, project]).at(-1)!.shortId;
   saveProjects([project, ...projects]);
   autoSaveToFile(project);
   return project;

@@ -1,5 +1,7 @@
 "use client";
 
+import { projectHref } from "@/lib/storage";
+
 import { useState, useEffect, use } from "react";
 import Link from "next/link";
 import { autofillPayload } from "@/lib/autofillContext";
@@ -204,7 +206,7 @@ export default function SubmitPage({ params }: { params: Promise<{ id: string }>
           )}
 
           <div className="flex items-center justify-between">
-            <Link href={`/project/${id}/episodes`}>
+            <Link href={projectHref(id, "episodes")}>
               <button className="flex items-center gap-2 text-xs font-medium px-4 py-2.5 rounded-full border border-[#EBE7E0] text-[#7A7067] hover:bg-[#F4F1EC] transition-all duration-200">
                 <ArrowLeft className="w-3.5 h-3.5" /> 이전: 콘티 · 작화
               </button>

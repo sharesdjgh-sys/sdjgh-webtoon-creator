@@ -1,4 +1,6 @@
 "use client";
+
+import { projectHref } from "@/lib/storage";
 import { use, useEffect, useState } from "react";
 import Link from "next/link";
 import { autofillPayload } from "@/lib/autofillContext";
@@ -64,7 +66,7 @@ export default function WorldPage({ params }: { params: Promise<{ id: string }> 
           { key: "undecided", label: "미정 / AI 제안 후보", hint: "아직 고르지 않은 이름·관계·반전" },
           { key: "foreshadowing", label: "복선 기록", hint: "단서 / 심은 회차 / 회수할 회차 / 계획·등장·회수 상태" },
         ]} /></section>
-        <div className="flex items-center justify-between gap-4"><p role="status" className="text-xs text-[#82798B]">{status || (dirty ? "저장하지 않은 변경사항이 있어요." : "")}</p><Link href={`/project/${id}/story`} onClick={event => { if (!save()) event.preventDefault(); }} className="rounded-full bg-[#7C3AED] px-5 py-3 text-xs font-bold text-white">저장하고 스토리 구조로 →</Link></div>
+        <div className="flex items-center justify-between gap-4"><p role="status" className="text-xs text-[#82798B]">{status || (dirty ? "저장하지 않은 변경사항이 있어요." : "")}</p><Link href={projectHref(id, "story")} onClick={event => { if (!save()) event.preventDefault(); }} className="rounded-full bg-[#7C3AED] px-5 py-3 text-xs font-bold text-white">저장하고 스토리 구조로 →</Link></div>
       </main>
     </div>
     {project && <MobileChatSheet step="story" initialMessage="세계관을 함께 정해요. 이 세계에서 가능한 특별한 일은 무엇인가요?" initialMessages={project.worldChat} onMessagesChange={worldChat => updateProject(id, { worldChat })} />}

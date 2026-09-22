@@ -3,11 +3,30 @@ import { textDecoration } from "@/lib/webtoonDecoration";
 
 export function defaultElementFontSize(element: StoryboardElement): number {
   if (element.type === "sfx") return Math.max(28, Math.min(72, element.height * 0.65));
-  if (element.type === "caption") return Math.max(16, Math.min(26, element.height / 4));
+  if (element.type === "speech" || element.type === "caption") return 35;
   return Math.max(16, Math.min(28, element.height / 5));
 }
 export function elementFontWeight(element: StoryboardElement): number {
   return element.fontWeight ?? (element.type === "sfx" ? 900 : element.balloonStyle === "shout" ? 800 : element.balloonStyle === "whisper" ? 400 : 600);
+}
+
+/** Explicit creation/resize operation only; never run while displaying saved lettering. */
+export function sizeBalloonForFont(element: StoryboardElement, width: number, height: number, stack: string, fontSize = 35): StoryboardElement {
+  if (element.type !== "speech" && element.type !== "caption") return element;
+  const base = fitOverlayToCanvas({ ...element, fontSize }, width, height);
+  const fits = (candidate: StoryboardElement) => layoutStoryboardText(candidate, stack).fontSize >= fontSize - .001;
+  if (fits(base)) return base;
+  const centerX = base.x + base.width / 2, centerY = base.y + base.height / 2;
+  const atScale = (scale: number) => fitOverlayToCanvas({ ...base, width: base.width * scale, height: base.height * scale,
+    x: centerX - base.width * scale / 2, y: centerY - base.height * scale / 2 }, width, height);
+  const largest = atScale(Math.max(width / base.width, height / base.height) * 4);
+  if (!fits(largest)) return largest;
+  let low = 1, high = largest.width / base.width;
+  for (let i = 0; i < 20; i++) {
+    const mid = (low + high) / 2;
+    if (fits(atScale(mid))) high = mid; else low = mid;
+  }
+  return atScale(high);
 }
 export function resolveFontStack(stack: string): string {
   return stack.replace(/var\((--[^)]+)\),?\s*/g, (_, key: string) => {

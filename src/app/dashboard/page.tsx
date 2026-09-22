@@ -1,5 +1,7 @@
 "use client";
 
+import { projectHref } from "@/lib/storage";
+
 import { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -30,7 +32,7 @@ const GENRE_COLORS: Record<string, { border: string; bg: string; text: string }>
 
 function getProjectHref(p: Project) {
   const route = STEP_ROUTES[Math.min(p.currentStep, STEP_ROUTES.length) - 1];
-  return `/project/${p.id}/${route}`;
+  return projectHref(p.id, route);
 }
 
 function getDday(deadline: string): { label: string; urgent: boolean; warning: boolean } | null {
@@ -122,7 +124,7 @@ export default function DashboardPage() {
       setShowModal(false);
       setForm(EMPTY_FORM);
       setCreating(false);
-      router.push(`/project/${p.id}/idea`);
+      router.push(projectHref(p.id, "idea"));
     }
   };
 

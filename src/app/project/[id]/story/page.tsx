@@ -1,5 +1,7 @@
 "use client";
 
+import { projectHref } from "@/lib/storage";
+
 import { useState, useEffect, use, useRef } from "react";
 import Link from "next/link";
 import SettingFields from "@/components/creation/SettingFields";
@@ -90,7 +92,7 @@ export default function StoryPage({ params }: { params: Promise<{ id: string }> 
       setShowEmptyModal(true);
     } else {
       save();
-      router.push(`/project/${id}/script`);
+      router.push(projectHref(id, "script"));
     }
   };
 
@@ -220,7 +222,7 @@ export default function StoryPage({ params }: { params: Promise<{ id: string }> 
           description="아이디어 발굴 대화 내용을 바탕으로 AI가 로그라인, 주제, 배경, 줄거리를 자동으로 채워드릴 수 있어요."
           onAutofill={() => { setShowEmptyModal(false); autofill(); }}
           onAskMentor={() => { setShowEmptyModal(false); mobileChatRef.current?.openAndFocus(); }}
-          onGoAnyway={() => { setShowEmptyModal(false); router.push(`/project/${id}/script`); }}
+          onGoAnyway={() => { setShowEmptyModal(false); router.push(projectHref(id, "script")); }}
           onClose={() => setShowEmptyModal(false)}
           autofilling={autofilling}
         />
