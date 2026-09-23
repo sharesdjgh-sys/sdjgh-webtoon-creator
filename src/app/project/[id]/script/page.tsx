@@ -12,10 +12,13 @@ import { Input } from "@/components/ui/input";
 import { autofillPayload } from "@/lib/autofillContext";
 import StageIntro from "@/components/creation/StageIntro";
 import { Textarea } from "@/components/ui/textarea";
+import { removeEpisode } from "@/lib/episodeEditing";
+import DeleteEpisodeDialog from "@/components/creation/DeleteEpisodeDialog";
+import EpisodeList from "@/components/progress-tracker/EpisodeList";
 import StepIndicator from "@/components/progress-tracker/StepIndicator";
 import MobileChatSheet, { type MobileChatSheetHandle } from "@/components/mobile/MobileChatSheet";
 import MobileStepBar from "@/components/MobileStepBar";
-import { Save, ArrowRight, ArrowLeft, CheckCircle, Sparkles, Check, Download, FileText, Plus, ChevronDown, ChevronUp, Users, Wand2, Eye, PenLine, RefreshCw } from "lucide-react";
+import { Save, ArrowRight, ArrowLeft, Sparkles, Check, Download, FileText, ChevronDown, ChevronUp, Users, Wand2, Eye, PenLine, RefreshCw } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import { getProject, updateProject, type Episode, type Cut, type Project, type Character, type ChatMessage } from "@/lib/storage";
 import { downloadEpisode, downloadAllEpisodes } from "@/lib/download";
@@ -66,6 +69,7 @@ export default function ScriptPage({ params }: { params: Promise<{ id: string }>
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [autofilling, setAutofilling] = useState(false);
+  const [planning, setPlanning] = useState(false);
   const [aiError, setAiError] = useState("");
   const [isDirty, setIsDirty] = useState(false);
   const [noIdeaChat, setNoIdeaChat] = useState(false);
@@ -87,6 +91,27 @@ export default function ScriptPage({ params }: { params: Promise<{ id: string }>
   const updateEp = (field: keyof Episode, value: string | boolean | Cut[]) => {
     setEpisodes((eps) => eps.map((ep, i) => (i === activeEp ? { ...ep, [field]: value } : ep)));
     setIsDirty(true);
+  };
+
+  const deleteDisabledReason = !project ? "작품을 불러오는 중이에요."
+    : episodes.length <= 1 ? "최소 한 화는 남겨두어야 해요."
+    : autofilling || planning ? "AI 생성·이미지 저장이 끝나면 삭제할 수 있어요." : undefined;
+  const deleteEpisode = () => {
+    if (deleteDisabledReason) return false;
+    const target = episodes[activeEp];
+    const removal = removeEpisode(episodes, activeEp);
+    if (!target || !removal) return false;
+    const latest = getProject(id);
+    if (!latest) throw new Error("작품을 다시 열어 주세요.");
+    const story = { ...latest.story, totalEpisodes: String(removal.episodes.length) };
+    updateProject(id, { episodes: removal.episodes, story });
+    setEpisodes(removal.episodes);
+    setActiveEp(removal.activeIndex);
+    setProject(current => current ? { ...current, episodes: removal.episodes, story } : current);
+    setIsDirty(false);
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
+    return true;
   };
 
   const addEpisode = () => {
@@ -202,44 +227,28 @@ export default function ScriptPage({ params }: { params: Promise<{ id: string }>
 
       <div className="max-w-7xl mx-auto px-4 py-6 flex gap-5">
         {/* Left sidebar */}
-        <aside className="hidden lg:block w-52 flex-shrink-0 space-y-3 sticky top-20 self-start">
+        <aside className="hidden lg:block w-64 flex-shrink-0 space-y-3 sticky top-20 self-start max-h-[calc(100dvh-6rem)] overflow-y-auto">
           <div className="bg-white rounded-2xl border border-[#EBE7E0] p-4 shadow-[0_2px_12px_rgba(0,0,0,0.04)]">
-            <StepIndicator currentStep={project?.currentStep ?? 1} activeStep={5} projectId={id} isDirty={isDirty} />
+            <StepIndicator currentStep={project?.currentStep ?? 1} activeStep={5} projectId={id} isDirty={isDirty}
+              activeStepContent={<EpisodeList episodes={episodes} activeIndex={activeEp} onSelect={setActiveEp} onAdd={addEpisode} stage="script" />} />
           </div>
 
-          <div className="bg-white rounded-2xl border border-[#EBE7E0] p-4 shadow-[0_2px_12px_rgba(0,0,0,0.04)]">
-            <div className="flex items-center justify-between mb-3">
-              <span className="text-xs font-bold text-[#1A1A1A]">화 목록</span>
-              <button onClick={addEpisode} className="text-[#7C3AED] hover:text-[#6D28D9] transition-colors">
-                <Plus className="w-4 h-4" />
-              </button>
-            </div>
-            <div className="space-y-1">
-              {episodes.map((ep, i) => (
-                <button
-                  key={i}
-                  onClick={() => setActiveEp(i)}
-                  className={`w-full text-left px-3 py-2 rounded-xl text-xs flex items-center justify-between transition-all duration-200 ${
-                    activeEp === i
-                      ? "bg-[#7C3AED]/8 text-[#7C3AED] font-semibold border border-[#7C3AED]/20"
-                      : "text-[#7A7067] hover:bg-[#F4F1EC]"
-                  }`}
-                >
-                  <span>{ep.episodeNumber}화 {ep.title && `· ${ep.title.slice(0, 6)}`}</span>
-                  {ep.isCompleted && <CheckCircle className="w-3.5 h-3.5 text-green-500 flex-shrink-0" />}
-                </button>
-              ))}
-            </div>
-          </div>
         </aside>
 
         <main className="flex-1 min-w-0 space-y-4">
+          <div className="rounded-2xl border border-[#EBE7E0] bg-white p-3 lg:hidden">
+            <EpisodeList episodes={episodes} activeIndex={activeEp} onSelect={setActiveEp} onAdd={addEpisode} stage="script" defaultExpanded={false} />
+          </div>
           <StageIntro stage="script" />
           {aiError && <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-xs text-red-700">{aiError}</p>}
-          <div className="flex items-center justify-between mb-2">
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-2">
             <div>
               <p className="text-[10px] font-medium text-[#7C3AED] uppercase tracking-widest mb-1">Step 05</p>
-              <h1 className="text-xl font-bold text-[#1A1A1A] tracking-tight">{ep?.episodeNumber}화 대본 작성</h1>
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+                <h1 className="text-xl font-bold text-[#1A1A1A] tracking-tight">{ep?.episodeNumber}화 대본 작성</h1>
+                <DeleteEpisodeDialog episode={ep} disabledReason={deleteDisabledReason} onConfirm={deleteEpisode} />
+              </div>
+              {deleteDisabledReason && <p id="episode-delete-reason" className="mt-1 text-[10px] leading-4 text-[#78716C]">{deleteDisabledReason}</p>}
             </div>
             <label className="flex items-center gap-2 text-xs text-[#7A7067] cursor-pointer">
               <input
@@ -265,34 +274,11 @@ export default function ScriptPage({ params }: { params: Promise<{ id: string }>
             </div>
           )}
 
-          {/* 모바일 화 선택 탭 */}
-          <div className="lg:hidden flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none">
-            {episodes.map((ep, i) => (
-              <button
-                key={i}
-                onClick={() => setActiveEp(i)}
-                className={`flex-shrink-0 flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-medium border transition-all duration-200 ${
-                  activeEp === i
-                    ? "bg-[#7C3AED]/10 text-[#7C3AED] border-[#7C3AED]/30 font-semibold"
-                    : "bg-white text-[#7A7067] border-[#EBE7E0] hover:bg-[#F4F1EC]"
-                }`}
-              >
-                {ep.episodeNumber}화
-                {ep.isCompleted && <CheckCircle className="w-3 h-3 text-green-500 ml-0.5" />}
-              </button>
-            ))}
-            <button
-              onClick={addEpisode}
-              className="flex-shrink-0 w-7 h-7 rounded-full border border-dashed border-[#EBE7E0] flex items-center justify-center text-[#ADA8A0] hover:border-[#7C3AED]/40 hover:text-[#7C3AED] transition-colors"
-            >
-              <Plus className="w-3.5 h-3.5" />
-            </button>
-          </div>
 
           <section className="rounded-2xl border border-[#EBE7E0] bg-white p-5 space-y-4">
             <h2 className="text-sm font-bold">대본 전에 정하는 회차 설계</h2>
             <p className="text-xs leading-6 text-[#7A7067]">기획만 있어도 AI가 회차 설계부터 채워줘요. 아래 대본 AI 자동채우기는 비어 있는 회차 설계와 대본을 함께 작성해요.</p>
-            <AiFillButton key={ep?.episodeNumber} label="회차 설계 AI 채우기" resultKey="episodePlan" disabled={!project || !ep || autofilling}
+            <AiFillButton onBusyChange={setPlanning} key={ep?.episodeNumber} label="회차 설계 AI 채우기" resultKey="episodePlan" disabled={!project || !ep || autofilling}
               getSnapshot={() => {
                 const latest = getProject(id);
                 if (!latest || !ep) throw new Error("회차를 다시 열어 주세요.");

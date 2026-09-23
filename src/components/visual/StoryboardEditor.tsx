@@ -679,9 +679,8 @@ export default function StoryboardEditor({ document: savedDocument, characters, 
           : ["콘티의 위치와 포즈 지시를 확인하고 있어요.", "캐릭터 시트와 참고 포즈를 비교하고 있어요.", "Gemini가 새 레이어를 그리고 있어요.", "생성된 그림에서 실제 관절 위치를 분석하고 있어요."]}
       />
 
-      <div className={`grid min-h-0 items-start gap-3 ${expanded ? "grid-cols-[minmax(0,1fr)_minmax(0,1fr)_240px]" : "grid-cols-[minmax(0,1fr)_280px] grid-rows-[minmax(0,1fr)]"}`}
-        style={expanded ? undefined : { height: "min(760px, calc(100dvh - 160px))" }}>
-        <section className={expanded ? "min-w-0 space-y-2" : "flex h-full min-h-0 min-w-0 flex-col gap-2"} aria-label="콘티 편집 화면">
+      <div className={`grid min-h-0 items-start gap-3 ${expanded ? "grid-cols-[minmax(0,1fr)_minmax(0,1fr)_240px]" : "grid-cols-[minmax(0,1fr)_280px]"}`}>
+        <section className="min-w-0 space-y-2" aria-label="콘티 편집 화면">
           <div className="flex min-h-9 shrink-0 flex-wrap items-center justify-between gap-2">
             {expanded ? <h3 className="text-sm font-bold text-[#5B21B6]">콘티 · 직접 편집</h3> : (
               <div className="inline-flex rounded-xl bg-[#EDE9FE] p-1" aria-label="미리보기 화면 선택">
@@ -692,8 +691,8 @@ export default function StoryboardEditor({ document: savedDocument, characters, 
             {!expanded && sceneAssetId && finalView && <label className="flex items-center gap-1 text-[11px]"><input type="checkbox" checked={showTypography} onChange={event => setShowTypography(event.target.checked)} /> 말풍선·글자 표시</label>}
             {!expanded && <button ref={compareButtonRef} type="button" onClick={() => setExpanded(true)} className="editor-tool" aria-label="콘티와 실제 그림 크게 비교"><Expand className="h-3.5 w-3.5" /> 크게 비교</button>}
           </div>
-        <div ref={editViewport} aria-label="콘티 미리보기 스크롤" className={`relative overflow-auto overscroll-contain rounded-xl bg-[#E9E4DC] p-3 ${expanded ? "min-h-[260px]" : "min-h-0 flex-1"}`}
-          style={{ containerType: "size", overflowAnchor: "none", ...(expanded ? { height: "62vh" } : {}) }}>
+        <div ref={editViewport} aria-label="콘티 미리보기 스크롤" className="relative overflow-x-auto rounded-xl bg-[#E9E4DC] p-3"
+          style={{ containerType: "inline-size", overflowAnchor: "none" }}>
           <div className="relative mx-auto shadow-xl bg-white" style={{ aspectRatio: `${canvas.width}/${canvas.height}`, width: previewWidth, maxWidth: previewWidth }}>
             <div className="absolute overflow-hidden" style={artStyle}>
             {sceneAssetId && finalView && <StoredImage assetId={sceneAssetId} alt="생성된 웹툰 장면" className="absolute inset-0 w-full h-full object-contain" />}
@@ -803,7 +802,7 @@ export default function StoryboardEditor({ document: savedDocument, characters, 
               <h3 className="text-sm font-bold text-[#5B21B6]">실제 그림 · 결과 확인</h3>
               <span className="text-[10px] text-[#82798B]">{generatingScene ? "생성 중" : sceneCandidate ? "새 생성 결과 · 적용 전" : sceneStale ? "재생성 필요" : sceneAssetId ? "적용된 그림" : "아직 생성 전"}</span>
             </div>
-            <div ref={compareViewport} aria-label="실제 그림 미리보기 스크롤" className="min-h-[260px] overflow-auto overscroll-contain rounded-xl bg-[#E9E4DC] p-3" style={{ containerType: "size", overflowAnchor: "none", height: "62vh" }}>
+            <div ref={compareViewport} aria-label="실제 그림 미리보기 스크롤" className="overflow-x-auto rounded-xl bg-[#E9E4DC] p-3" style={{ containerType: "inline-size", overflowAnchor: "none" }}>
               <div className="relative mx-auto bg-white shadow-xl" style={{ aspectRatio: `${canvas.width}/${canvas.height}`, width: previewWidth, maxWidth: previewWidth }}>
                 <div className="absolute overflow-hidden" style={artStyle}>
                 {sceneCandidate ? <BlobImage blob={sceneCandidate} alt="새로 생성한 장면 후보" className="absolute inset-0 h-full w-full object-contain" /> : sceneAssetId ? <StoredImage assetId={sceneAssetId} alt="콘티와 비교할 실제 그림" className="absolute inset-0 h-full w-full object-contain" /> : (
@@ -843,9 +842,9 @@ export default function StoryboardEditor({ document: savedDocument, characters, 
           </section>
         )}
         <div role="region" aria-label="레이어 및 대사 설정" tabIndex={0}
-          className={`min-h-0 overflow-y-auto overscroll-contain rounded-xl border border-[#EBE7E0] bg-white p-3 space-y-3 focus-visible:outline-2 focus-visible:outline-[#7C3AED] ${expanded ? "max-h-[72vh]" : "h-full"}`}
-          style={{ scrollbarGutter: "stable" }}>
-          <p className="text-[10px] text-[#8B7EAE]">미리보기는 고정되어 있습니다. 이 설정창 안에서 스크롤하세요.</p>
+          className="min-h-0 min-w-0 self-stretch overflow-y-auto overscroll-contain rounded-xl border border-[#EBE7E0] bg-white p-3 space-y-3 focus-visible:outline-2 focus-visible:outline-[#7C3AED]"
+          style={{ contain: "size", scrollbarGutter: "stable" }}>
+          <p className="text-[10px] text-[#8B7EAE]">옵션은 그림 높이에 맞춰 표시됩니다. 더 많은 설정은 이 영역 안에서 스크롤하세요.</p>
           <section className="space-y-2 rounded-xl border border-[#DDD6FE] bg-[#FAF8FF] p-3" aria-label="AI 연출 수정">
             <p className="text-xs font-semibold text-[#5B21B6]">원하는 느낌을 말해주세요</p>
             <textarea aria-label="AI 그림 수정 요청" maxLength={1500} rows={3} value={revision} onChange={event => setRevision(event.target.value)} placeholder="예: 겁먹었지만 태연한 척하게. 얼굴의 그림자는 더 깊게, 번개는 조금 줄여줘." className="visual-input" />

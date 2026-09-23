@@ -3,7 +3,7 @@
 import { projectHref } from "@/lib/storage";
 
 import Link from "next/link";
-import { useCallback, useSyncExternalStore } from "react";
+import { useCallback, useSyncExternalStore, type ReactNode } from "react";
 import { STEPS } from "@/lib/utils";
 import { getProject } from "@/lib/storage";
 import { workflowStatuses, type WorkflowStatus } from "@/lib/workflowProgress";
@@ -15,6 +15,7 @@ interface StepIndicatorProps {
   activeStep?: number;
   projectId?: string;
   isDirty?: boolean;
+  activeStepContent?: ReactNode;
 }
 
 function subscribe(onChange: () => void) {
@@ -37,7 +38,7 @@ const statusColors: Record<WorkflowStatus | "저장 필요" | "불러오는 중"
   "불러오는 중": "bg-[#F4F1EC] text-[#78716C]",
 };
 
-export default function StepIndicator({ currentStep, activeStep, projectId, isDirty }: StepIndicatorProps) {
+export default function StepIndicator({ currentStep, activeStep, projectId, isDirty, activeStepContent }: StepIndicatorProps) {
   const active = activeStep ?? currentStep;
   const getSnapshot = useCallback(() => {
     const project = projectId ? getProject(projectId) : null;
@@ -64,8 +65,8 @@ export default function StepIndicator({ currentStep, activeStep, projectId, isDi
           const status = isCurrent && isDirty ? "저장 필요" : statuses[index] ?? "불러오는 중";
           const isReady = status === "초안 준비" || status === "완료";
           const inner = (
-            <div className={`flex items-start gap-2 rounded-xl border px-2 py-2.5 transition-colors ${isCurrent ? "border-[#7C3AED]/30 bg-[#F5F3FF]" : "border-transparent hover:bg-[#F4F1EC]"}`}>
-              <span aria-hidden="true" className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border text-[9px] ${isReady ? "border-emerald-600 bg-emerald-600 text-white" : isCurrent ? "border-[#7C3AED] text-[#7C3AED]" : "border-[#D4CFC9] text-[#78716C]"}`}>
+            <div className={`flex items-center gap-2 rounded-xl border px-2 py-2.5 transition-colors ${isCurrent ? "border-[#7C3AED]/30 bg-[#F5F3FF]" : "border-transparent hover:bg-[#F4F1EC]"}`}>
+              <span aria-hidden="true" className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full border text-[9px] ${isReady ? "border-emerald-600 bg-emerald-600 text-white" : isCurrent ? "border-[#7C3AED] text-[#7C3AED]" : "border-[#D4CFC9] text-[#78716C]"}`}>
                 {isReady ? <Check className="h-2.5 w-2.5" strokeWidth={3} /> : step.id}
               </span>
               <div className="min-w-0 flex-1">
@@ -73,18 +74,23 @@ export default function StepIndicator({ currentStep, activeStep, projectId, isDi
                   <span className={`text-xs font-semibold ${isCurrent ? "text-[#7C3AED]" : "text-[#514A45]"}`}>{step.label}</span>
                   {isCurrent && <span className="text-[9px] font-semibold text-[#7C3AED]">현재</span>}
                 </div>
-                <span className={`mt-1 inline-block rounded-md px-1.5 py-0.5 text-[10px] font-medium ${statusColors[status]}`}>{status}</span>
               </div>
+              <span className={`ml-auto shrink-0 whitespace-nowrap rounded-md px-1.5 py-0.5 text-[10px] font-medium ${statusColors[status]}`}>{status}</span>
             </div>
           );
-          return projectId ? (
+          return <div key={step.id}>
+            {projectId ? (
             <Link key={step.id} className="block rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#7C3AED]" href={projectHref(projectId, step.route)} aria-current={isCurrent ? "step" : undefined}
               onClick={(event) => {
                 if (isDirty && !confirm("저장하지 않은 변경사항이 있어요. 이동하시겠어요?")) event.preventDefault();
               }}>
               {inner}
             </Link>
-          ) : <div key={step.id}>{inner}</div>;
+          ) : <div>{inner}</div>}
+            {isCurrent && activeStepContent && (
+              <div className="ml-3 mt-1 mb-2 border-l border-[#DDD6FE] pl-2">{activeStepContent}</div>
+            )}
+          </div>;
         })}
       </div>
       <div className="mt-4 flex justify-center border-t border-[#EEEAE5] pt-4">

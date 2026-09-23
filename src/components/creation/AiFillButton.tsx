@@ -8,16 +8,17 @@ type Props = {
   label: string;
   disabled?: boolean;
   resultKey?: string;
+  onBusyChange?: (busy: boolean) => void;
   getSnapshot: () => Snapshot;
   onApply: (draft: Record<string, string>, before: Record<string, string>, mode: FillMode) => void;
 };
-export default function AiFillButton({ label, disabled, resultKey, getSnapshot, onApply }: Props) {
+export default function AiFillButton({ label, disabled, resultKey, getSnapshot, onApply, onBusyChange }: Props) {
   const [mode, setMode] = useState<FillMode>("missing");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [failed, setFailed] = useState(false);
   const active = useRef<AbortController | null>(null);
-  useEffect(() => () => active.current?.abort(), []);
+  useEffect(() => () => { active.current?.abort(); onBusyChange?.(false); }, [onBusyChange]);
   const fill = async () => {
     if (active.current || disabled) return;
     setMessage(""); setFailed(false);
@@ -31,7 +32,7 @@ export default function AiFillButton({ label, disabled, resultKey, getSnapshot, 
       }
       if (mode === "replace" && Object.values(fields).some(value => value.trim())
         && !window.confirm("이 영역의 기존 내용을 AI 초안으로 바꿀까요? 다른 영역과 생성된 이미지는 유지됩니다.")) return;
-      active.current = controller; setBusy(true);
+      active.current = controller; setBusy(true); onBusyChange?.(true);
       timeout = setTimeout(() => controller.abort(), 90000);
       const response = await fetch("/api/ai/autofill", {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -49,7 +50,7 @@ export default function AiFillButton({ label, disabled, resultKey, getSnapshot, 
       setMessage(controller.signal.aborted ? "요청이 중단되었어요. 입력은 유지됩니다. 다시 시도해 주세요." : error instanceof Error ? error.message : "AI 요청에 실패했어요.");
     } finally {
       if (timeout) clearTimeout(timeout);
-      active.current = null; setBusy(false);
+      active.current = null; setBusy(false); onBusyChange?.(false);
     }
   };
   return <div className="space-y-2">

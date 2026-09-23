@@ -11,11 +11,14 @@ import StageIntro from "@/components/creation/StageIntro";
 import { useRouter } from "next/navigation";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { removeEpisode } from "@/lib/episodeEditing";
+import DeleteEpisodeDialog from "@/components/creation/DeleteEpisodeDialog";
+import EpisodeList from "@/components/progress-tracker/EpisodeList";
 import StepIndicator from "@/components/progress-tracker/StepIndicator";
 import EmptyContentModal from "@/components/EmptyContentModal";
 import MobileChatSheet, { type MobileChatSheetHandle } from "@/components/mobile/MobileChatSheet";
 import MobileStepBar from "@/components/MobileStepBar";
-import { Plus, Trash2, Save, ArrowRight, CheckCircle, Sparkles, Check, Download, Film, Wand2, ImageIcon, RefreshCw, X } from "lucide-react";
+import { Plus, Trash2, Save, ArrowRight, Sparkles, Check, Download, Film, Wand2, ImageIcon, RefreshCw, X, ChevronDown, ChevronRight } from "lucide-react";
 import { createCut, getProject, updateProject, type Episode, type Cut, type Project, type ChatMessage, type PanelAspectRatio, type StoryboardDocument, type SceneReview } from "@/lib/storage";
 import { downloadEpisode, downloadAllEpisodes } from "@/lib/download";
 import { canApplyScene, sceneReviewSummary } from "@/lib/sceneReview";
@@ -81,15 +84,34 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
   ]);
   const [activeEp, setActiveEp] = useState(0);
   const cutCards = useRef(new Map<string, HTMLDivElement>());
+  const [collapsedCutIds, setCollapsedCutIds] = useState<Set<string>>(new Set());
+  const setCutCollapsed = (cutId: string, collapsed: boolean) => {
+    setCollapsedCutIds(current => {
+      const next = new Set(current);
+      if (collapsed) next.add(cutId); else next.delete(cutId);
+      return next;
+    });
+  };
+  const scrollToCut = (cutId: string) => {
+    window.requestAnimationFrame(() => {
+      const card = cutCards.current.get(cutId);
+      if (!card) return;
+      card.focus({ preventScroll: true });
+      card.scrollIntoView({ block: "start", behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth" });
+    });
+  };
   const navigateToCut = (cutId: string) => {
-    const card = cutCards.current.get(cutId);
-    if (!card) return;
-    card.focus({ preventScroll: true });
-    card.scrollIntoView({ block: "start", behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth" });
+    setCutCollapsed(cutId, false);
+    scrollToCut(cutId);
+  };
+  const collapseCut = (cutId: string) => {
+    setCutCollapsed(cutId, true);
+    scrollToCut(cutId);
   };
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [mediaSavingCount, setMediaSavingCount] = useState(0);
   const [autofilling, setAutofilling] = useState(false);
   const [showEmptyModal, setShowEmptyModal] = useState(false);
   const [isDirty, setIsDirty] = useState(false);
@@ -161,6 +183,27 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
     }, 1000);
     return () => window.clearInterval(timer);
   }, [aiCutStartedAt]);
+
+  const deleteDisabledReason = !project ? "작품을 불러오는 중이에요."
+    : episodes.length <= 1 ? "최소 한 화는 남겨두어야 해요."
+    : autofilling || bulkLayoutGenerating || !!aiCutProgress || mediaSavingCount > 0 || layoutGeneratingIds.size > 0 || layerGeneratingIds.size > 0 || sceneGeneratingIds.size > 0 || poseDetectingIds.size > 0 || Object.keys(layerBatchProgress).length > 0 ? "AI 생성·이미지 저장이 끝나면 삭제할 수 있어요." : undefined;
+  const deleteEpisode = () => {
+    if (deleteDisabledReason) return false;
+    const target = episodes[activeEp];
+    const removal = removeEpisode(episodes, activeEp);
+    if (!target || !removal) return false;
+    const latest = getProject(id);
+    if (!latest) throw new Error("작품을 다시 열어 주세요.");
+    const story = { ...latest.story, totalEpisodes: String(removal.episodes.length) };
+    updateProject(id, { episodes: removal.episodes, story });
+    setEpisodes(removal.episodes);
+    setActiveEp(removal.activeIndex);
+    setProject(current => current ? { ...current, episodes: removal.episodes, story } : current);
+    setIsDirty(false);
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
+    return true;
+  };
 
   const addEpisode = () => {
     const newEp: Episode = {
@@ -498,6 +541,7 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
   const setPoseReference = async (cutIdx: number, layerId: string, file: File | null) => {
     const layer = episodes[activeEp]?.cuts[cutIdx]?.storyboard?.elements.find((element) => element.id === layerId);
     if (!layer) return;
+    setMediaSavingCount(count => count + 1);
     try {
       if (!file) {
         await deleteMediaAsset(layer.poseReferenceAssetId);
@@ -528,6 +572,8 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
       setVisualError("포즈 참고 이미지를 연결했습니다. ‘이 설명으로 다시 그리기’를 누르면 적용됩니다.");
     } catch (error) {
       setVisualError(error instanceof Error ? error.message : "포즈 참고 이미지를 저장하지 못했습니다.");
+    } finally {
+      setMediaSavingCount(count => count - 1);
     }
   };
 
@@ -573,6 +619,7 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
       setVisualError("컷 비율이나 구도가 변경되었습니다. 현재 설정으로 장면을 다시 생성해주세요.");
       return;
     }
+    setMediaSavingCount(count => count + 1);
     try {
       const asset = await saveMediaAsset({ projectId: id, ownerId: cut.id, ownerType: "scene", mimeType: candidate.blob.type || "image/jpeg", blob: candidate.blob });
       // Do not delete the last saved artwork before project persistence succeeds.
@@ -584,6 +631,8 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
       setSceneCandidates((current) => { const next = { ...current }; delete next[cut.id]; return next; });
     } catch {
       setVisualError("브라우저 이미지 저장 공간을 확인해주세요.");
+    } finally {
+      setMediaSavingCount(count => count - 1);
     }
   };
 
@@ -729,38 +778,18 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
 
       <div className="max-w-7xl mx-auto px-4 py-6 flex gap-5">
         {/* Left sidebar */}
-        <aside className="hidden lg:block w-52 flex-shrink-0 space-y-3 sticky top-20 self-start">
+        <aside className="hidden lg:block w-64 flex-shrink-0 space-y-3 sticky top-20 self-start max-h-[calc(100dvh-6rem)] overflow-y-auto">
           <div className="bg-white rounded-2xl border border-[#EBE7E0] p-4 shadow-[0_2px_12px_rgba(0,0,0,0.04)]">
-            <StepIndicator currentStep={project?.currentStep ?? 1} activeStep={6} projectId={id} isDirty={isDirty} />
+            <StepIndicator currentStep={project?.currentStep ?? 1} activeStep={6} projectId={id} isDirty={isDirty}
+              activeStepContent={<EpisodeList episodes={episodes} activeIndex={activeEp} onSelect={setActiveEp} onAdd={addEpisode} stage="episodes" />} />
           </div>
 
-          <div className="bg-white rounded-2xl border border-[#EBE7E0] p-4 shadow-[0_2px_12px_rgba(0,0,0,0.04)]">
-            <div className="flex items-center justify-between mb-3">
-              <span className="text-xs font-bold text-[#1A1A1A]">화 목록</span>
-              <button onClick={addEpisode} className="text-[#7C3AED] hover:text-[#6D28D9] transition-colors">
-                <Plus className="w-4 h-4" />
-              </button>
-            </div>
-            <div className="space-y-1">
-              {episodes.map((ep, i) => (
-                <button
-                  key={i}
-                  onClick={() => setActiveEp(i)}
-                  className={`w-full text-left px-3 py-2 rounded-xl text-xs flex items-center justify-between transition-all duration-200 ${
-                    activeEp === i
-                      ? "bg-[#7C3AED]/8 text-[#7C3AED] font-semibold border border-[#7C3AED]/20"
-                      : "text-[#7A7067] hover:bg-[#F4F1EC]"
-                  }`}
-                >
-                  <span>{ep.episodeNumber}화 {ep.title && `· ${ep.title.slice(0, 6)}`}</span>
-                  {ep.isCompleted && <CheckCircle className="w-3.5 h-3.5 text-green-500 flex-shrink-0" />}
-                </button>
-              ))}
-            </div>
-          </div>
         </aside>
 
         <main className="flex-1 min-w-0 space-y-4">
+          <div className="rounded-2xl border border-[#EBE7E0] bg-white p-3 lg:hidden">
+            <EpisodeList episodes={episodes} activeIndex={activeEp} onSelect={setActiveEp} onAdd={addEpisode} stage="episodes" defaultExpanded={false} />
+          </div>
           <StageIntro stage="episodes" />
           {ep && <section aria-label="한 화 원고 미리보기와 다운로드" className="flex items-center justify-between gap-5 rounded-2xl border border-[#DDD6FE] bg-[#F5F3FF] p-5">
             <div>
@@ -773,10 +802,14 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
             </button>
           </section>}
           {ep && !ep.script.trim() && <p className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-xs leading-6">아직 이 화의 대본이 없어요. 회차 · 대본에서 장면의 흐름을 먼저 정하면 컷을 나누기 쉬워요.</p>}
-          <div className="flex items-center justify-between mb-2">
+          <div className="flex flex-wrap items-center justify-between gap-3 mb-2">
             <div>
               <p className="text-[10px] font-medium text-[#7C3AED] uppercase tracking-widest mb-1">Step 06</p>
-              <h1 className="text-xl font-bold text-[#1A1A1A] tracking-tight">{ep?.episodeNumber}화 콘티 제작</h1>
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+                <h1 className="text-xl font-bold text-[#1A1A1A] tracking-tight">{ep?.episodeNumber}화 콘티 제작</h1>
+                <DeleteEpisodeDialog episode={ep} disabledReason={deleteDisabledReason} onConfirm={deleteEpisode} />
+              </div>
+              {deleteDisabledReason && <p id="episode-delete-reason" className="mt-1 text-[10px] leading-4 text-[#78716C]">{deleteDisabledReason}</p>}
             </div>
             <label className="flex items-center gap-2 text-xs text-[#7A7067] cursor-pointer">
               <input
@@ -824,29 +857,6 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
             />
           )}
 
-          {/* 모바일 화 선택 탭 */}
-          <div className="lg:hidden flex items-center gap-2 overflow-x-auto pb-1 scrollbar-none">
-            {episodes.map((ep, i) => (
-              <button
-                key={i}
-                onClick={() => setActiveEp(i)}
-                className={`flex-shrink-0 flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-medium border transition-all duration-200 ${
-                  activeEp === i
-                    ? "bg-[#7C3AED]/10 text-[#7C3AED] border-[#7C3AED]/30 font-semibold"
-                    : "bg-white text-[#7A7067] border-[#EBE7E0] hover:bg-[#F4F1EC]"
-                }`}
-              >
-                {ep.episodeNumber}화
-                {ep.isCompleted && <CheckCircle className="w-3 h-3 text-green-500 ml-0.5" />}
-              </button>
-            ))}
-            <button
-              onClick={addEpisode}
-              className="flex-shrink-0 w-7 h-7 rounded-full border border-dashed border-[#EBE7E0] flex items-center justify-center text-[#ADA8A0] hover:border-[#7C3AED]/40 hover:text-[#7C3AED] transition-colors"
-            >
-              <Plus className="w-3.5 h-3.5" />
-            </button>
-          </div>
 
           {/* 제목 & 줄거리 */}
           <div className="bg-white rounded-2xl border border-[#EBE7E0] p-5 shadow-[0_2px_12px_rgba(0,0,0,0.04)]">
@@ -921,12 +931,21 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
                 </div>
               ) : (
                 <div className="space-y-3">
+                  <div className="flex flex-wrap items-center justify-end gap-2" aria-label="컷 접기 옵션">
+                    <button type="button" onClick={() => setCollapsedCutIds(current => new Set([...current, ...ep.cuts.map(cut => cut.id)]))} className="editor-tool">전체 접기</button>
+                    <button type="button" onClick={() => setCollapsedCutIds(current => { const next = new Set(current); ep.cuts.forEach(cut => next.delete(cut.id)); return next; })} className="editor-tool">전체 펼치기</button>
+                  </div>
                   {ep.cuts.map((cut, cutIdx) => (
                     <div key={cut.id} ref={node => { if (node) cutCards.current.set(cut.id, node); else cutCards.current.delete(cut.id); }}
                       tabIndex={-1} aria-label={`${cutIdx + 1}컷 편집`} className="relative scroll-mt-40 rounded-xl border border-[#EBE7E0] bg-white focus:outline-none focus:ring-2 focus:ring-[#A78BFA]">
                       <div className="flex flex-col gap-2 px-4 py-2.5 bg-[#FBF9F6] border-b border-[#EBE7E0] sm:flex-row sm:items-center sm:justify-between">
                         <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-                          <span className="text-xs font-bold text-[#7C3AED] w-10">컷 {cutIdx + 1}</span>
+                          <button type="button" aria-expanded={!collapsedCutIds.has(cut.id)} aria-controls={"cut-body-" + cut.id}
+                            aria-label={"컷 " + (cutIdx + 1) + (collapsedCutIds.has(cut.id) ? " 펼치기" : " 접기")}
+                            onClick={() => setCutCollapsed(cut.id, !collapsedCutIds.has(cut.id))}
+                            className="inline-flex items-center gap-1 rounded-lg px-2 py-1.5 text-xs font-bold text-[#7C3AED] hover:bg-[#EDE9FE] focus-visible:outline-2 focus-visible:outline-[#7C3AED]">
+                            {collapsedCutIds.has(cut.id) ? <ChevronRight className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />} 컷 {cutIdx + 1}
+                          </button>
                           <ShotSelector
                             value={cut.angle}
                             onChange={(angle) => updateCut(cutIdx, "angle", angle)}
@@ -959,6 +978,11 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
                         </div>
                       </div>
 
+                      {collapsedCutIds.has(cut.id) && <div className="flex min-w-0 items-center gap-3 px-4 py-3">
+                        <p className="min-w-0 flex-1 truncate text-xs text-[#7A7067]">{cut.description || cut.purpose || "장면 내용을 입력해주세요."}</p>
+                        <span className="shrink-0 text-[10px] text-[#7C3AED]">{sceneGeneratingIds.has(cut.id) ? "작화 생성 중" : layoutGeneratingIds.has(cut.id) ? "콘티 생성 중" : sceneCandidates[cut.id] ? "새 작화 확인 필요" : cut.sceneImageAssetId ? "작화 적용됨" : cut.storyboard ? "콘티 편집 중" : "구성 중"}</span>
+                      </div>}
+                      <div id={"cut-body-" + cut.id} hidden={collapsedCutIds.has(cut.id)}>
                       <div className="p-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
                         <label className="text-xs font-semibold">이 컷의 목적<Input className="mt-2" value={cut.purpose ?? ""} onChange={e => updateCut(cutIdx, "purpose", e.target.value)} placeholder="정보 / 감정 / 행동 / 반전 준비" /></label>
                         <label className="text-xs font-semibold">전할 감정<Input className="mt-2" value={cut.emotion ?? ""} onChange={e => updateCut(cutIdx, "emotion", e.target.value)} placeholder="호기심 → 긴장" /></label>
@@ -1099,6 +1123,10 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
                             </div>
                           )}
                         </div>
+                      </div>
+                      <div className="flex justify-end border-t border-[#EBE7E0] px-4 py-3">
+                        <button type="button" onClick={() => collapseCut(cut.id)} className="editor-tool">이 컷 접기</button>
+                      </div>
                       </div>
                     </div>
                   ))}
