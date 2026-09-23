@@ -18,6 +18,7 @@ import MobileStepBar from "@/components/MobileStepBar";
 import { Plus, Trash2, Save, ArrowRight, CheckCircle, Sparkles, Check, Download, Film, Wand2, ImageIcon, RefreshCw, X } from "lucide-react";
 import { createCut, getProject, updateProject, type Episode, type Cut, type Project, type ChatMessage, type PanelAspectRatio, type StoryboardDocument, type SceneReview } from "@/lib/storage";
 import { downloadEpisode, downloadAllEpisodes } from "@/lib/download";
+import { canApplyScene, sceneReviewSummary } from "@/lib/sceneReview";
 import ArtDirectionEditor from "@/components/visual/ArtDirectionEditor";
 import StoryboardEditor from "@/components/visual/StoryboardEditor";
 import { normalizeWebtoonFlow, changeWebtoonFlow } from "@/lib/webtoonFlow";
@@ -564,8 +565,8 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
     if (!cut) return;
     const candidate = sceneCandidates[cut.id];
     if (!candidate) return;
-    if (!candidate.reviewed && !(candidate.review?.status === "checked" && candidate.review.issues.length === 0)) {
-      setVisualError("AI 원본에서 말풍선·글자·가이드·잘림이 없는지 확인한 뒤 검수 체크를 해주세요.");
+    if (!canApplyScene(candidate.review, candidate.reviewed)) {
+      setVisualError(sceneReviewSummary(candidate.review));
       return;
     }
     if (!project || candidate.sourceHash !== sceneHash({ ...project, episodes }, episodes[activeEp], cut)) {
@@ -1047,10 +1048,11 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
                               <div className="self-center">
                                 <p className="text-xs font-bold text-[#1A1A1A] mb-1">새 장면을 적용할까요?</p>
                                 <p className="text-[10px] text-[#7A7067] mb-3">이 미리보기는 말풍선을 합성하지 않은 AI 원본입니다. 크게 비교에서 인물 크기·위치·포즈와 소품 배치를 대조하고, 불필요한 글자·말풍선·가이드·테두리·잘림이 없는지 확인해주세요.</p>
-                                <p className="mb-2 text-[11px]">{sceneCandidates[cut.id].review?.status === "checked" ? sceneCandidates[cut.id].review?.issues.length ? "AI 검수: " + sceneCandidates[cut.id].review?.issues.join(" / ") : "AI 검수 완료 · 뚜렷한 문제를 찾지 못했습니다." : "AI 검수 미완료 · 그림을 확인해주세요."}</p>
-                                <label className="mb-3 flex items-start gap-2 text-[11px]"><input type="checkbox" checked={Boolean(sceneCandidates[cut.id].reviewed)} onChange={event => { const reviewed = event.target.checked; setSceneCandidates(current => ({ ...current, [cut.id]: { ...current[cut.id], reviewed } })); }} /> 콘티의 크기·위치·포즈·소품 배치가 유지되고 불필요한 말풍선·가이드·잘림이 없는 것을 확인했습니다.</label>
+                                <p className="mb-2 text-[11px]">{sceneReviewSummary(sceneCandidates[cut.id].review)}</p>
+                                {sceneCandidates[cut.id].review?.issues.map((issue, index) => <p key={index} className="mb-1 text-[11px] text-orange-800">{issue}</p>)}
+                                <label className="mb-3 flex items-start gap-2 text-[11px]"><input type="checkbox" checked={Boolean(sceneCandidates[cut.id].reviewed)} disabled={sceneCandidates[cut.id].review?.anatomy?.status !== "pass" || sceneCandidates[cut.id].review?.status !== "checked"} onChange={event => { const reviewed = event.target.checked; setSceneCandidates(current => ({ ...current, [cut.id]: { ...current[cut.id], reviewed } })); }} /> 구도·표현의 검수 안내를 확인했습니다. 신체 오류와 검수 미완료는 직접 확인으로 적용할 수 없습니다.</label>
                                 <div className="flex gap-2">
-                                  <button type="button" disabled={!sceneCandidates[cut.id].reviewed && !(sceneCandidates[cut.id].review?.status === "checked" && !sceneCandidates[cut.id].review?.issues.length)} onClick={() => acceptScene(cutIdx)} className="inline-flex items-center gap-1 rounded-full bg-[#7C3AED] text-white px-3 py-1.5 text-[11px] font-semibold"><Check className="w-3 h-3" /> 적용</button>
+                                  <button type="button" disabled={!canApplyScene(sceneCandidates[cut.id].review, sceneCandidates[cut.id].reviewed)} onClick={() => acceptScene(cutIdx)} className="inline-flex items-center gap-1 rounded-full bg-[#7C3AED] text-white px-3 py-1.5 text-[11px] font-semibold"><Check className="w-3 h-3" /> 적용</button>
                                   <button type="button" onClick={() => setSceneCandidates((current) => { const next = { ...current }; delete next[cut.id]; return next; })} className="inline-flex items-center gap-1 rounded-full border border-[#EBE7E0] px-3 py-1.5 text-[11px]"><X className="w-3 h-3" /> 취소</button>
                                 </div>
                               </div>
@@ -1073,7 +1075,7 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
                               onReviewScene={reviewed => setSceneCandidates(current => current[cut.id] ? ({ ...current, [cut.id]: { ...current[cut.id], reviewed } }) : current)}
                               candidateStale={Boolean(sceneCandidates[cut.id] && project && sceneCandidates[cut.id].sourceHash !== sceneHash({ ...project, episodes }, ep, cut))}
                               sceneFeedback={visualError}
-                              sceneReview={sceneCandidates[cut.id]?.review ?? cut.sceneReview}
+                              sceneReview={sceneCandidates[cut.id] ? sceneCandidates[cut.id].review : cut.sceneReview}
                               onAcceptScene={() => acceptScene(cutIdx)}
                               onDiscardScene={() => setSceneCandidates((current) => { const next = { ...current }; delete next[cut.id]; return next; })}
                               sceneStale={Boolean(cut.sceneImageAssetId && project && cut.sceneSourceHash !== sceneHash({ ...project, episodes }, ep, cut))}

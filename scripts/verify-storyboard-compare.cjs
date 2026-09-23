@@ -107,12 +107,22 @@ async function main() {
   props.sceneCandidate = new Blob(["image"]); props.candidateStale = false;
   props.sceneCandidateReviewed = false;
   assert.equal(button(render(), "새 그림 적용").props.disabled, true);
-  props.sceneReview = { status: "checked", issues: [], protectedRegions: [] };
+  props.sceneReview = { status: "checked", issues: [], protectedRegions: [], anatomy: { status: "pass", issues: [], people: [] } };
   assert.equal(button(render(), "새 그림 적용").props.disabled, false);
   await button(render(), "새 그림 적용").props.onClick();
   assert.equal(accepted, 1, "AI-reviewed candidate applies without manual attestation");
-  accepted = 0; props.sceneReview = undefined;
+  accepted = 0;
   props.sceneCandidateReviewed = true;
+  const cleanReview = props.sceneReview;
+  for (const status of ["fail", "uncertain", "unavailable"]) {
+    props.sceneReview = { ...cleanReview, anatomy: { status, issues: ["손·팔 확인 필요"], people: [] } };
+    assert.equal(button(render(), "새 그림 적용").props.disabled, true, "manual checkbox cannot override " + status);
+    await button(render(), "새 그림 적용").props.onClick();
+    assert.equal(accepted, 0);
+  }
+  props.sceneReview = undefined;
+  assert.equal(button(render(), "새 그림 적용").props.disabled, true, "missing review cannot be manually bypassed");
+  props.sceneReview = { ...cleanReview, issues: ["구도 확인"] };
   tree = render();
   assert.ok(find(tree, n => n.type === stored.BlobImage));
   await button(tree, "새 그림 적용").props.onClick();
@@ -446,6 +456,7 @@ async function main() {
   states.length = 0; refs.length = 0;
   props.sceneAssetId = undefined; props.sceneCandidate = undefined;
   props.candidateStale = false; props.sceneCandidateReviewed = true;
+  props.sceneReview = { status: "checked", issues: [], protectedRegions: [], anatomy: { status: "pass", issues: [], people: [] } };
   tree = render();
   assert.equal(button(tree, "콘티 편집").props["aria-pressed"], true);
   props.sceneAssetId = "first-finished-art";

@@ -12,7 +12,7 @@ import {
   projectVisualContextSchema,
 } from "@/lib/gemini";
 
-export const maxDuration = 180;
+export const maxDuration = 300;
 
 const imagePayloadSchema = z.object({
   data: z.string().min(1).max(12_000_000),

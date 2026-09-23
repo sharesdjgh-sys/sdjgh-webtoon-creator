@@ -97,7 +97,12 @@ export type SceneDirection = {
   beat: "quiet" | "anticipation" | "movement" | "impact" | "aftermath" | "reveal";
   acting: string; lighting: string; effects: string; continuity: string; readingPath: string;
 };
-export type SceneReview = { status: "checked" | "unavailable"; issues: string[]; protectedRegions: Array<{ x: number; y: number; width: number; height: number; label: string }> };
+export type SceneAnatomyReview = {
+  status: "pass" | "fail" | "uncertain" | "unavailable";
+  issues: string[];
+  people: Array<{ label: string; bodyPlan: "human" | "nonhuman"; visibleHands: number; visibleArms: number; limbTrace: string; verdict: "pass" | "fail" | "uncertain"; issues: string[] }>;
+};
+export type SceneReview = { anatomy?: SceneAnatomyReview; repair?: { outcome: "corrected" | "unresolved" | "failed"; initialIssues: string[] }; status: "checked" | "unavailable"; issues: string[]; protectedRegions: Array<{ x: number; y: number; width: number; height: number; label: string }> };
 
 export type StoryboardDocument = {
   direction?: SceneDirection;

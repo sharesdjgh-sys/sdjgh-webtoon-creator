@@ -45,6 +45,7 @@ import BalloonStylePicker from "@/components/visual/BalloonStylePicker";
 import { RESIZE_HANDLES, resizeCursor, resizeOverlay, type ResizeDirection } from "@/lib/storyboardResize";
 import { artworkOnlyStoryboard, sceneStructureSvg } from "@/lib/cleanGeneration";
 import { webtoonFlowLayout, editableWebtoonDocument, editorSceneElements, artworkEditFromCanvas, changeWebtoonFlow, MAX_WEBTOON_GAP } from "@/lib/webtoonFlow";
+import { canApplyScene, sceneReviewSummary } from "@/lib/sceneReview";
 import { reviewWebtoonLettering } from "@/lib/webtoonQuality";
 import { arrangeWebtoonLettering } from "@/lib/webtoonLettering";
 import { renderWebtoonBlock } from "@/lib/webtoonFlowRender";
@@ -275,7 +276,7 @@ export default function StoryboardEditor({ document: savedDocument, characters, 
   const displayElements = useMemo(() => editorSceneElements(document), [document]);
   const artStyle = { left: `${100 * art.x / canvas.width}%`, top: `${100 * art.y / canvas.height}%`,
     width: `${100 * art.width / canvas.width}%`, height: `${100 * art.height / canvas.height}%` };
-  const sceneCanApply = sceneCandidateReviewed || (sceneReview?.status === "checked" && sceneReview.issues.length === 0);
+  const sceneCanApply = canApplyScene(sceneReview, sceneCandidateReviewed);
   const [revision, setRevision] = useState("");
   const letteringWarnings = useMemo(() => reviewWebtoonLettering(document, sceneReview), [document, sceneReview]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -823,8 +824,9 @@ export default function StoryboardEditor({ document: savedDocument, characters, 
             </div>
             <label className="flex items-center gap-2 rounded-lg bg-white px-2 py-1.5 text-[11px]"><input type="checkbox" checked={showTypography} onChange={event => setShowTypography(event.target.checked)} /> 말풍선·글자 표시 · 끄면 AI 원본만 검수</label>
             {sceneCandidate && <div className="space-y-2 rounded-xl border border-[#C4B5FD] bg-[#F5F3FF] p-3">
+              <p className="text-[11px]" role="status">{sceneReviewSummary(sceneReview)}</p>
               <p className="text-xs font-semibold text-[#5B21B6]">{candidateStale ? "생성 후 콘티가 변경되었습니다. 다시 생성해주세요." : "새 장면을 확인하고 적용해주세요."}</p>
-              <label className="flex items-start gap-2 text-[11px]"><input type="checkbox" checked={Boolean(sceneCandidateReviewed)} disabled={candidateStale || applyingScene} onChange={event => onReviewScene?.(event.target.checked)} /> 말풍선 표시를 끄고 인물 크기·위치·포즈·소품 배치가 콘티와 맞으며, 불필요한 말풍선·글자·가이드·테두리·잘림이 없는지 확인했습니다.</label>
+              <label className="flex items-start gap-2 text-[11px]"><input type="checkbox" checked={Boolean(sceneCandidateReviewed)} disabled={candidateStale || applyingScene || sceneReview?.anatomy?.status !== "pass" || sceneReview.status !== "checked"} onChange={event => onReviewScene?.(event.target.checked)} /> 구도·표현의 검수 안내를 확인했습니다. 손·팔 등 신체 오류와 검수 미완료는 직접 확인으로 적용할 수 없습니다.</label>
               <div className="flex gap-2">
                 <button type="button" disabled={applyingScene || candidateStale || !sceneCanApply || !onAcceptScene} onClick={async () => {
                   if (applyingScene || candidateStale || !sceneCanApply || !onAcceptScene) return;
@@ -849,7 +851,7 @@ export default function StoryboardEditor({ document: savedDocument, characters, 
             <textarea aria-label="AI 그림 수정 요청" maxLength={1500} rows={3} value={revision} onChange={event => setRevision(event.target.value)} placeholder="예: 겁먹었지만 태연한 척하게. 얼굴의 그림자는 더 깊게, 번개는 조금 줄여줘." className="visual-input" />
             <button type="button" disabled={!revision.trim() || generatingScene || generatingSketch || Boolean(layerBatchProgress)} onClick={() => onGenerateScene(revision.trim())} className="editor-tool disabled:opacity-40">AI가 그림에 반영</button>
             <p className="text-[10px] text-[#82798B]">표정·채색·그림자·효과를 함께 조절합니다. 새 결과를 확인한 뒤 적용하세요.</p>
-            {sceneReview && <p className="text-[11px]">{sceneReview.status === "checked" ? sceneReview.issues.length ? "AI 검수에서 확인할 점을 찾았습니다." : "AI 그림 검수에서 뚜렷한 문제를 찾지 못했습니다." : "AI 검수 미완료 · 그림은 보존되었습니다."}</p>}
+            {sceneReview && <p className="text-[11px]">{sceneReviewSummary(sceneReview)}</p>}
             {[...(sceneReview?.issues ?? []), ...letteringWarnings].slice(0,6).map((note,i) => <p key={i} className="text-[11px] text-orange-800">{note}</p>)}
           </section>
           <div className="space-y-2 rounded-xl border border-[#DDD6FE] bg-[#FAF8FF] p-3" aria-label="그림 여백 옵션">

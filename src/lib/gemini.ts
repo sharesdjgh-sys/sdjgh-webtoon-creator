@@ -1,11 +1,12 @@
 import { sceneDirectionSchema, SCENE_DIRECTION_JSON } from "@/lib/visualSchemas";
 import { BALLOON_STYLES, SPEECH_ROLES, panelDimensions } from "@/lib/webtoonDesign";
 import "server-only";
+import { ANATOMY_JSON_SCHEMA, anatomyPrompt, parseAnatomyReview } from "@/lib/sceneAnatomy";
 import { artworkOnlyStoryboard, sceneStructureSvg } from "@/lib/cleanGeneration";
 
 import { GoogleGenAI } from "@google/genai";
 import { z } from "zod";
-import type { SceneReview, CharacterRig, PanelAspectRatio, StoryboardDocument, StoryboardElement } from "@/lib/storage";
+import type { SceneAnatomyReview, SceneReview, CharacterRig, PanelAspectRatio, StoryboardDocument, StoryboardElement } from "@/lib/storage";
 import { resolveCharacterRig, sceneCharacterRig } from "@/lib/storyboardRig";
 import { webtoonShotPrompt } from "@/lib/webtoonShots";
 import { cleanCharacterMentions } from "@/lib/characterMentions";
@@ -559,6 +560,7 @@ export async function generateSceneImage(input: {
   structureImage?: { data: string; mimeType: string };
   references: CharacterReferenceInput[];
 }): Promise<{ data: string; mimeType: string; prompt: string; review?: SceneReview }> {
+  const startedAt = Date.now();
   input = { ...input, storyboard: artworkOnlyStoryboard(input.storyboard) };
   const requiredCharacterIds = new Set(input.storyboard.elements
     .filter((element) => element.visible !== false && element.type === "character" && element.characterId)
@@ -643,6 +645,7 @@ CONTROL GEOMETRY:
 ${input.structureImage ? "Reference image 2 is a STRUCTURAL CONTROL MAP, not artwork or a character design sheet. Its boxes and joint lines specify the CURRENT edited placement and pose. Never draw its blue/brown lines, rectangles or markers in the output." : "The SVG below specifies the CURRENT edited placement and pose."}
 The following SVG is geometric input only, never typography or artwork to reproduce:
 ${sceneStructureSvg(input.storyboard)}
+ANATOMY CONTRACT: Every ordinary human has two arms and two hands in total, including occluded limbs. When changing a pose, REMOVE the obsolete arm and hand completely before drawing the new pose. Never retain an old edge-of-frame hand while adding crossed arms. Trace each wrist through elbow to its own shoulder. Anatomy takes priority over contradictory control points; never add a limb to satisfy them.
 Collapsed leg joints from cropped-image analysis are deliberately omitted. Unlisted joints are unknown, NOT a request to draw extra limbs or expand the framing. Preserve the visible silhouette and crop in reference image 1.
 If the older raster pose in image 1 conflicts with the control map/JOINTS, use the control map/JOINTS while retaining the overall composition. Neither prose nor character-sheet poses may move these coordinates.
 Only explicitly edited joints override the raster pose. Boxes describe layer placement, NOT the person's silhouette or head size. For a character with RASTER POSE LOCK, the structure image intentionally has no skeleton: preserve its visible drawing exactly. Do not infer a standing body from its rectangular layer.
@@ -680,14 +683,41 @@ IMPORTANT: Produce artwork only. Do not draw speech balloons, dialogue, captions
       aspect_ratio: input.cut.aspectRatio,
       image_size: ["1:4", "1:8"].includes(input.cut.aspectRatio) ? "2K" : "1K",
     },
-  });
+  }, { timeout: 120_000, maxRetries: 0 });
   const image = imageResult(interaction);
-  const review = input.stage === "sketch" ? undefined : await reviewSceneImage(image, input.layoutImage, input.cut.description, input.storyboard, input.revision);
-  return { ...image, prompt, review };
+  if (input.stage === "sketch") return { ...image, prompt };
+  const review = await reviewSceneImage(image, input.layoutImage, input.cut.description, input.storyboard, input.revision);
+  if (review.anatomy?.status !== "fail") return { ...image, prompt, review };
+
+  // One bounded repair, followed by fresh anatomy and composition checks.
+  const initialIssues = review.anatomy.issues;
+  const repairTimeout = Math.min(90_000, 270_000 - (Date.now() - startedAt) - 45_000);
+  if (repairTimeout < 15_000) return { ...image, prompt, review: { ...review,
+    issues: [...review.issues, "자동 수정 시간이 부족해 적용을 보류했습니다. 다시 생성해주세요."],
+    repair: { outcome: "failed", initialIssues } } };
+  const repairPrompt = "Repair the anatomy defects in image 1, the rejected finished image. Image 2 is the original composition reference. Preserve identities, camera, colors, background and the intended pose edits. "
+    + "Replace conflicting limbs completely: remove the obsolete hand AND its entire arm/sleeve before drawing the intended arm. Never keep both the old and new pose. Each ordinary human must have exactly two coherent arm chains; hidden hands may remain hidden. Do not invent a new person to explain an extra limb. "
+    + "If a control point conflicts with coherent anatomy, preserve the intended action with one anatomically valid pose, never satisfy it by adding a limb. No text, guides or balloons. Defects: "
+    + initialIssues.join(" / ") + "\nScene: " + input.cut.description + "; requested revision: " + (input.revision ?? "none")
+    + "\nIntended placement and pose: " + spatialContract + "\nColored geometry is control metadata; never draw it. Character sheets define identity only.";
+  try {
+    const corrected = imageResult(await client().interactions.create({
+      model: IMAGE_MODEL,
+      input: [{ type: "image", data: image.data, mime_type: image.mimeType }, ...imageInputs.slice(0, -1), { type: "text", text: repairPrompt }],
+      response_format: { type: "image", mime_type: "image/jpeg", aspect_ratio: input.cut.aspectRatio,
+        image_size: ["1:4", "1:8"].includes(input.cut.aspectRatio) ? "2K" : "1K" },
+    }, { timeout: repairTimeout, maxRetries: 0 }));
+    const correctedReview = await reviewSceneImage(corrected, input.layoutImage, input.cut.description, input.storyboard, input.revision);
+    return { ...corrected, prompt, review: { ...correctedReview,
+      repair: { outcome: correctedReview.anatomy?.status === "pass" ? "corrected" : "unresolved", initialIssues } } };
+  } catch {
+    return { ...image, prompt, review: { ...review, issues: [...review.issues, "신체 오류 자동 수정에 실패했습니다. 기존 그림은 유지됩니다."],
+      repair: { outcome: "failed", initialIssues } } };
+  }
 }
 
 /** A failed review preserves artwork and explicitly reports that it was not checked. */
-async function reviewSceneImage(image: { data: string; mimeType: string }, reference: { data: string; mimeType: string }, scene: string, storyboard: StoryboardDocument, revision?: string): Promise<SceneReview> {
+async function reviewSceneComposition(image: { data: string; mimeType: string }, reference: { data: string; mimeType: string }, scene: string, storyboard: StoryboardDocument, revision?: string): Promise<SceneReview> {
   try {
     const result = await client().interactions.create({ model: LAYOUT_MODEL,
       input: [{ type: "image", data: reference.data, mime_type: reference.mimeType }, { type: "image", data: image.data, mime_type: image.mimeType },
@@ -697,10 +727,34 @@ async function reviewSceneImage(image: { data: string; mimeType: string }, refer
           type: "object", properties: { x: { type: "number" }, y: { type: "number" }, width: { type: "number" }, height: { type: "number" }, label: { type: "string" } }, required: ["x", "y", "width", "height", "label"],
         } } }, required: ["issues", "protectedRegions"],
       } },
-    });
+    }, { timeout: 45_000, maxRetries: 0 });
     const parsed = z.object({ issues: z.array(z.string().max(500)).max(12), protectedRegions: z.array(z.object({
       x: z.number().min(0).max(1), y: z.number().min(0).max(1), width: z.number().positive().max(1), height: z.number().positive().max(1), label: z.string().max(100),
     })).max(12) }).parse(JSON.parse(result.output_text ?? "{}"));
     return { status: "checked", ...parsed };
   } catch { return { status: "unavailable", issues: ["AI 그림 검수를 완료하지 못했습니다. 생성된 그림은 보존됩니다."], protectedRegions: [] }; }
+}
+
+/** Separate image-only pass: the reference pose must not bias limb counting. */
+export async function reviewSceneAnatomy(image: { data: string; mimeType: string }, scene: string, expectedPeople: number): Promise<SceneAnatomyReview> {
+  try {
+    const result = await client().interactions.create({
+      model: process.env.GEMINI_REVIEW_MODEL ?? LAYOUT_MODEL,
+      input: [{ type: "image", data: image.data, mime_type: image.mimeType }, { type: "text", text: anatomyPrompt(scene, expectedPeople) }],
+      response_format: { type: "text", mime_type: "application/json", schema: ANATOMY_JSON_SCHEMA },
+    }, { timeout: 45_000, maxRetries: 0 });
+    return parseAnatomyReview(JSON.parse(result.output_text ?? "{}"), expectedPeople);
+  } catch {
+    return { status: "unavailable", people: [], issues: ["손·팔 등 신체 구조 검수를 완료하지 못했습니다. 적용을 보류합니다."] };
+  }
+}
+
+async function reviewSceneImage(image: { data: string; mimeType: string }, reference: { data: string; mimeType: string }, scene: string, storyboard: StoryboardDocument, revision?: string): Promise<SceneReview> {
+  const expectedPeople = storyboard.elements.filter(e => e.type === "character" && e.visible !== false).length;
+  const [anatomy, composition] = await Promise.all([
+    reviewSceneAnatomy(image, scene, expectedPeople),
+    reviewSceneComposition(image, reference, scene, storyboard, revision),
+  ]);
+  return { ...composition, anatomy, status: anatomy.status === "unavailable" ? "unavailable" : composition.status,
+    issues: [...new Set([...anatomy.issues, ...composition.issues])] };
 }

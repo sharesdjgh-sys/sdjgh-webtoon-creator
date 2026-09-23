@@ -58,7 +58,7 @@ async function main(){
   const storyboard=await generateStoryboardLayout(input);
   assert.equal(storyboard.height,3600);assert.equal(storyboard.direction.acting,direction.acting);assert.equal(storyboard.elements[1].textColor,'#ffffff');
   assert.ok(requests.at(-1).input.includes(input.episode.neighbors));
-  response=async request=>request.response_format.type==='image'?{output_image:{data:'test-image',mime_type:'image/jpeg'}}:{output_text:JSON.stringify({issues:[],protectedRegions:[{x:.1,y:.2,width:.2,height:.2,label:'얼굴'}]})};
+  response=async request=>request.response_format.schema?.properties?.people?{output_text:JSON.stringify({people:[]})}:request.response_format.type==='image'?{output_image:{data:'test-image',mime_type:'image/jpeg'}}:{output_text:JSON.stringify({issues:[],protectedRegions:[{x:.1,y:.2,width:.2,height:.2,label:'얼굴'}]})};
   const result=await generateSceneImage({...input,storyboard,layoutImage:{data:'reference',mimeType:'image/png'},references:[],stage:'finish',revision:'그림자를 더 깊게'});
   assert.equal(result.review.status,'checked');assert.equal(result.review.issues.length,0);
   const imageRequest=requests.findLast(r=>r.response_format.type==='image');
