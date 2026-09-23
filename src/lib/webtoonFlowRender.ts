@@ -103,7 +103,7 @@ export async function exportWebtoonImage(cuts: Cut[], width = 900, options: { fi
     totalHeight += height;
   }
   // Chromium's reliable 2D-canvas dimension limit is 32,767px per axis.
-  if (totalHeight > 32767) throw new Error(`이 화의 전체 높이(${totalHeight.toLocaleString()}px)가 단일 PNG 한도를 넘습니다. 컷 수나 위·아래 여백을 줄여주세요.`);
+  if (totalHeight > 32767) throw new Error(`이 화의 전체 높이(${totalHeight.toLocaleString()}px)가 단일 PNG 한도를 넘습니다. 분할 PNG · ZIP 다운로드를 이용해주세요.`);
   const canvas = document.createElement("canvas");
   canvas.width = width;
   canvas.height = totalHeight;

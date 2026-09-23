@@ -4,7 +4,7 @@ import { overlayOutsideCanvas } from "@/lib/storyboardText";
 const overlay = (e: StoryboardElement) => ["speech", "caption", "sfx"].includes(e.type);
 const clamp = (v: number | undefined, fallback: number, max: number) => Number.isFinite(v) ? Math.max(0, Math.min(max, v!)) : fallback;
 export const DEFAULT_WEBTOON_GAP = 150;
-export const MAX_WEBTOON_GAP = 300;
+export const MAX_WEBTOON_GAP = 6000;
 export function normalizeWebtoonFlow(flow?: StoryboardDocument["flow"]) {
   return { ...flow, before: clamp(flow?.before, DEFAULT_WEBTOON_GAP, MAX_WEBTOON_GAP),
     after: clamp(flow?.after, DEFAULT_WEBTOON_GAP, MAX_WEBTOON_GAP), inset: flow?.inset ?? 0 };
@@ -30,7 +30,7 @@ export function webtoonFlowLayout(source: StoryboardDocument) {
   const top = Math.min(MAX_WEBTOON_GAP, Math.max(flow.before, requiredTop));
   const bottom = Math.min(MAX_WEBTOON_GAP, Math.max(flow.after, requiredBottom));
   let overflow = requiredTop > MAX_WEBTOON_GAP || requiredBottom > MAX_WEBTOON_GAP
-    ? "여백의 대사·독백이 최대 300px 안에 들어가지 않습니다. 식자의 크기·앞 간격을 줄이거나 위·아래로 나누어 배치해주세요." : undefined;
+    ? "여백의 대사·독백이 한 구간의 최대 여백 안에 들어가지 않습니다. 대사를 여러 컷으로 나누어주세요." : undefined;
   const art = { x: left, y: top, width: width * scale, height: source.height * scale };
   const canvasHeight = Math.ceil(top + art.height + bottom);
   const elements: StoryboardElement[] = items.filter(e => !e.placement || e.placement === "art").map(e => ({
@@ -43,7 +43,7 @@ export function webtoonFlowLayout(source: StoryboardDocument) {
     list.forEach((element, i) => {
       y += spacing(element, i);
       elements.push({ ...element, x: Math.max(16, Math.min(width - element.width - 16, element.x)), y,
-        rotation: 0, tailX: .5, tailY: element.placement === "bottom-edge" ? 0 : 1, fontSize: element.fontSize });
+        rotation: 0, tailX: element.tailX ?? .5, tailY: list === before ? 1.15 : -.15, fontSize: element.fontSize });
       y += element.height;
     });
   }

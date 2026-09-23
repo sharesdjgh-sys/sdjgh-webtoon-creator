@@ -1,9 +1,11 @@
+import { sceneDirectionSchema, SCENE_DIRECTION_JSON } from "@/lib/visualSchemas";
+import { BALLOON_STYLES, SPEECH_ROLES, panelDimensions } from "@/lib/webtoonDesign";
 import "server-only";
 import { artworkOnlyStoryboard, sceneStructureSvg } from "@/lib/cleanGeneration";
 
 import { GoogleGenAI } from "@google/genai";
 import { z } from "zod";
-import type { CharacterRig, PanelAspectRatio, StoryboardDocument, StoryboardElement } from "@/lib/storage";
+import type { SceneReview, CharacterRig, PanelAspectRatio, StoryboardDocument, StoryboardElement } from "@/lib/storage";
 import { resolveCharacterRig, sceneCharacterRig } from "@/lib/storyboardRig";
 import { webtoonShotPrompt } from "@/lib/webtoonShots";
 import { cleanCharacterMentions } from "@/lib/characterMentions";
@@ -92,15 +94,29 @@ const generatedElementSchema = z.object({
   height: z.number(),
   rotation: z.number().optional().default(0),
   zIndex: z.number().optional().default(0),
-  text: z.string().max(500).optional().default(""),
+  text: z.string().max(1000).optional().default(""),
   characterId: z.string().max(120).optional(),
   shape: z.enum(["rect", "ellipse"]).optional(),
   pose: z.string().max(200).optional(),
   expression: z.string().max(200).optional(),
   characterRig: generatedRigSchema.optional(),
-  balloonStyle: z.enum(["normal", "thought", "shout", "whisper", "rounded", "none"]).optional(),
+  balloonStyle: z.enum(BALLOON_STYLES).optional(),
+  speechRole: z.enum(SPEECH_ROLES).optional(),
+  tailVisible: z.boolean().optional(),
+  lineHeight: z.number().min(1.05).max(1.8).optional(),
+  textItalic: z.boolean().optional(),
   tailX: z.number().optional(),
   tailY: z.number().optional(),
+  fontFamily: z.enum(["clean", "serif", "handwritten", "cute", "comic", "impact"]).optional(),
+  fontWeight: z.number().min(100).max(900).optional(),
+  textGradient: z.boolean().optional(),
+  textGradientColor: z.string().regex(/^#[0-9a-f]{6}$/i).optional(),
+  textGradientAngle: z.number().min(0).max(360).optional(),
+  textColor: z.string().regex(/^#[0-9a-f]{6}$/i).optional(),
+  textStrokeColor: z.string().regex(/^#[0-9a-f]{6}$/i).optional(),
+  textStrokeWidth: z.number().min(0).max(12).optional(),
+  balloonFill: z.string().regex(/^#[0-9a-f]{6}$/i).optional(),
+  balloonStroke: z.string().regex(/^#[0-9a-f]{6}$/i).optional(),
   speakerCharacterId: z.string().max(120).optional(),
   placement: z.enum(["art", "before", "after", "top-edge", "bottom-edge"]).optional(),
   flowOrder: z.number().optional(),
@@ -108,6 +124,7 @@ const generatedElementSchema = z.object({
 });
 
 const generatedDocumentSchema = z.object({
+  direction: sceneDirectionSchema.optional(),
   backgroundDescription: z.string().trim().max(900).optional(),
   flow: z.object({ before: z.number(), after: z.number(), inset: z.number(), align: z.enum(["left", "center", "right"]) }).optional(),
   elements: z.array(generatedElementSchema).min(1).max(24),
@@ -116,10 +133,11 @@ const generatedDocumentSchema = z.object({
 const STORYBOARD_JSON_SCHEMA = {
   type: "object",
   properties: {
+    direction: SCENE_DIRECTION_JSON,
     backgroundDescription: { type: "string", description: "Korean environment art direction: concrete location, camera perspective/horizon, near/middle/far depth, architecture or landscape, visible furniture/fixtures, light source, time and atmosphere. Describe drawable details, not a short label. Maximum 900 characters." },
     flow: {
       type: "object", description: "Vertical reading rhythm outside the artwork. Whitespace is composed by the app, never drawn into the image.",
-      properties: { before: { type: "number", minimum: 0, maximum: 300, description: "Whitespace above, default 150 pixels; maximum 300" }, after: { type: "number", minimum: 0, maximum: 300, description: "Whitespace below, default 150 pixels; maximum 300" }, inset: { type: "number", description: "Half the space left beside the art: 0..35% of canvas width. Vary art width to suit this beat." }, align: { type: "string", enum: ["left", "center", "right"] } },
+      properties: { before: { type: "number", minimum: 0, maximum: 6000, description: "Minimum whitespace above. Allocate reading pauses; the application expands this to fit lettering." }, after: { type: "number", minimum: 0, maximum: 6000, description: "Minimum whitespace below. Use longer pauses for tension and transitions." }, inset: { type: "number", description: "Half the space left beside the art: 0..35% of canvas width. Vary art width to suit this beat." }, align: { type: "string", enum: ["left", "center", "right"] } },
       required: ["before", "after", "inset", "align"],
     },
     elements: {
@@ -156,7 +174,16 @@ const STORYBOARD_JSON_SCHEMA = {
               "leftHip", "rightHip", "leftKnee", "leftFoot", "rightKnee", "rightFoot",
             ],
           },
-          balloonStyle: { type: "string", enum: ["normal", "thought", "shout", "whisper", "rounded", "none"] },
+          speechRole: { type: "string", enum: SPEECH_ROLES },
+          tailVisible: { type: "boolean" },
+          lineHeight: { type: "number", minimum: 1.05, maximum: 1.8 },
+          textItalic: { type: "boolean" },
+          fontFamily: { type: "string", enum: ["clean", "serif", "handwritten", "cute", "comic", "impact"] },
+          fontWeight: { type: "number" },
+          textGradient: { type: "boolean" }, textGradientColor: { type: "string" }, textGradientAngle: { type: "number" },
+          textColor: { type: "string" }, textStrokeColor: { type: "string" }, textStrokeWidth: { type: "number" },
+          balloonFill: { type: "string" }, balloonStroke: { type: "string" },
+          balloonStyle: { type: "string", enum: BALLOON_STYLES },
           placement: { type: "string", enum: ["art", "before", "after", "top-edge", "bottom-edge"], description: "Vertical-webtoon lettering location. Prefer before/after whitespace or top-edge/bottom-edge for dialogue. Art is for SFX or intentional unobstructive placement only." },
           flowOrder: { type: "number", description: "Top-to-bottom reading order of lettering within its whitespace region" },
           flowSpacing: { type: "number", description: "Extra whitespace before this line of dialogue or narration, 0..1200 pixels" },
@@ -168,7 +195,7 @@ const STORYBOARD_JSON_SCHEMA = {
       },
     },
   },
-  required: ["backgroundDescription", "flow", "elements"],
+  required: ["direction", "backgroundDescription", "flow", "elements"],
 } as const;
 
 export type CharacterVisualInput = z.infer<typeof characterInputSchema>;
@@ -309,14 +336,7 @@ Quality check before finishing: inspect the top, bottom, left and right edges. C
   return prompt;
 }
 
-function dimensions(aspectRatio: PanelAspectRatio): { width: number; height: number } {
-  return {
-    "4:3": { width: 1200, height: 900 },
-    "3:4": { width: 900, height: 1200 },
-    "1:1": { width: 1000, height: 1000 },
-    "9:16": { width: 900, height: 1600 },
-  }[aspectRatio];
-}
+const dimensions = panelDimensions;
 
 export async function generateCharacterSheet(context: ProjectVisualContext, character: CharacterVisualInput) {
   const prompt = buildCharacterSheetPrompt(context, character);
@@ -365,7 +385,7 @@ function clampElement(
 
 export async function generateStoryboardLayout(input: {
   context: ProjectVisualContext;
-  episode: { number: number; title: string; synopsis: string };
+  episode: { number: number; title: string; synopsis: string; neighbors?: string };
   cut: { angle: string; description: string; dialogue: string; soundEffect: string; aspectRatio: PanelAspectRatio; scrollGap?: "short" | "normal" | "long" };
   characters: CharacterVisualInput[];
 }): Promise<StoryboardDocument> {
@@ -378,6 +398,7 @@ export async function generateStoryboardLayout(input: {
 Canvas viewBox: 0 0 ${width} ${height} (${input.cut.aspectRatio})
 Episode ${input.episode.number}: ${input.episode.title}
 Episode context: ${input.episode.synopsis}
+Neighboring cuts: ${input.episode.neighbors || "First independent beat"}
 World setting: ${input.context.setting || "Infer from this scene"}
 Camera angle: ${input.cut.angle} — ${webtoonShotPrompt(input.cut.angle)}
 Scene: ${input.cut.description || "Infer a clear beat from the episode context"}
@@ -388,6 +409,8 @@ Selected cast:
 ${cast || "No named character selected"}
 
 Return a practical SVG scene graph using only the supplied JSON schema.
+First produce direction: beat, acting (eyes/mouth/gaze/body and mixed emotions), lighting (motivated light sources, dramatic facial shadows), effects (origin/direction/depth/intensity, reflected light; omit unneeded spectacle), continuity (weapons/handedness/wounds/magic palette/spatial relationships), readingPath (what appears first, then what scrolling reveals). These decisions are automatic; never ask the creator to tune effects.
+A quiet threat relies on acting and restrained light; impact uses a localized flash, reaction and debris; aftermath reduces effects. Match intensity to neighboring beats. For 4:1 focus on a readable detail; for 1:4 or 1:8 stage a coherent vertical reveal, never stretch a standard illustration or repeat the same character down the page.
 - Write backgroundDescription in Korean as actual visual art direction, not "background" or a location name alone. Specify camera perspective/horizon, near/middle/far spatial depth, key architecture/landscape, at least three scene-appropriate fixtures/details, lighting direction, time of day and mood. The environment will be DRAWN as a full-canvas background sketch.
 - Use the scene and world context to infer a coherent setting when details are sparse. Keep it consistent with the action, and do not introduce unrelated story facts.
 - Do not use labeled shape boxes to substitute for walls, windows, furniture or scenery. Put fixed environmental fixtures in backgroundDescription; use prop elements for independently editable interaction objects without duplicating them in the background.
@@ -398,8 +421,10 @@ Return a practical SVG scene graph using only the supplied JSON schema.
 - Use speech/caption/sfx elements for exact Korean text; these remain editable overlays.
 - Design for a VERTICAL SCROLL WEBTOON, not a printed comic page or four-panel grid. Dialogue belongs primarily in whitespace BEFORE/AFTER the art or lightly across its top/bottom edge. Never cover faces, hands, interaction props, or important scenery. Narration/inner monologue may be separate caption boxes or unboxed text in whitespace; SFX can cross an art boundary. Preserve top-to-bottom reading order. Do not force all speech inside the artwork.
 - Plan flow.before/after as reading time: short gaps for quick exchanges, longer gaps for hesitation, silence, time passing or scene transitions. Vary art width with flow.inset and left/center/right alignment where it serves the beat; establishing scenery can be wide, reactions/detail shots can be narrow. Do not mechanically make every image the same width. The art canvas remains fully drawn; the app creates these surrounding spaces. Use flowOrder/flowSpacing to separate monologue beats and dialogue in a natural reading sequence, without changing or inventing the supplied text.
-- Both top and bottom whitespace default to 150px and have a HARD 300px maximum. Keep each side's total lettering height plus flowSpacing, 40px between elements and 24px outer padding within 300px. Distribute dialogue between the two sides when needed; never allocate oversized whitespace or clip text.
-- For every speech element, choose balloonStyle: normal for ordinary dialogue, thought for inner monologue, shout for yelling, or whisper for quiet/breathing dialogue. Set speakerCharacterId to the exact cast ID and aim tailX/tailY toward that speaker. tail coordinates are local to the balloon: (0,0) top-left, (1,1) bottom-right, and may extend outside the box.
+- Whitespace grows to fit readable 35px lettering. Separate speech-space from intentional silent pauses. Keep complete text, divide long dialogue into meaningful beats, and never shrink it to cram it onto the drawing. Place speech/captions before or after the art; use SFX sparingly inside the art without hiding faces/hands.
+- Choose speechRole separately from shape. Use radiant for urgent internal thought, rough for restrained menace, burst for irregular yelling, broadcast for hexagonal commentary, connected for two consecutive beats from ONE speaker (separate the two texts with a blank line). A calm threat may use a black normal balloon with white lettering. Narration can be rounded or none. Tails indicate direction only and are always short; omit tails for thoughts/narration/broadcast.
+- Preserve every supplied line of dialogue and SFX in reading order; do not invent dialogue. Split SFX into syllables only when meaningful and preserve their exact characters.
+- For every speech element, choose the shape according to the voice and the project genre; avoid mechanically mapping every inner thought to a cloud. Set speakerCharacterId to the exact cast ID and aim tailX/tailY toward that speaker. tail coordinates are local to the balloon: (0,0) top-left, (1,1) bottom-right, and may extend outside the box.
 - text for character and prop elements is a short Korean label. Include concise pose and expression notes for characters.
 - Avoid overlaps that obscure faces or key action. Keep 10% safe margins for text.
 - Allocate speech/caption bodies for 35px lettering at the final reading-canvas scale, including line wrapping and inner padding. Do not use tiny boxes that require 18px text. Reserve enough space between neighboring balloons; never shorten or omit supplied dialogue to make it fit.
@@ -419,6 +444,7 @@ Return a practical SVG scene graph using only the supplied JSON schema.
   const characterNames = new Map(input.characters.map((character) => [character.id, character.name]));
   return {
     version: 2,
+    direction: parsed.direction,
     aspectRatio: input.cut.aspectRatio,
     width,
     height,
@@ -456,7 +482,7 @@ function layerAspectRatio(layer: StoryboardElement, fallback: PanelAspectRatio):
 
 export async function generateStoryboardLayer(input: {
   context: ProjectVisualContext;
-  episode: { number: number; title: string; synopsis: string };
+  episode: { number: number; title: string; synopsis: string; neighbors?: string };
   cut: { angle: string; description: string; dialogue: string; soundEffect: string; aspectRatio: PanelAspectRatio };
   storyboard: StoryboardDocument;
   layerId: string;
@@ -523,15 +549,16 @@ Prop: ${layer.text}. Use input image 1 for orientation and intended scale. Draw 
 
 export async function generateSceneImage(input: {
   stage?: "sketch" | "finish";
+  revision?: string;
   referenceMode?: "layers" | "direct";
   context: ProjectVisualContext;
-  episode: { number: number; title: string; synopsis: string };
+  episode: { number: number; title: string; synopsis: string; neighbors?: string };
   cut: { angle: string; description: string; dialogue: string; soundEffect: string; aspectRatio: PanelAspectRatio };
   storyboard: StoryboardDocument;
   layoutImage: { data: string; mimeType: string };
   structureImage?: { data: string; mimeType: string };
   references: CharacterReferenceInput[];
-}): Promise<{ data: string; mimeType: string; prompt: string }> {
+}): Promise<{ data: string; mimeType: string; prompt: string; review?: SceneReview }> {
   input = { ...input, storyboard: artworkOnlyStoryboard(input.storyboard) };
   const requiredCharacterIds = new Set(input.storyboard.elements
     .filter((element) => element.visible !== false && element.type === "character" && element.characterId)
@@ -603,6 +630,10 @@ PANEL
 - Camera: ${input.cut.angle} — ${webtoonShotPrompt(input.cut.angle)}
 - Scene: ${input.cut.description}
 - Episode context: ${input.episode.synopsis}
+- Neighboring cuts (continuity only, do not copy framing): ${input.episode.neighbors || "None"}
+- Automatic direction: ${JSON.stringify(input.storyboard.direction ?? {})}
+- Creator revision: ${input.revision || "Complete the planned scene."}
+${input.revision ? "Image 1 is the current artwork or composition to refine. Apply the requested acting, lighting or effect change while preserving unrelated identity, framing, body positions and objects. Local requests are local edits, never a wholesale redesign." : ""}
 ${cast}
 
 NON-NEGOTIABLE SPATIAL CONTRACT (coordinates are percentages of the final image):
@@ -647,8 +678,29 @@ IMPORTANT: Produce artwork only. Do not draw speech balloons, dialogue, captions
       type: "image",
       mime_type: "image/jpeg",
       aspect_ratio: input.cut.aspectRatio,
-      image_size: "1K",
+      image_size: ["1:4", "1:8"].includes(input.cut.aspectRatio) ? "2K" : "1K",
     },
   });
-  return { ...imageResult(interaction), prompt };
+  const image = imageResult(interaction);
+  const review = input.stage === "sketch" ? undefined : await reviewSceneImage(image, input.layoutImage, input.cut.description, input.storyboard, input.revision);
+  return { ...image, prompt, review };
+}
+
+/** A failed review preserves artwork and explicitly reports that it was not checked. */
+async function reviewSceneImage(image: { data: string; mimeType: string }, reference: { data: string; mimeType: string }, scene: string, storyboard: StoryboardDocument, revision?: string): Promise<SceneReview> {
+  try {
+    const result = await client().interactions.create({ model: LAYOUT_MODEL,
+      input: [{ type: "image", data: reference.data, mime_type: reference.mimeType }, { type: "image", data: image.data, mime_type: image.mimeType },
+        { type: "text", text: "Review image 2 as a finished Korean webtoon against image 1's composition. Report visible material problems in Korean: wrong identity/handedness/contact/pose, accidental text or balloons, effects hiding faces/action, unreadable acting, inconsistent lighting or missing intended effects. Intentional partial framing is not an error. Scene: " + scene + "; direction: " + JSON.stringify(storyboard.direction ?? {}) + "; revision: " + (revision ?? "none") + ". Return issues (empty when no clear problems) and protectedRegions for visible faces, hands and key action/props with normalized 0..1 rectangles and Korean labels. Maximum 12 regions." }],
+      response_format: { type: "text", mime_type: "application/json", schema: {
+        type: "object", properties: { issues: { type: "array", items: { type: "string" } }, protectedRegions: { type: "array", items: {
+          type: "object", properties: { x: { type: "number" }, y: { type: "number" }, width: { type: "number" }, height: { type: "number" }, label: { type: "string" } }, required: ["x", "y", "width", "height", "label"],
+        } } }, required: ["issues", "protectedRegions"],
+      } },
+    });
+    const parsed = z.object({ issues: z.array(z.string().max(500)).max(12), protectedRegions: z.array(z.object({
+      x: z.number().min(0).max(1), y: z.number().min(0).max(1), width: z.number().positive().max(1), height: z.number().positive().max(1), label: z.string().max(100),
+    })).max(12) }).parse(JSON.parse(result.output_text ?? "{}"));
+    return { status: "checked", ...parsed };
+  } catch { return { status: "unavailable", issues: ["AI 그림 검수를 완료하지 못했습니다. 생성된 그림은 보존됩니다."], protectedRegions: [] }; }
 }

@@ -1,8 +1,9 @@
+import { panelDimensions } from "@/lib/webtoonDesign";
 import type { PanelAspectRatio, StoryboardDocument, StoryboardElement, StoryboardElementType, WebtoonFontFamily } from "@/lib/storage";
 import { fitOverlayToCanvas, layoutStoryboardText } from "@/lib/storyboardText";
 import { fitImageRect } from "@/lib/panelGeometry";
 import { resolveCharacterRig } from "@/lib/storyboardRig";
-import { balloonMarkup, textDecoration, textGradientId, textGradientSvg } from "@/lib/webtoonDecoration";
+import { balloonTail, balloonMarkup, textDecoration, textGradientId, textGradientSvg } from "@/lib/webtoonDecoration";
 import { webtoonFlowLayout } from "@/lib/webtoonFlow";
 
 export const WEBTOON_FONT_OPTIONS: Array<{ value: WebtoonFontFamily; label: string; description: string }> = [
@@ -32,12 +33,7 @@ export function webtoonFontStack(font: WebtoonFontFamily): string {
 }
 
 export function storyboardDimensions(aspectRatio: PanelAspectRatio): { width: number; height: number } {
-  return {
-    "4:3": { width: 1200, height: 900 },
-    "3:4": { width: 900, height: 1200 },
-    "1:1": { width: 1000, height: 1000 },
-    "9:16": { width: 900, height: 1600 },
-  }[aspectRatio];
+  return panelDimensions(aspectRatio);
 }
 
 export function isOverlayElement(element: StoryboardElement): boolean {
@@ -76,44 +72,15 @@ export function storyboardTextLines(text: string, maxCharacters: number): string
 }
 
 export function speechBalloonGeometry(element: StoryboardElement) {
-  const centerX = element.width / 2;
-  const centerY = element.height / 2;
-  const radiusX = Math.max(1, centerX - 3);
-  const radiusY = Math.max(1, centerY - 3);
-  const tailX = (element.tailX ?? 0.25) * element.width;
-  const tailY = (element.tailY ?? 1.22) * element.height;
-  let dx = tailX - centerX;
-  let dy = tailY - centerY;
-  if (Math.abs(dx) + Math.abs(dy) < 0.001) {
-    dx = -element.width * 0.25;
-    dy = element.height;
-  }
-  const boundaryScale = 1 / Math.sqrt((dx * dx) / (radiusX * radiusX) + (dy * dy) / (radiusY * radiusY));
-  const boundaryX = centerX + dx * boundaryScale;
-  const boundaryY = centerY + dy * boundaryScale;
-  const length = Math.max(1, Math.hypot(dx, dy));
-  const baseWidth = Math.max(9, Math.min(element.width, element.height) * 0.09);
-  const perpendicularX = -dy / length;
-  const perpendicularY = dx / length;
-  const tailPoints = `${boundaryX + perpendicularX * baseWidth},${boundaryY + perpendicularY * baseWidth} ${tailX},${tailY} ${boundaryX - perpendicularX * baseWidth},${boundaryY - perpendicularY * baseWidth}`;
-  const thoughtDots = [0.22, 0.52, 0.8].map((ratio, index) => ({
-    x: boundaryX + (tailX - boundaryX) * ratio,
-    y: boundaryY + (tailY - boundaryY) * ratio,
-    radius: Math.max(4, baseWidth * (0.7 - index * 0.18)),
-  }));
-  const spikePoints = Array.from({ length: 32 }, (_, index) => {
-    const angle = -Math.PI / 2 + (Math.PI * 2 * index) / 32;
-    const radius = index % 2 === 0 ? 1 : 0.82;
-    return `${centerX + Math.cos(angle) * radiusX * radius},${centerY + Math.sin(angle) * radiusY * radius}`;
-  }).join(" ");
-  return { centerX, centerY, radiusX, radiusY, tailX, tailY, boundaryX, boundaryY, tailPoints, thoughtDots, spikePoints };
+  const tail = balloonTail(element);
+  return { tailX: tail.x, tailY: tail.y, enabled: tail.enabled };
 }
 
-function svgText(element: StoryboardElement): string {
+export function svgText(element: StoryboardElement): string {
   const layout = layoutStoryboardText(element, webtoonFontStack(element.fontFamily ?? defaultWebtoonFont(element.type)));
   const ink = textDecoration(element);
-  const effects = ` stroke="${ink.stroke}" stroke-width="${ink.strokeWidth}" stroke-linejoin="round" paint-order="stroke fill"${element.type === "sfx" ? ' font-style="italic"' : ""}`;
-  return `${textGradientSvg(element)}<text xml:space="preserve" x="${element.width / 2}" y="${layout.startY}" text-anchor="middle" dominant-baseline="middle" font-family="${escapeXml(layout.fontFamily)}" font-size="${layout.fontSize}" font-weight="${layout.weight}" fill="${ink.gradient ? `url(#${textGradientId(element)})` : ink.color}"${effects}>${layout.lines.map((line, index) => `<tspan x="${element.width / 2}" dy="${index === 0 ? 0 : layout.lineHeight}"${layout.widths[index] > 0 ? ` textLength="${layout.widths[index]}" lengthAdjust="spacingAndGlyphs"` : ""}>${escapeXml(line || " ")}</tspan>`).join("")}</text>`;
+  const effects = ` stroke="${ink.stroke}" stroke-width="${ink.strokeWidth}" stroke-linejoin="round" paint-order="stroke fill"${element.textItalic || element.type === "sfx" ? ' font-style="italic"' : ""}`;
+  return `${textGradientSvg(element)}<text xml:space="preserve" x="${element.width / 2}" y="${layout.startY}" text-anchor="middle" dominant-baseline="middle" font-family="${escapeXml(layout.fontFamily)}" font-size="${layout.fontSize}" font-weight="${layout.weight}" fill="${ink.gradient ? `url(#${textGradientId(element)})` : ink.color}"${effects}>${layout.lines.map((line, index) => `<tspan x="${layout.positions[index].x}" y="${layout.positions[index].y}"${layout.widths[index] > 0 ? ` textLength="${layout.widths[index]}" lengthAdjust="spacingAndGlyphs"` : ""}>${escapeXml(line || " ")}</tspan>`).join("")}</text>`;
 }
 
 function characterMarkup(element: StoryboardElement): string {
@@ -221,7 +188,7 @@ export async function drawStoryboardOverlays(context: CanvasRenderingContext2D, 
     .map(element => element.placement === "canvas" ? element : fitOverlayToCanvas(element, storyboard.width, storyboard.height)).sort((a, b) => a.zIndex - b.zIndex);
   for (const element of elements) {
     const font = layoutStoryboardText(element, webtoonFontStack(element.fontFamily ?? defaultWebtoonFont(element.type)));
-    if (window.document.fonts?.load) await window.document.fonts.load(`${element.type === "sfx" ? "italic " : ""}${font.weight} ${font.fontSize}px ${font.fontFamily}`, element.text);
+    if (window.document.fonts?.load) await window.document.fonts.load(`${element.textItalic || element.type === "sfx" ? "italic " : ""}${font.weight} ${font.fontSize}px ${font.fontFamily}`, element.text);
     const shapes = storyboardToSvg({ ...storyboard, elements: [element] }, { overlaysOnly: true, transparent: true, hideText: true });
     const url = URL.createObjectURL(new Blob([shapes], { type: "image/svg+xml;charset=utf-8" }));
     try {
@@ -233,7 +200,7 @@ export async function drawStoryboardOverlays(context: CanvasRenderingContext2D, 
     context.globalAlpha = element.opacity ?? 1;
     context.translate(element.x + element.width / 2, element.y + element.height / 2);
     context.rotate(element.rotation * Math.PI / 180);
-    context.font = `${element.type === "sfx" ? "italic " : ""}${layout.weight} ${layout.fontSize}px ${layout.fontFamily}`;
+    context.font = `${element.textItalic || element.type === "sfx" ? "italic " : ""}${layout.weight} ${layout.fontSize}px ${layout.fontFamily}`;
     context.textAlign = "center";
     context.textBaseline = "middle";
     const ink = textDecoration(element);
@@ -250,9 +217,10 @@ export async function drawStoryboardOverlays(context: CanvasRenderingContext2D, 
     context.lineJoin = "round";
     layout.lines.forEach((line, index) => {
       if (!line) return;
-      const y = layout.startY + index * layout.lineHeight - element.height / 2;
-      if (ink.strokeWidth > 0) context.strokeText(line, 0, y, layout.availableWidth);
-      context.fillText(line, 0, y, layout.availableWidth);
+      const y = layout.positions[index].y - element.height / 2;
+      const x = layout.positions[index].x - element.width / 2;
+      if (ink.strokeWidth > 0) context.strokeText(line, x, y);
+      context.fillText(line, x, y);
     });
     context.restore();
   }

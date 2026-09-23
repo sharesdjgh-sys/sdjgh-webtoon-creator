@@ -14,9 +14,9 @@ export type ArtDirection = {
   custom: string;
 };
 
-export type PanelAspectRatio = "4:3" | "3:4" | "1:1" | "9:16";
+export type PanelAspectRatio = typeof import("./webtoonDesign").PANEL_RATIOS[number];
 export type WebtoonFontFamily = "clean" | "serif" | "handwritten" | "cute" | "comic" | "impact";
-export type SpeechBalloonStyle = "normal" | "thought" | "shout" | "whisper" | "rounded" | "none";
+export type SpeechBalloonStyle = typeof import("./webtoonDesign").BALLOON_STYLES[number];
 export type CharacterJointKey =
   | "head"
   | "neck"
@@ -78,6 +78,10 @@ export type StoryboardElement = {
   flowOrder?: number;
   flowSpacing?: number;
   balloonStyle?: SpeechBalloonStyle;
+  tailVisible?: boolean;
+  speechRole?: "dialogue" | "thought" | "narration" | "broadcast";
+  lineHeight?: number;
+  textItalic?: boolean;
   tailX?: number;
   tailY?: number;
   speakerCharacterId?: string;
@@ -89,7 +93,14 @@ export type StoryboardElement = {
   flipX?: boolean;
 };
 
+export type SceneDirection = {
+  beat: "quiet" | "anticipation" | "movement" | "impact" | "aftermath" | "reveal";
+  acting: string; lighting: string; effects: string; continuity: string; readingPath: string;
+};
+export type SceneReview = { status: "checked" | "unavailable"; issues: string[]; protectedRegions: Array<{ x: number; y: number; width: number; height: number; label: string }> };
+
 export type StoryboardDocument = {
+  direction?: SceneDirection;
   version: 2;
   aspectRatio: PanelAspectRatio;
   width: number;
@@ -185,6 +196,7 @@ export type Cut = {
   storyboardImageSourceHash?: string;
   sceneImageAssetId?: string;
   sceneSourceHash?: string;
+  sceneReview?: SceneReview;
 };
 
 export type Episode = {

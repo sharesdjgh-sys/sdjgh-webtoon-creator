@@ -31,20 +31,22 @@ import {
   X,
 } from "lucide-react";
 import { fitOverlayToCanvas, layoutStoryboardText, sizeBalloonForFont } from "@/lib/storyboardText";
-import type { Character, CharacterJointKey, StoryboardDocument, StoryboardElement, StoryboardElementType } from "@/lib/storage";
-import { defaultWebtoonFont, isOverlayElement, speechBalloonGeometry, storyboardToSvg, WEBTOON_FONT_OPTIONS, webtoonFontStack } from "@/lib/storyboardSvg";
+import type { SceneReview, Character, CharacterJointKey, StoryboardDocument, StoryboardElement, StoryboardElementType } from "@/lib/storage";
+import { defaultWebtoonFont, isOverlayElement, speechBalloonGeometry, svgText, storyboardToSvg, WEBTOON_FONT_OPTIONS, webtoonFontStack } from "@/lib/storyboardSvg";
 import { CHARACTER_POSE_PRESETS, resolveCharacterRig } from "@/lib/storyboardRig";
 import { downloadBlob } from "@/lib/mediaStorage";
 import StoredImage, { BlobImage } from "@/components/visual/StoredImage";
 import { composeStoryboardPng } from "@/lib/storyboardComposite";
 import AiActivityBanner from "@/components/AiActivityBanner";
 import { pendingLayerIds } from "@/lib/layerBatch";
-import { balloonMarkup, textDecoration, textGradientId } from "@/lib/webtoonDecoration";
+import { balloonMarkup } from "@/lib/webtoonDecoration";
 import WebtoonStyleControls from "@/components/visual/WebtoonStyleControls";
 import BalloonStylePicker from "@/components/visual/BalloonStylePicker";
 import { RESIZE_HANDLES, resizeCursor, resizeOverlay, type ResizeDirection } from "@/lib/storyboardResize";
 import { artworkOnlyStoryboard, sceneStructureSvg } from "@/lib/cleanGeneration";
 import { webtoonFlowLayout, editableWebtoonDocument, editorSceneElements, artworkEditFromCanvas, changeWebtoonFlow, MAX_WEBTOON_GAP } from "@/lib/webtoonFlow";
+import { reviewWebtoonLettering } from "@/lib/webtoonQuality";
+import { arrangeWebtoonLettering } from "@/lib/webtoonLettering";
 import { renderWebtoonBlock } from "@/lib/webtoonFlowRender";
 
 type Props = {
@@ -59,6 +61,7 @@ type Props = {
   onReviewScene?: (reviewed: boolean) => void;
   candidateStale?: boolean;
   sceneFeedback?: string;
+  sceneReview?: SceneReview;
   onAcceptScene?: () => Promise<void>;
   onDiscardScene?: () => void;
   generatingScene?: boolean;
@@ -70,7 +73,7 @@ type Props = {
   onCancelLayerBatch?: () => void;
   onDetectAllPoses: () => void;
   onSetPoseReference: (layerId: string, file: File | null) => void;
-  onGenerateScene: () => void;
+  onGenerateScene: (revision?: string) => void;
   onRegenerateSketch?: () => void;
   generatingSketch?: boolean;
 };
@@ -114,20 +117,7 @@ function SceneElement({
 }) {
   const centerX = element.width / 2;
   const centerY = element.height / 2;
-  const fontFamily = webtoonFontStack(element.fontFamily ?? defaultWebtoonFont(element.type));
-  const multilineText = () => {
-    const layout = layoutStoryboardText(element, fontFamily);
-    const ink = textDecoration(element);
-    return (
-      <>
-        {ink.gradient && <defs><linearGradient id={textGradientId(element)} gradientUnits="userSpaceOnUse" x1={ink.x1} y1={ink.y1} x2={ink.x2} y2={ink.y2}><stop offset="0" stopColor={ink.color} /><stop offset="1" stopColor={ink.end} /></linearGradient></defs>}
-        <text xmlSpace="preserve" x={centerX} y={layout.startY} textAnchor="middle" dominantBaseline="middle" fontSize={layout.fontSize} fontWeight={layout.weight} fill={ink.gradient ? `url(#${textGradientId(element)})` : ink.color}
-          fontStyle={element.type === "sfx" ? "italic" : undefined} stroke={ink.stroke} strokeWidth={ink.strokeWidth} strokeLinejoin="round" paintOrder="stroke fill" style={{ fontFamily: layout.fontFamily }}>
-          {layout.lines.map((line, index) => <tspan key={index} x={centerX} dy={index === 0 ? 0 : layout.lineHeight} textLength={layout.widths[index] || undefined} lengthAdjust="spacingAndGlyphs">{line || " "}</tspan>)}
-        </text>
-      </>
-    );
-  };
+  const multilineText = () => <g dangerouslySetInnerHTML={{ __html: svgText(element) }} />;
   if (element.type === "character") {
     const rig = resolveCharacterRig(element);
     const point = (key: CharacterJointKey) => ({ x: rig[key].x * element.width, y: rig[key].y * element.height });
@@ -185,12 +175,11 @@ function SceneElement({
   }
   if (element.type === "speech") {
     const balloon = speechBalloonGeometry(element);
-    const style = element.balloonStyle ?? "normal";
     return (
       <>
         <g dangerouslySetInnerHTML={{ __html: balloonMarkup(element) }} />
         {multilineText()}
-        {selected && !["none", "rounded", "shout"].includes(style) && <circle cx={balloon.tailX} cy={balloon.tailY} r={11} fill="#FDE68A" stroke="#7C3AED" strokeWidth={4} className="cursor-crosshair" onPointerDown={onTailPointerDown} />}
+        {selected && balloon.enabled && <circle cx={balloon.tailX} cy={balloon.tailY} r={11} fill="#FDE68A" stroke="#7C3AED" strokeWidth={4} className="cursor-crosshair" onPointerDown={onTailPointerDown} />}
       </>
     );
   }
@@ -278,7 +267,7 @@ function LayoutControlOverlay({
   );
 }
 
-export default function StoryboardEditor({ document: savedDocument, characters, staleLayerIds = new Set(), generatingLayerIds = new Set(), sceneAssetId, sceneStale, sceneCandidate, sceneCandidateReviewed, onReviewScene, candidateStale, sceneFeedback, onAcceptScene, onDiscardScene, generatingScene, detectingAllPoses, onChange, onRegenerateLayer, onRegenerateLayers, layerBatchProgress, onCancelLayerBatch, onDetectAllPoses, onSetPoseReference, onGenerateScene, onRegenerateSketch, generatingSketch }: Props) {
+export default function StoryboardEditor({ document: savedDocument, characters, staleLayerIds = new Set(), generatingLayerIds = new Set(), sceneAssetId, sceneStale, sceneCandidate, sceneCandidateReviewed, onReviewScene, candidateStale, sceneFeedback, sceneReview, onAcceptScene, onDiscardScene, generatingScene, detectingAllPoses, onChange, onRegenerateLayer, onRegenerateLayers, layerBatchProgress, onCancelLayerBatch, onDetectAllPoses, onSetPoseReference, onGenerateScene, onRegenerateSketch, generatingSketch }: Props) {
   const document = useMemo(() => editableWebtoonDocument(savedDocument), [savedDocument]);
   const readingLayout = useMemo(() => webtoonFlowLayout(document), [document]);
   const canvas = readingLayout.document;
@@ -286,6 +275,9 @@ export default function StoryboardEditor({ document: savedDocument, characters, 
   const displayElements = useMemo(() => editorSceneElements(document), [document]);
   const artStyle = { left: `${100 * art.x / canvas.width}%`, top: `${100 * art.y / canvas.height}%`,
     width: `${100 * art.width / canvas.width}%`, height: `${100 * art.height / canvas.height}%` };
+  const sceneCanApply = sceneCandidateReviewed || (sceneReview?.status === "checked" && sceneReview.issues.length === 0);
+  const [revision, setRevision] = useState("");
+  const letteringWarnings = useMemo(() => reviewWebtoonLettering(document, sceneReview), [document, sceneReview]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
   const [previewZoom, setPreviewZoom] = useState(1);
@@ -327,9 +319,12 @@ export default function StoryboardEditor({ document: savedDocument, characters, 
     });
     return () => cleanups.forEach(cleanup => cleanup());
   }, [expanded, zoomPreview]);
-  const previewWidth = `calc(min(100cqw, 100cqh * ${canvas.width / canvas.height}) * ${previewZoom})`;
+  const previewWidth = `calc(min(100cqw, 900px) * ${previewZoom})`;
   const [applyingScene, setApplyingScene] = useState(false);
-  const [singleFinalView, setFinalView] = useState(Boolean(sceneAssetId));
+  // A view choice belongs to the applied image; a new image opens in final view.
+  const [viewChoice, setViewChoice] = useState({ assetId: sceneAssetId, final: Boolean(sceneAssetId) });
+  const singleFinalView = viewChoice.assetId === sceneAssetId ? viewChoice.final : Boolean(sceneAssetId);
+  const setFinalView = (final: boolean) => setViewChoice({ assetId: sceneAssetId, final });
   const finalView = !expanded && singleFinalView;
   const dialogRef = useRef<HTMLDialogElement>(null);
   const compareButtonRef = useRef<HTMLButtonElement>(null);
@@ -831,8 +826,8 @@ export default function StoryboardEditor({ document: savedDocument, characters, 
               <p className="text-xs font-semibold text-[#5B21B6]">{candidateStale ? "생성 후 콘티가 변경되었습니다. 다시 생성해주세요." : "새 장면을 확인하고 적용해주세요."}</p>
               <label className="flex items-start gap-2 text-[11px]"><input type="checkbox" checked={Boolean(sceneCandidateReviewed)} disabled={candidateStale || applyingScene} onChange={event => onReviewScene?.(event.target.checked)} /> 말풍선 표시를 끄고 인물 크기·위치·포즈·소품 배치가 콘티와 맞으며, 불필요한 말풍선·글자·가이드·테두리·잘림이 없는지 확인했습니다.</label>
               <div className="flex gap-2">
-                <button type="button" disabled={applyingScene || candidateStale || !sceneCandidateReviewed || !onAcceptScene} onClick={async () => {
-                  if (applyingScene || candidateStale || !sceneCandidateReviewed || !onAcceptScene) return;
+                <button type="button" disabled={applyingScene || candidateStale || !sceneCanApply || !onAcceptScene} onClick={async () => {
+                  if (applyingScene || candidateStale || !sceneCanApply || !onAcceptScene) return;
                   setApplyingScene(true);
                   try { await onAcceptScene(); } finally { setApplyingScene(false); }
                 }} className="editor-tool disabled:opacity-40">{applyingScene ? "적용 중..." : "새 그림 적용"}</button>
@@ -849,15 +844,24 @@ export default function StoryboardEditor({ document: savedDocument, characters, 
           className={`min-h-0 overflow-y-auto overscroll-contain rounded-xl border border-[#EBE7E0] bg-white p-3 space-y-3 focus-visible:outline-2 focus-visible:outline-[#7C3AED] ${expanded ? "max-h-[72vh]" : "h-full"}`}
           style={{ scrollbarGutter: "stable" }}>
           <p className="text-[10px] text-[#8B7EAE]">미리보기는 고정되어 있습니다. 이 설정창 안에서 스크롤하세요.</p>
+          <section className="space-y-2 rounded-xl border border-[#DDD6FE] bg-[#FAF8FF] p-3" aria-label="AI 연출 수정">
+            <p className="text-xs font-semibold text-[#5B21B6]">원하는 느낌을 말해주세요</p>
+            <textarea aria-label="AI 그림 수정 요청" maxLength={1500} rows={3} value={revision} onChange={event => setRevision(event.target.value)} placeholder="예: 겁먹었지만 태연한 척하게. 얼굴의 그림자는 더 깊게, 번개는 조금 줄여줘." className="visual-input" />
+            <button type="button" disabled={!revision.trim() || generatingScene || generatingSketch || Boolean(layerBatchProgress)} onClick={() => onGenerateScene(revision.trim())} className="editor-tool disabled:opacity-40">AI가 그림에 반영</button>
+            <p className="text-[10px] text-[#82798B]">표정·채색·그림자·효과를 함께 조절합니다. 새 결과를 확인한 뒤 적용하세요.</p>
+            {sceneReview && <p className="text-[11px]">{sceneReview.status === "checked" ? sceneReview.issues.length ? "AI 검수에서 확인할 점을 찾았습니다." : "AI 그림 검수에서 뚜렷한 문제를 찾지 못했습니다." : "AI 검수 미완료 · 그림은 보존되었습니다."}</p>}
+            {[...(sceneReview?.issues ?? []), ...letteringWarnings].slice(0,6).map((note,i) => <p key={i} className="text-[11px] text-orange-800">{note}</p>)}
+          </section>
           <div className="space-y-2 rounded-xl border border-[#DDD6FE] bg-[#FAF8FF] p-3" aria-label="그림 여백 옵션">
             <h3 className="text-xs font-bold text-[#5B21B6]">그림 여백</h3>
+            <button type="button" className="editor-tool" onClick={() => apply(arrangeWebtoonLettering(document))}>대사를 여백에 자동 배치</button>
             {readingLayout.overflow && <p role="alert" className="rounded-lg bg-orange-50 p-2 text-[11px] text-orange-800">{readingLayout.overflow}</p>}
             {(["before", "after"] as const).map(key => <label key={key} className="block text-[11px]">
               {key === "before" ? "위 여백" : "아래 여백"} · {Math.round(document.flow![key])}px
               <input type="range" aria-label={key === "before" ? "그림 위 여백" : "그림 아래 여백"} min={0} max={MAX_WEBTOON_GAP} step={10} value={document.flow![key]}
                 onChange={event => apply(changeWebtoonFlow(document, { [key]: Number(event.target.value) }))} className="block w-full accent-[#7C3AED]" />
             </label>)}
-            <p className="text-[10px] leading-4 text-[#82798B]">기본 150px · 최대 300px. 말풍선을 미리보기의 흰 여백으로 직접 끌어 놓으세요. 점선은 편집용이며 출력되지 않습니다.</p>
+            <p className="text-[10px] leading-4 text-[#82798B]">대사량에 맞춰 여백을 확보합니다. 말풍선을 미리보기의 흰 여백으로 직접 끌어 놓으세요. 점선은 편집용이며 출력되지 않습니다.</p>
             <details className="text-[11px]">
               <summary className="cursor-pointer">그림 폭·정렬</summary>
               <label className="mt-2 block">그림 좌우 여백
@@ -903,10 +907,10 @@ export default function StoryboardEditor({ document: savedDocument, characters, 
               <p className="text-xs font-semibold text-[#5B21B6]">장면 단위 콘티</p>
               <p className="text-[11px] leading-5 text-[#7A7067]">인물·손·소품·배경을 함께 그립니다. 레이어는 배치 지시이며 그림 조각이 아닙니다. 구도 변경은 스케치를 다시 그린 뒤 확인하세요. 여백과 말풍선은 이 미리보기에서 바로 편집합니다.</p>
               <button type="button" disabled={generatingSketch || generatingScene} onClick={onRegenerateSketch} className="editor-tool w-full justify-center">{generatingSketch ? "장면 스케치 생성 중…" : "수정한 구도로 장면 스케치 다시 그리기"}</button>
-              <button type="button" disabled={generatingSketch || generatingScene} onClick={onGenerateScene} className="editor-tool w-full justify-center">AI 마무리 작화 생성</button>
+              <button type="button" disabled={generatingSketch || generatingScene} onClick={() => onGenerateScene()} className="editor-tool w-full justify-center">AI 마무리 작화 생성</button>
             </div>}
             {onRegenerateLayers && !document.sceneSketchAssetId && <div className="mb-2 space-y-2">
-              <button type="button" onClick={onGenerateScene}
+              <button type="button" onClick={() => onGenerateScene()}
                 disabled={Boolean(generatingScene) || Boolean(layerBatchProgress) || generatingThisStoryboard || Boolean(detectingAllPoses)}
                 className="w-full rounded-lg bg-[#7C3AED] px-3 py-2 text-[11px] font-semibold text-white disabled:opacity-40">
                 {generatingScene ? "장면에 반영 중…" : "수정 사항 한 번에 장면 반영"}
@@ -1140,7 +1144,7 @@ export default function StoryboardEditor({ document: savedDocument, characters, 
         <div className="flex items-center gap-2">
           {!document.sceneSketchAssetId && staleLayerIds.size > 0 && <span className="text-[10px] text-orange-600 bg-orange-50 px-2 py-1 rounded-full">수정 적용이 필요한 레이어 {staleLayerIds.size}개</span>}
           {sceneStale && sceneAssetId && <span className="text-[10px] text-orange-600 bg-orange-50 px-2 py-1 rounded-full">비율·구도가 변경되었습니다. 기존 그림은 여백을 두고 표시되며, 새 구도는 재생성해주세요.</span>}
-          <button type="button" disabled={Boolean(generatingScene) || Boolean(generatingSketch) || Boolean(layerBatchProgress) || generatingThisStoryboard || Boolean(detectingAllPoses)} onClick={onGenerateScene} className="inline-flex items-center gap-1.5 rounded-full bg-[#1A1A1A] text-white text-xs font-semibold px-4 py-2 hover:bg-black disabled:cursor-wait disabled:opacity-80">
+          <button type="button" disabled={Boolean(generatingScene) || Boolean(generatingSketch) || Boolean(layerBatchProgress) || generatingThisStoryboard || Boolean(detectingAllPoses)} onClick={() => onGenerateScene()} className="inline-flex items-center gap-1.5 rounded-full bg-[#1A1A1A] text-white text-xs font-semibold px-4 py-2 hover:bg-black disabled:cursor-wait disabled:opacity-80">
             {generatingScene ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />} {generatingScene ? `장면 생성 중 · ${generationSeconds}초` : document.sceneSketchAssetId ? "AI 마무리 작화 생성" : "수정 사항 한 번에 장면 반영"}
           </button>
         </div>

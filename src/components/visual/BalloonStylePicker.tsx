@@ -10,6 +10,11 @@ const styles: { value: SpeechBalloonStyle; label: string; hint: string }[] = [
   { value: "shout", label: "외침", hint: "강한 감정과 큰 목소리" },
   { value: "whisper", label: "속삭임", hint: "작고 조심스러운 목소리" },
   { value: "rounded", label: "독백 상자", hint: "내레이션과 상황 설명" },
+  { value: "radiant", label: "긴박한 속마음", hint: "촘촘한 방사선으로 압박감 표현" },
+  { value: "burst", label: "격한 외침", hint: "불규칙한 윤곽의 강한 발화" },
+  { value: "rough", label: "거친 위압", hint: "겹쳐 그린 선으로 낮은 위협 표현" },
+  { value: "broadcast", label: "방송·중계", hint: "육각형으로 전달 경로 구별" },
+  { value: "connected", label: "이어지는 대사", hint: "빈 줄로 나눈 두 문장을 연결" },
   { value: "none", label: "테두리 없는 글", hint: "여백 위에 흐르는 독백" },
 ];
 
@@ -50,7 +55,7 @@ export default function BalloonStylePicker({ element, onChange }: { element: Sto
       </div>
       <div className="grid grid-cols-3 gap-3">
         {styles.map(style => <button key={style.value} type="button" aria-label={style.label} aria-pressed={current === style.value}
-          onClick={() => { onChange({ type: style.value === "rounded" || style.value === "none" ? "caption" : "speech", balloonStyle: style.value }); setOpen(false); }}
+          onClick={() => { onChange({ balloonStyle: style.value }); setOpen(false); }}
           className="rounded-xl border border-[#E4DDF8] bg-white p-3 text-left hover:border-[#7C3AED] aria-pressed:border-[#7C3AED] aria-pressed:ring-2 aria-pressed:ring-[#DDD6FE]">
           <Sample value={style.value} /><span className="block text-xs font-bold text-[#5B21B6]">{style.label}</span><span className="mt-1 block text-[11px] text-[#82798B]">{style.hint}</span>
         </button>)}

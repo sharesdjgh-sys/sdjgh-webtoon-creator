@@ -43,7 +43,7 @@ async function main() {
   assert.ok(calls.some(call => call[0] === "translate" && call[1] === 190 && call[2] === 1350), "Canvas text uses the same unchanged center as the SVG balloon");
   assert.equal(revoked.length, 1, "overlay SVG URL is released");
   revoked.length = 0;
-  const ratios = ["4:3", "3:4", "1:1", "9:16"];
+  const ratios = Array.from(load("src/lib/webtoonDesign.ts").PANEL_RATIOS);
   for (const from of ratios) for (const to of ratios) {
     const size = svg.storyboardDimensions(from);
     const element = { id: "hero", type: "character", x: 100, y: 120, width: 200, height: 400, rotation: 15, fontSize: 24, assetId: "keep", tailX: .25, tailY: 1.2 };
@@ -62,7 +62,7 @@ async function main() {
     const fitted = geometry.fitImageRect(size.width, size.height, result.width, result.height);
     assert.ok(fitted.width <= result.width + .001 && fitted.height <= result.height + .001);
   }
-  for (const [w, h, ratio] of [[1200,896,"4:3"],[896,1200,"3:4"],[1024,1024,"1:1"],[768,1376,"9:16"]]) {
+  for (const [w, h, ratio] of [[1200,896,"4:3"],[896,1200,"3:4"],[1024,1024,"1:1"],[768,1376,"9:16"],[2048,512,"4:1"],[1024,4096,"1:4"],[768,6144,"1:8"]]) {
     assert.ok(geometry.matchesPanelRatio(w,h,ratio));
     imageWidth = w; imageHeight = h;
     await geometry.validatePanelImage(new Blob(["image"]), ratio);
@@ -71,7 +71,7 @@ async function main() {
   assert.equal(geometry.matchesPanelRatio(0,0,"1:1"), false);
   imageWidth = imageHeight = 1024;
   await assert.rejects(geometry.validatePanelImage(new Blob(["image"]), "9:16"), /기존 그림은 유지/);
-  assert.equal(revoked.length, 5, "release image URLs on success and failure");
+  assert.equal(revoked.length, 8, "release image URLs on success and failure");
   imageWidth = 100; imageHeight = 200;
   const doc = { width: 900, height: 1600, aspectRatio: "9:16", elements: [] };
   calls.length = 0;
@@ -88,6 +88,6 @@ async function main() {
   const editor = fs.readFileSync("src/components/visual/StoryboardEditor.tsx", "utf8");
   assert.ok(!editor.includes("max-h-[76vh]"), "height must not clamp width-based aspect ratio");
   assert.ok(editor.includes("maxWidth:"));
-  console.log("PASS: 16 ratio transitions, image validation, URL cleanup, scene/layer fit and editor sizing");
+  console.log("PASS: 49 ratio transitions, image validation, URL cleanup, scene/layer fit and editor sizing");
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });

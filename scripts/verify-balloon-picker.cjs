@@ -25,7 +25,7 @@ const dialog = all(tree, n => n.type === 'dialog')[0];
 dialog.props.ref.current = { showModal: () => shown++, close: () => closed++ };
 const cleanup = effects[0](); assert.equal(shown, 1); assert.equal(browser.document.body.style.overflow, 'hidden');
 const cards = all(dialog, n => n.type === 'button' && n.props['aria-pressed'] !== undefined);
-assert.equal(cards.length, 6);
+assert.equal(cards.length, 11);
 for (const card of cards) {
   const sample = React.Children.toArray(card.props.children)[0];
   const svg = sample.type(sample.props);
@@ -48,15 +48,15 @@ for (const type of ['speech', 'caption']) {
   assert.equal(text.layoutStoryboardText({ ...element, fontSize: 22 }, 'sans-serif').fontSize, 22);
   assert.ok(text.layoutStoryboardText({ ...element, width: 45, height: 25 }, 'sans-serif').fontSize < 35);
 }
-console.log('PASS: six SVG choices, selection preserves lettering, nested Escape/focus/scroll cleanup, 35px defaults and small-balloon fitting');
+console.log('PASS: eleven SVG choices, selection preserves lettering, nested Escape/focus/scroll cleanup, 35px defaults and small-balloon fitting');
 const undersized = { ...props.element, type: 'speech', balloonStyle: 'normal', width: 220, height: 70, x: 300, y: 300, fontSize: undefined, text: 'This is a complete sentence that needs a larger balloon.' };
 assert.ok(text.layoutStoryboardText(undersized, 'sans-serif').fontSize < 20);
 const original = JSON.stringify(undersized);
-for (const style of ['normal', 'thought', 'shout', 'whisper', 'rounded', 'none']) {
+for (const style of ['normal', 'thought', 'shout', 'whisper', 'rounded', 'none', 'radiant', 'burst', 'rough', 'broadcast', 'connected']) {
   for (const [width, height] of [[900, 1500], [1200, 1200], [1000, 1300], [900, 1900]]) {
     const type = style === 'rounded' || style === 'none' ? 'caption' : 'speech';
     const result = text.sizeBalloonForFont({ ...undersized, type, balloonStyle: style }, width, height, 'sans-serif');
-    assert.equal(text.layoutStoryboardText(result, 'sans-serif').fontSize, 35);
+    assert.equal(text.layoutStoryboardText(result, 'sans-serif').fontSize, 35, style + ' ' + width + 'x' + height + ' -> ' + result.width + 'x' + result.height);
     assert.ok(!text.overlayOutsideCanvas(result, width, height));
     assert.equal(result.text, undersized.text);
     assert.ok(result.width > undersized.width);
@@ -67,4 +67,4 @@ assert.equal(JSON.stringify(undersized), original, 'sizing must not mutate saved
 const tooLong = text.sizeBalloonForFont({ ...undersized, text: 'very long dialogue '.repeat(200) }, 300, 250, 'sans-serif');
 assert.ok(!text.overlayOutsideCanvas(tooLong, 300, 250));
 assert.ok(text.layoutStoryboardText(tooLong, 'sans-serif').fontSize < 35, 'impossible text stays bounded so the editor can warn');
-console.log('PASS: initially sub-20px balloons grow to 35px across six styles and four canvas sizes without clipping, truncation or saved-data mutation');
+console.log('PASS: initially sub-20px balloons grow to 35px across eleven styles and four canvas sizes without clipping, truncation or saved-data mutation');

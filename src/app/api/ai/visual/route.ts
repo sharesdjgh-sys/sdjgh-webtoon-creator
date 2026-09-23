@@ -1,3 +1,5 @@
+import { sceneDirectionSchema } from "@/lib/visualSchemas";
+import { BALLOON_STYLES, PANEL_RATIOS, SPEECH_ROLES } from "@/lib/webtoonDesign";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import {
@@ -10,7 +12,7 @@ import {
   projectVisualContextSchema,
 } from "@/lib/gemini";
 
-export const maxDuration = 120;
+export const maxDuration = 180;
 
 const imagePayloadSchema = z.object({
   data: z.string().min(1).max(12_000_000),
@@ -28,6 +30,7 @@ const episodeSchema = z.object({
   number: z.number().int().positive(),
   title: z.string().trim().max(200),
   synopsis: z.string().trim().max(3_000),
+  neighbors: z.string().max(8000).optional(),
 });
 
 const cutSchema = z.object({
@@ -35,7 +38,7 @@ const cutSchema = z.object({
   description: z.string().trim().max(2_000),
   dialogue: z.string().trim().max(1_000),
   soundEffect: z.string().trim().max(300),
-  aspectRatio: z.enum(["4:3", "3:4", "1:1", "9:16"]),
+  aspectRatio: z.enum(PANEL_RATIOS),
   scrollGap: z.enum(["short", "normal", "long"]).optional(),
 });
 
@@ -62,11 +65,12 @@ const characterRigSchema = z.object({
 });
 
 const storyboardSchema = z.object({
+  direction: sceneDirectionSchema.optional(),
   sceneSketchAssetId: z.string().max(200).optional(),
   version: z.literal(2),
-  aspectRatio: z.enum(["4:3", "3:4", "1:1", "9:16"]),
-  width: z.number().positive().max(4_000),
-  height: z.number().positive().max(4_000),
+  aspectRatio: z.enum(PANEL_RATIOS),
+  width: z.number().positive().max(10_000),
+  height: z.number().positive().max(10_000),
   elements: z.array(z.object({
     id: z.string().max(100),
     type: z.enum(["background", "character", "prop", "shape", "arrow", "speech", "caption", "sfx"]),
@@ -98,7 +102,11 @@ const storyboardSchema = z.object({
     poseControlEdited: z.boolean().optional(),
     poseDescriptionEdited: z.boolean().optional(),
     placement: z.enum(["art", "before", "after", "top-edge", "bottom-edge", "canvas"]).optional(),
-    balloonStyle: z.enum(["normal", "thought", "shout", "whisper", "rounded", "none"]).optional(),
+    balloonStyle: z.enum(BALLOON_STYLES).optional(),
+    speechRole: z.enum(SPEECH_ROLES).optional(),
+    tailVisible: z.boolean().optional(),
+    lineHeight: z.number().min(1.05).max(1.8).optional(),
+    textItalic: z.boolean().optional(),
     tailX: z.number().min(-2).max(3).optional(),
     tailY: z.number().min(-2).max(3).optional(),
     speakerCharacterId: z.string().max(120).optional(),
@@ -142,6 +150,7 @@ const requestSchema = z.discriminatedUnion("action", [
   z.object({
     action: z.literal("scene-image"),
     stage: z.enum(["sketch", "finish"]).default("finish"),
+    revision: z.string().trim().max(1500).optional(),
     referenceMode: z.enum(["layers", "direct"]).default("layers"),
     context: projectVisualContextSchema,
     episode: episodeSchema,

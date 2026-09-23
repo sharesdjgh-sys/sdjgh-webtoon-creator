@@ -1,3 +1,4 @@
+import { PANEL_RATIOS } from "@/lib/webtoonDesign";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { generateGeminiJson } from "@/lib/geminiText";
@@ -7,7 +8,7 @@ import { PLAYBOOK_RULES } from "@/lib/prompts/playbook";
 
 export const maxDuration = 60;
 
-const aspectRatioSchema = z.enum(["4:3", "3:4", "1:1", "9:16"]);
+const aspectRatioSchema = z.enum(PANEL_RATIOS);
 const cameraSchema = z.enum(WEBTOON_SHOT_NAMES);
 
 const requestSchema = z.object({
@@ -91,7 +92,9 @@ export async function POST(request: Request) {
 - characterIds에는 제공된 ID만 사용합니다.
 - description, dialogue, soundEffect에는 내부 ID를 절대 쓰지 않습니다. 인물을 부를 때는 자연스러운 이름이나 역할만 씁니다.
 - "미정(character-...)"처럼 이름 뒤에 ID를 괄호로 붙이지 않습니다. ID는 오직 characterIds 배열에만 넣습니다.
-- 3:4는 대화·감정, 4:3은 공간 소개, 1:1은 짧은 반응, 9:16은 등장·추락·강한 전환에 우선 사용합니다.
+- 컷의 목적에 맞춰 가로 폭과 세로 길이를 선택합니다. 4:1은 눈빛·손동작의 순간, 3:4는 대화·감정, 4:3은 공간 소개, 1:1은 반응, 9:16은 등장, 1:4는 낙하·돌진·거대한 적, 1:8은 스크롤하며 드러나는 특별한 장면에 사용합니다. 매우 긴 컷은 필요한 절정에만 사용합니다.
+- 공격 준비→이동→충돌→여파의 단계와 감정 강약을 설계합니다. description에는 표정의 눈·입·시선과 몸의 반응, 광원·그림자, 필요한 이펙트의 발생점·방향·강도를 함께 지시합니다. 사용자가 채색·이펙트를 따로 설정할 필요 없이 완성할 수 있게 합니다.
+- continuityNotes에는 무기를 쥔 손, 이동 방향, 위치 관계, 상처, 능력의 색과 형태처럼 앞뒤 컷에서 이어져야 할 사실을 기록합니다.
 - 이해하기 쉬운 한국어를 사용하고 선정적이거나 과도하게 잔혹한 묘사는 피합니다.`,
       prompt: `추가 설정집: ${input.context ?? "없음"}\n\n작품: ${input.project.title || "제목 미정"}
 장르: ${input.project.genre || "미정"}

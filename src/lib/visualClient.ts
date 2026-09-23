@@ -1,13 +1,12 @@
+import { arrangeWebtoonLettering } from "@/lib/webtoonLettering";
 import { artworkOnlyStoryboard, layerReferenceSvg, sceneStructureSvg, CLEAN_ART_VERSION, SCENE_REFERENCE_VERSION } from "@/lib/cleanGeneration";
 import { validatePanelImage } from "@/lib/panelGeometry";
-import type { Character, CharacterRig, Cut, Episode, Project, StoryboardDocument, StoryboardElement } from "@/lib/storage";
+import type { SceneReview, Character, CharacterRig, Cut, Episode, Project, StoryboardDocument, StoryboardElement } from "@/lib/storage";
 import { base64ToBlob, blobToBase64, cropImageBlob, getMediaAsset, sourceHash } from "@/lib/mediaStorage";
-import { svgToPngBlob, webtoonFontStack, defaultWebtoonFont } from "@/lib/storyboardSvg";
-import { sizeBalloonForFont } from "@/lib/storyboardText";
-import { editableWebtoonDocument, webtoonFlowLayout } from "@/lib/webtoonFlow";
+import { svgToPngBlob } from "@/lib/storyboardSvg";
 import { composeStoryboardPng } from "@/lib/storyboardComposite";
 
-type GeneratedImageResponse = { data: string; mimeType: string; prompt: string; characterRig?: CharacterRig };
+type GeneratedImageResponse = { data: string; mimeType: string; prompt: string; characterRig?: CharacterRig; review?: SceneReview };
 export type CharacterSheetProgressStage = "generating" | "receiving";
 
 function context(project: Project) {
@@ -41,6 +40,14 @@ function cutData(cut: Cut) {
     soundEffect: cut.soundEffect,
     aspectRatio: cut.aspectRatio,
   };
+}
+
+function episodeContext(episode: Episode, cut: Cut) {
+  const cuts = episode.cuts ?? [];
+  const index = cuts.findIndex(item => item.id === cut.id);
+  return { number: episode.episodeNumber, title: episode.title, synopsis: episode.synopsis,
+    neighbors: cuts.slice(Math.max(0, index - 2), index + 2).filter(item => item.id !== cut.id).map(item =>
+      JSON.stringify({ description: item.description, emotion: item.emotion, continuity: item.continuityNotes, aspectRatio: item.aspectRatio, direction: item.storyboard?.direction })).join("\n").slice(0, 8000) };
 }
 
 async function postVisual<T>(body: unknown): Promise<T> {
@@ -82,14 +89,11 @@ export async function requestStoryboardLayout(project: Project, episode: Episode
   const response = await postVisual<{ storyboard: StoryboardDocument }>({
     action: "storyboard-layout",
     context: context(project),
-    episode: { number: episode.episodeNumber, title: episode.title, synopsis: episode.synopsis },
+    episode: episodeContext(episode, cut),
     cut: { ...cutData(cut), scrollGap: cut.scrollGap },
     characters: selected.map(characterData),
   });
-  const storyboard = editableWebtoonDocument(response.storyboard);
-  const canvas = webtoonFlowLayout(storyboard).document;
-  return { ...storyboard, elements: storyboard.elements.map(element =>
-    sizeBalloonForFont(element, canvas.width, canvas.height, webtoonFontStack(element.fontFamily ?? defaultWebtoonFont(element.type)))) };
+  return arrangeWebtoonLettering(response.storyboard);
 }
 
 async function requestCharacterRigFromBlob(blob: Blob, mimeType = blob.type || "image/jpeg"): Promise<CharacterRig> {
@@ -188,7 +192,7 @@ export function storyboardLayerHash(project: Project, episode: Episode, cut: Cut
   return sourceHash({
     renderer: CLEAN_ART_VERSION,
     context: context(project),
-    episode: { number: episode.episodeNumber, title: episode.title, synopsis: episode.synopsis },
+    episode: episodeContext(episode, cut),
     cut: { angle: cut.angle, description: cut.description, aspectRatio: cut.aspectRatio },
     layer: layer ? {
       type: layer.type,
@@ -220,7 +224,7 @@ export async function requestStoryboardLayer(project: Project, episode: Episode,
   const response = await postVisual<GeneratedImageResponse>({
     action: "storyboard-layer",
     context: context(project),
-    episode: { number: episode.episodeNumber, title: episode.title, synopsis: episode.synopsis },
+    episode: episodeContext(episode, cut),
     cut: cutData(cut),
     storyboard: artworkOnlyStoryboard(cut.storyboard),
     layerId,
@@ -254,32 +258,34 @@ export function sceneHash(project: Project, episode: Episode, cut: Cut): string 
   const references = project.characters
     .filter((character) => selectedIds.has(character.id))
     .map((character) => ({ id: character.id, imageAssetId: character.imageAssetId, imageSourceHash: character.imageSourceHash }));
-  return sourceHash({ renderer: SCENE_REFERENCE_VERSION, context: context(project), episode: { number: episode.episodeNumber, title: episode.title, synopsis: episode.synopsis }, cut: { ...cutData(cut), dialogue: "", soundEffect: "" }, storyboard: cut.storyboard ? artworkOnlyStoryboard(cut.storyboard) : undefined, references });
+  return sourceHash({ renderer: SCENE_REFERENCE_VERSION, context: context(project), episode: episodeContext(episode, cut), cut: { ...cutData(cut), dialogue: "", soundEffect: "" }, storyboard: cut.storyboard ? artworkOnlyStoryboard(cut.storyboard) : undefined, references });
 }
 
-export async function requestSceneImage(project: Project, episode: Episode, cut: Cut, referenceMode: "layers" | "direct" = "layers", stage: "sketch" | "finish" = "finish"): Promise<{ blob: Blob; prompt: string; sourceHash: string }> {
+export async function requestSceneImage(project: Project, episode: Episode, cut: Cut, referenceMode: "layers" | "direct" = "layers", stage: "sketch" | "finish" = "finish", revision?: string, currentImage?: Blob): Promise<{ blob: Blob; prompt: string; sourceHash: string; review?: SceneReview }> {
   if (!cut.storyboard) throw new Error("먼저 편집 가능한 콘티를 만들어주세요.");
+  const approvedImage = revision ? currentImage ?? (cut.sceneImageAssetId ? (await getMediaAsset(cut.sceneImageAssetId))?.blob : undefined) : undefined;
   const incomplete = cut.storyboard.elements.filter(layer => ["background", "character", "prop"].includes(layer.type) && layer.visible !== false && (!layer.assetId || layer.assetSourceHash !== storyboardLayerHash(project, episode, cut, layer.id)));
-  if (stage !== "sketch" && !cut.storyboard.sceneSketchAssetId && referenceMode === "layers" && incomplete.length) throw new Error("기존 그림은 보존됩니다. 말풍선·가이드가 섞일 수 있는 이전 레이어를 먼저 다시 생성해주세요.");
+  if (!approvedImage && stage !== "sketch" && !cut.storyboard.sceneSketchAssetId && referenceMode === "layers" && incomplete.length) throw new Error("기존 그림은 보존됩니다. 말풍선·가이드가 섞일 수 있는 이전 레이어를 먼저 다시 생성해주세요.");
   const artwork = artworkOnlyStoryboard(cut.storyboard);
   if (!artwork.elements.length) throw new Error("장면에 표시할 배경·인물·소품을 먼저 추가해주세요.");
   const missingPeople: string[] = [];
-  for (const layer of artwork.elements.filter(element => stage !== "sketch" && !artwork.sceneSketchAssetId && element.type === "character")) {
+  for (const layer of artwork.elements.filter(element => !approvedImage && stage !== "sketch" && !artwork.sceneSketchAssetId && element.type === "character")) {
     if (!layer.assetId || !await getMediaAsset(layer.assetId)) missingPeople.push(layer.text || "인물");
   }
   if (missingPeople.length) throw new Error(`인물 스케치가 없습니다: ${missingPeople.join(", ")}. 누락 인물 스케치를 먼저 생성하고 콘티를 확인해주세요. 완성 그림 생성은 시작하지 않았습니다.`);
   // Keep the COMPLETE current layout, even when a layer's prompt/pose has changed.
   // Editable typography is excluded; missing raster assets get geometry, never silent omission.
-  const layoutBlob = await composeStoryboardPng(artwork, { includeOverlays: false, strictAssets: stage !== "sketch" && referenceMode === "layers", missingArtwork: referenceMode === "direct" ? "geometry" : undefined });
+  const layoutBlob = approvedImage ?? await composeStoryboardPng(artwork, { includeOverlays: false, strictAssets: stage !== "sketch" && referenceMode === "layers", missingArtwork: referenceMode === "direct" ? "geometry" : undefined });
   const structureBlob = await svgToPngBlob(artwork, sceneStructureSvg(artwork));
-  const layoutMimeType = "image/png";
+  const layoutMimeType = layoutBlob.type || "image/png";
   const references = await characterReferences(project, cut);
   const response = await postVisual<GeneratedImageResponse>({
     action: "scene-image",
     stage,
+    revision,
     referenceMode,
     context: context(project),
-    episode: { number: episode.episodeNumber, title: episode.title, synopsis: episode.synopsis },
+    episode: episodeContext(episode, cut),
     cut: cutData(cut),
     storyboard: artwork,
     layoutImage: { data: await blobToBase64(layoutBlob), mimeType: layoutMimeType },
@@ -292,5 +298,6 @@ export async function requestSceneImage(project: Project, episode: Episode, cut:
     blob,
     prompt: response.prompt,
     sourceHash: sceneHash(project, episode, cut),
+    review: response.review,
   };
 }

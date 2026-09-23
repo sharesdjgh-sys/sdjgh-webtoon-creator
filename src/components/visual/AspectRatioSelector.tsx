@@ -77,7 +77,7 @@ export default function AspectRatioSelector({ value, onChange, disabled = false 
                 >
                   {active && <span className="absolute right-2 top-2 z-10 flex h-5 w-5 items-center justify-center rounded-full bg-[#7C3AED] text-white"><Check className="h-3 w-3" /></span>}
                   <span className="flex h-32 items-center justify-center rounded-lg bg-[#F4F1EC] p-2">
-                    <span className="relative block max-h-full max-w-full overflow-hidden rounded-md shadow-sm" style={{ aspectRatio: aspect.value.replace(":", "/"), height: aspect.value === "9:16" ? "100%" : aspect.value === "3:4" ? "88%" : aspect.value === "1:1" ? "72%" : "58%" }}>
+                    <span className="relative block max-h-full max-w-full overflow-hidden rounded-md shadow-sm" style={{ aspectRatio: aspect.value.replace(":", "/"), height: ["9:16", "1:4", "1:8"].includes(aspect.value) ? "100%" : aspect.value === "3:4" ? "88%" : aspect.value === "1:1" ? "72%" : "58%" }}>
                       <Image src={aspect.imageSrc} alt={`${aspect.value} ${aspect.label} 웹툰 컷 예시`} fill sizes="140px" className="object-cover" />
                     </span>
                   </span>

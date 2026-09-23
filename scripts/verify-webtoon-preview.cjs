@@ -12,13 +12,14 @@ function load(file) {
   const mod = { exports: {} }; cache.set(file, mod.exports);
   vm.runInNewContext(ts.transpileModule(fs.readFileSync(file, "utf8"), { compilerOptions: {
     module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.ReactJSX,
-  } }).outputText, { module: mod, exports: mod.exports, Blob, TextEncoder, Error, document: browser,
+  } }).outputText, { module: mod, exports: mod.exports, Blob, TextEncoder, Error, structuredClone, document: browser,
     URL: { createObjectURL(blob) { const url = "blob:" + ++sequence; urls.set(url, blob); return url; }, revokeObjectURL(url) { urls.delete(url); } },
     require(name) {
       if (name === "react") return hooks;
       if (name === "@/lib/webtoonFlowRender") return {
         renderWebtoonBlock: async (cut, options) => { rendered.push(cut.id); assert.equal(options.finishedOnly, true); assert.equal(options.preview, true); if (!cut.sceneImageAssetId) throw new Error("완성 그림이 없습니다."); return { blob: new Blob([cut.id]), width: 900, height: 1500 }; },
         exportWebtoonImage: async (cuts, width, options) => { exportsCount++; assert.equal(width, 900); assert.equal(options.finishedOnly, true); assert.equal(cuts.length, 2); return { blob: new Blob(["episode"], { type: "image/png" }), width: 900, height: 3000 }; },
+        exportWebtoonStrip: async (cuts, width, height, options) => { exportsCount++; assert.equal(width, 900); assert.equal(height, 4096); assert.equal(options.finishedOnly, true); assert.equal(cuts.length, 2); return [new Blob(["page1"]), new Blob(["page2"])]; },
         legacyGap: () => 0,
       };
       if (name.startsWith("@/")) return load("src/" + name.slice(2) + ".ts");
@@ -114,7 +115,19 @@ async function main() {
   assert.equal(links.length, 1);
   assert.equal(links[0].props.download, "1화 · 시작.png");
   assert.equal(urls.get(links[0].props.href).type, "image/png");
-  assert.ok(content(tree).includes("900px × 3,000px PNG 한 장"));
+  assert.ok(content(tree).includes("900px × 3,000px PNG"));
+  const previousUrl = links[0].props.href;
+  const zipButton = button(tree, "긴 원고 분할 PNG · ZIP 다운로드");
+  const zipPending = zipButton.props.onClick(); await zipButton.props.onClick(); await zipPending;
+  tree = render();
+  const zipLink = all(tree, n => n.type === "a")[0];
+  assert.equal(exportsCount, 2);
+  assert.equal(zipLink.props.download, "1화 · 시작.zip");
+  assert.equal(urls.has(previousUrl), false, "replaced PNG URL is released");
+  const zipData = Buffer.from(await urls.get(zipLink.props.href).arrayBuffer());
+  const zipCheck = spawnSync("python", ["-c", "import sys,io,zipfile,json; z=zipfile.ZipFile(io.BytesIO(sys.stdin.buffer.read())); assert z.testzip() is None; print(json.dumps(z.namelist()))"], { input: zipData });
+  assert.equal(zipCheck.status, 0);
+  assert.deepEqual(JSON.parse(zipCheck.stdout.toString()), ["1화 · 시작-001.png", "1화 · 시작-002.png"]);
   all(tree, n => n.props?.["aria-label"] === "미리보기 닫기")[0].props.onClick(); assert.equal(closed, 1);
   cleanups.forEach(fn => fn?.()); assert.equal(urls.size, 0); assert.equal(browser.body.style.overflow, "auto");
   props.cuts = [{ id: "missing", storyboard }]; render(); const missingCleanups = effects.map(fn => fn());

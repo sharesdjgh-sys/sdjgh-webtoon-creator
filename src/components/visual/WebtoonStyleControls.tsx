@@ -4,6 +4,9 @@ import type { StoryboardElement } from "@/lib/storage";
 import { decorationColor, textDecoration } from "@/lib/webtoonDecoration";
 
 const presets: { label: string; values: Partial<StoryboardElement> }[] = [
+  { label: "차가운 위압", values: { fontFamily: "clean", fontWeight: 700, textColor: "#ffffff", balloonFill: "#111111", balloonStroke: "#111111", balloonStyle: "normal" } },
+  { label: "긴박한 속마음", values: { fontFamily: "clean", fontWeight: 700, balloonStyle: "radiant", speechRole: "thought", tailVisible: false } },
+  { label: "방송·중계", values: { fontFamily: "clean", textItalic: true, balloonFill: "#cbd5e1", balloonStyle: "broadcast", speechRole: "broadcast", tailVisible: false } },
   { label: "기본 대사", values: { fontFamily: "clean", fontWeight: 600, textColor: "#222222", balloonStyle: "normal" } },
   { label: "설렘", values: { fontFamily: "handwritten", fontWeight: 600, textColor: "#be185d", textGradient: true, textGradientColor: "#fb7185", balloonFill: "#fff1f2", balloonStroke: "#f9a8d4", balloonStyle: "thought" } },
   { label: "폭발", values: { fontFamily: "impact", fontWeight: 900, textColor: "#ef4444", textGradient: true, textGradientColor: "#fbbf24", textStrokeWidth: 3, textStrokeColor: "#7f1d1d", balloonStyle: "shout" } },
@@ -11,7 +14,7 @@ const presets: { label: string; values: Partial<StoryboardElement> }[] = [
   { label: "코믹 반응", values: { fontFamily: "comic", fontWeight: 700, textColor: "#7c3aed", textStrokeWidth: 3, textStrokeColor: "#ffffff", balloonFill: "#fef9c3", balloonStyle: "normal" } },
 ];
 const defaults: Partial<StoryboardElement> = {
-  textColor: "#222222", textGradient: false, textGradientColor: "#ec4899", textGradientAngle: 90,
+  speechRole: "dialogue", tailVisible: true, textItalic: false, textColor: "#222222", textGradient: false, textGradientColor: "#ec4899", textGradientAngle: 90,
   textStrokeColor: "#ffffff", textStrokeWidth: 0, balloonFill: "#ffffff", balloonStroke: "#171717", balloonStrokeWidth: 3,
 };
 
@@ -37,6 +40,16 @@ export default function WebtoonStyleControls({ element, onChange }: {
           style={{ color: preset.values.textColor, background: preset.values.balloonFill ?? "#ffffff" }}>{preset.label}</button>)}
       </div>
       <p className="text-[10px] leading-relaxed text-[#8B7EAE]">프리셋으로 시작한 뒤 색과 효과를 개별 조절하세요. AI 재생성 없이 미리보기와 내보내기에 반영됩니다.</p>
+      {element.type !== "sfx" && <label className="block text-[11px]">말의 종류
+        <select aria-label="말의 종류" className="visual-input mt-1" value={element.speechRole ?? (element.type === "caption" ? "narration" : "dialogue")} onChange={event => onChange({ speechRole: event.target.value as StoryboardElement["speechRole"] })}>
+          <option value="dialogue">직접 하는 말</option><option value="thought">속마음</option><option value="narration">내레이션</option><option value="broadcast">방송·중계</option>
+        </select>
+      </label>}
+      <label className="flex items-center gap-2 text-[11px]"><input type="checkbox" checked={element.textItalic ?? false} onChange={event => onChange({ textItalic: event.target.checked })} />기울임</label>
+      <label className="block text-[11px]">행간
+        <input aria-label="행간" type="range" min="1.05" max="1.8" step="0.05" value={element.lineHeight ?? 1.3} onChange={event => onChange({ lineHeight: Number(event.target.value) })} className="w-full" />
+      </label>
+      {element.type === "speech" && <label className="flex items-center gap-2 text-[11px]"><input type="checkbox" checked={element.tailVisible !== false} onChange={event => onChange({ tailVisible: event.target.checked })} />짧은 꼬리 표시</label>}
       {color("글자 색상", "textColor", "#222222")}
       <label className="flex items-center gap-2 text-[11px]">
         <input type="checkbox" aria-label="글자 그라데이션" checked={ink.gradient} onChange={event => onChange({ textGradient: event.target.checked })} />

@@ -25,7 +25,7 @@ function load(file) {
     URL: { createObjectURL: blob => { blobs.push(blob); return "blob:test"; }, revokeObjectURL: () => {} },
     require(name) {
       if (name === "server-only") return {};
-      if (name === "@google/genai") return { GoogleGenAI: class { interactions = { create: async input => { requests.push(input); return layoutResponse ? { output_text: JSON.stringify(layoutResponse) } : { output_image: { data: "mock", mime_type: "image/jpeg" } }; } }; } };
+      if (name === "@google/genai") return { GoogleGenAI: class { interactions = { create: async input => { if (input.response_format?.schema?.properties?.protectedRegions) return { output_text: JSON.stringify({ issues: [], protectedRegions: [] }) }; requests.push(input); return layoutResponse ? { output_text: JSON.stringify(layoutResponse) } : { output_image: { data: "mock", mime_type: "image/jpeg" } }; } }; } };
       if (name === "@/lib/mediaStorage") return {
         sourceHash: JSON.stringify, getMediaAsset: async id => { assetReads.push(id); return assets.get(id) ?? null; },
         blobToBase64: async () => "canvas", base64ToBlob: () => new Blob(["mock"], { type: "image/png" }), cropImageBlob: async (blob, crop) => { cropRequests.push(crop); return blob; },
@@ -180,7 +180,8 @@ async function main() {
   for (const rotation of [-175,-90,-37,0,37,90,175]) {
     const element=typography.fitOverlayToCanvas({...speech,x:-200,y:1500,width:1000,height:600,rotation,tailX:2,tailY:-1},900,1600);
     const rad=rotation*Math.PI/180;
-    for (const [x,y] of [[0,0],[element.width,0],[0,element.height],[element.width,element.height],[element.tailX*element.width,element.tailY*element.height]]) {
+    const tail = load("src/lib/webtoonDecoration.ts").balloonTail(element);
+    for (const [x,y] of [[0,0],[element.width,0],[0,element.height],[element.width,element.height],[tail.x,tail.y]]) {
       const dx=x-element.width/2,dy=y-element.height/2;
       const px=element.x+element.width/2+dx*Math.cos(rad)-dy*Math.sin(rad),py=element.y+element.height/2+dx*Math.sin(rad)+dy*Math.cos(rad);
       assert.ok(px>=11.99&&px<=888.01&&py>=11.99&&py<=1588.01,"rotated balloon/tail must fit");
@@ -313,7 +314,7 @@ async function main() {
     { ...base("narration", "caption", "속으로 생각한다"), placement: "top-edge", balloonStyle: "none", flowOrder: 2, flowSpacing: 180 },
   ] };
   const flowProposal = await scene.generateStoryboardLayout({ ...input, characters: [] });
-  assert.equal(flowProposal.flow.before, 0); assert.equal(flowProposal.flow.after, 300);
+  assert.equal(flowProposal.flow.before, 0); assert.equal(flowProposal.flow.after, 4000);
   assert.equal(flowProposal.flow.inset, 315); assert.equal(flowProposal.flow.align, "right");
   assert.equal(flowProposal.elements[1].placement, "top-edge");
   assert.equal(flowProposal.elements[1].balloonStyle, "none");
@@ -337,6 +338,10 @@ async function main() {
     await require("sharp")(Buffer.from(svg.storyboardToSvg(gallery))).png().toFile(".next/webtoon-style-preview.png");
     console.log("Preview: .next/webtoon-style-preview.png");
   }
+  const revisedJpeg = new Blob(["jpeg"], { type: "image/jpeg" });
+  await load("src/lib/visualClient.ts").requestSceneImage(project, ep, cut, "direct", "finish", "그림자를 깊게", revisedJpeg);
+  assert.equal(httpRequests.at(-1).layoutImage.mimeType, "image/jpeg", "revision preserves reference MIME type");
+  assert.equal(httpRequests.at(-1).revision, "그림자를 깊게");
   console.log("PASS: clean references, server prompt isolation, immutable data, art-only hashes, font layout/no truncation, safe margins and PNG text rendering (mock AI/canvas)");
 }
 main().catch(error=>{console.error(error);process.exitCode=1;});

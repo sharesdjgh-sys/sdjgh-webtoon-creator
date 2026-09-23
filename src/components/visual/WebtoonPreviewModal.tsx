@@ -2,14 +2,15 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Cut } from "@/lib/storage";
-import { renderWebtoonBlock, exportWebtoonImage, legacyGap } from "@/lib/webtoonFlowRender";
+import { renderWebtoonBlock, exportWebtoonImage, exportWebtoonStrip, legacyGap } from "@/lib/webtoonFlowRender";
 import { webtoonFlowLayout, editableWebtoonDocument } from "@/lib/webtoonFlow";
-import { webtoonFilename } from "@/lib/webtoonArchive";
+import { reviewWebtoonLettering } from "@/lib/webtoonQuality";
+import { webtoonArchive, webtoonFilename } from "@/lib/webtoonArchive";
 
 type Props = { open: boolean; title: string; cuts: Cut[]; onClose: () => void };
 export default function WebtoonPreviewModal({ open, title, cuts, onClose }: Props) {
   const [images, setImages] = useState<Record<string, { url?: string; error?: string; warning?: string; width?: number; height?: number }>>({});
-  const [file, setFile] = useState<{ url: string; width: number; height: number } | null>(null);
+  const [file, setFile] = useState<{ url: string; width: number; height: number; extension?: "png" | "zip" } | null>(null);
   const [exporting, setExporting] = useState(false);
   const [error, setError] = useState("");
   const [zoom, setZoom] = useState(1);
@@ -23,6 +24,7 @@ export default function WebtoonPreviewModal({ open, title, cuts, onClose }: Prop
   const finished = cuts.filter(cut => cut.sceneImageAssetId).length;
   const missing = cuts.flatMap((cut, index) => !cut.sceneImageAssetId || images[cut.id]?.error ? [index + 1] : []);
   const warnings = cuts.flatMap((cut, index) => images[cut.id]?.warning ? [index + 1] : []);
+  const qualityNotes = cuts.flatMap((cut, index) => cut.storyboard ? reviewWebtoonLettering(cut.storyboard, cut.sceneReview).map(note => (index + 1) + "컷 · " + note) : []);
   const ready = cuts.length > 0 && cuts.every(cut => cut.sceneImageAssetId && images[cut.id]?.url && !images[cut.id]?.warning);
   const changeZoom = useCallback((value: number, pointer?: { x: number; y: number }) => {
     const next = Math.max(.5, Math.min(3, Math.round(value * 100) / 100));
@@ -83,18 +85,18 @@ export default function WebtoonPreviewModal({ open, title, cuts, onClose }: Prop
     }
     return () => { generation.current = current + 1; urls.forEach(URL.revokeObjectURL); exportUrls.current.forEach(URL.revokeObjectURL); exportUrls.current = []; };
   }, [cuts, open]);
-  const exportImages = async () => {
+  const exportImages = async (segmented = false) => {
     if (exportingRef.current || !ready) return;
     exportingRef.current = true;
     const current = generation.current;
     setExporting(true); setError("");
     try {
-      const result = await exportWebtoonImage(cuts, 900, { finishedOnly: true });
+      const result = segmented ? { blob: await webtoonArchive((await exportWebtoonStrip(cuts, 900, 4096, { finishedOnly: true })).map((blob, index) => ({ name: filename + "-" + String(index + 1).padStart(3, "0") + ".png", blob }))), width: 900, height: 0 } : await exportWebtoonImage(cuts, 900, { finishedOnly: true });
       if (current !== generation.current) return;
       exportUrls.current.forEach(URL.revokeObjectURL);
       const url = URL.createObjectURL(result.blob);
       exportUrls.current = [url];
-      setFile({ url, width: result.width, height: result.height });
+      setFile({ url, width: result.width, height: result.height, extension: segmented ? "zip" : "png" });
     } catch (e) {
       if (current === generation.current) setError(e instanceof Error ? e.message : "출력 실패");
     } finally { if (current === generation.current) { exportingRef.current = false; setExporting(false); } }
@@ -136,12 +138,14 @@ export default function WebtoonPreviewModal({ open, title, cuts, onClose }: Prop
       {warnings.length > 0 && <p role="alert" className="text-amber-200">{warnings.join(", ")}컷의 말풍선·자막이 영역을 벗어났습니다. 실제 그림은 표시하며, 식자 위치를 조정한 뒤 다운로드할 수 있습니다.</p>}
       <p>{ready ? "아래로 스크롤하면 한 화 전체가 이어집니다." : "완성 그림이 있는 컷부터 표시합니다."}</p>
       <div className="space-y-3 border-t border-white/10 pt-4">
-        <button type="button" disabled={exporting || !ready} onClick={exportImages} className="w-full rounded-xl bg-[#7C3AED] px-4 py-2.5 text-xs font-semibold text-white disabled:opacity-50">{exporting ? "단일 PNG 만드는 중…" : "이 화 단일 PNG 만들기"}</button>
+        <button type="button" disabled={exporting || !ready} onClick={() => exportImages()} className="w-full rounded-xl bg-[#7C3AED] px-4 py-2.5 text-xs font-semibold text-white disabled:opacity-50">{exporting ? "원고 파일 만드는 중…" : "이 화 단일 PNG 만들기"}</button>
+        <button type="button" disabled={exporting || !ready} onClick={() => exportImages(true)} className="w-full rounded-xl bg-white/10 px-4 py-2.5 text-xs font-semibold disabled:opacity-50">긴 원고 분할 PNG · ZIP 다운로드</button>
+        {qualityNotes.slice(0,8).map((note, index) => <p key={index} className="text-amber-200">{note}</p>)}
         <p className="text-white/50">모든 컷과 여백·말풍선·자막을 현재 순서대로 이어 붙인 세로 PNG 한 장을 만듭니다. 프로젝트 저장은 별도입니다.</p>
       </div>
     {(error || file) && <div className="flex flex-wrap gap-3 rounded-xl bg-white p-3 text-xs text-[#373140]" role="status">
-      {error || <span>한 화 전체를 합친 {file?.width}px × {file?.height.toLocaleString()}px PNG 한 장입니다.</span>}
-      {file && <a href={file.url} download={`${filename}.png`} className="rounded-full bg-[#7C3AED] px-4 py-2 font-semibold text-white">한 화 PNG 다운로드</a>}
+      {error || <span>{file?.extension === "zip" ? "원고를 끊김 없이 분할한 PNG 묶음입니다." : `한 화 전체를 합친 ${file?.width}px × ${file?.height.toLocaleString()}px PNG입니다.`}</span>}
+      {file && <a href={file.url} download={`${filename}.${file.extension ?? "png"}`} className="rounded-full bg-[#7C3AED] px-4 py-2 font-semibold text-white">원고 다운로드</a>}
     </div>}
     </aside>
     <div ref={reader} aria-label="한 화 세로 스크롤 원고" className="col-start-1 row-start-2 min-h-0 min-w-0 overflow-auto overscroll-contain" style={{ overflowAnchor: "none" }}>

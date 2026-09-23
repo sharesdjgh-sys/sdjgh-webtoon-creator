@@ -53,8 +53,8 @@ async function main() {
   assert.equal(normalizeWebtoonFlow().after, 150);
   assert.equal(normalizeWebtoonFlow({ before: NaN, after: Infinity }).after, 150);
   const capped = webtoonFlowLayout({ ...source, flow: { before: 2400, after: 700, inset: 0 } });
-  assert.equal(capped.art.y, 300);
-  assert.equal(capped.document.height - capped.art.y - capped.art.height, 300);
+  assert.equal(capped.art.y, 2400);
+  assert.equal(capped.document.height - capped.art.y - capped.art.height, 700);
   assert.equal(JSON.stringify(old), original);
   const flow = { before: 100, after: 200, inset: 90 };
   const doc = { ...source, flow, elements: [element("narration", "caption", "before", 80), element("dialogue", "speech", "after"), element("sfx", "sfx", "art")] };
@@ -83,30 +83,30 @@ async function main() {
   assert.equal(byId(ordered, "second").y - byId(ordered, "first").y, 340);
   assert.equal(byId(ordered, "first").balloonStyle, "none");
   assert.equal(ordered.art.y, 150);
-  assert.ok(ordered.overflow?.includes("최대 300px"));
+  assert.equal(ordered.overflow, undefined, "long dialogue expands whitespace");
   assert.ok(ordered.document.height > source.height + 400);
   const { renderWebtoonBlock, exportWebtoonStrip, exportWebtoonImage, legacyGap } = load("src/lib/webtoonFlowRender.ts");
   const freeform = editableWebtoonDocument(orderDoc);
   assert.ok(freeform.elements.every(e => e.placement === "canvas"));
   assert.equal(freeform.elements.length, orderDoc.elements.length, "legacy lettering is preserved, including hidden text");
-  assert.ok(webtoonFlowLayout(freeform).overflow, "migration must not swallow overflow warnings");
-  await assert.rejects(renderWebtoonBlock({ storyboard: freeform }), /영역을 벗어/);
+  assert.equal(webtoonFlowLayout(freeform).overflow, undefined, "expanded whitespace survives reopening");
+  await renderWebtoonBlock({ storyboard: freeform });
   const crowded = editableWebtoonDocument({ ...source, elements: [0, 1, 2].map(i => ({
     ...element(`crowded-${i}`, "speech", "after", 180), y: 200 + i * 200,
   })) });
   assert.equal(new Set(crowded.elements.map(e => e.y)).size, 3, "overflowing balloons must not be piled onto the same coordinate");
-  assert.ok(webtoonFlowLayout(crowded).overflow);
+  assert.equal(webtoonFlowLayout(crowded).overflow, undefined);
   const longTail = { ...element("tail", "speech", "canvas"), y: 1300, tailY: 3 };
   const tailDoc = { ...source, elements: [longTail] };
   const tailEditable = editableWebtoonDocument(tailDoc);
   assert.equal(tailEditable.elements[0].y, 1300, "a long tail must not shift the body by 112px");
   assert.equal(tailEditable.elements[0].height, 100);
-  assert.ok(webtoonFlowLayout(tailEditable).overflow);
+  assert.equal(webtoonFlowLayout(tailEditable).overflow, undefined, "a far speaker target now produces a short tail");
   const subpixelEdge = { ...element("subpixel", "caption", "canvas"), balloonStyle: "none", x: -.4, y: 20 };
   assert.equal(webtoonFlowLayout({ ...source, elements: [subpixelEdge] }).overflow, undefined, "invisible sub-pixel rounding must not warn");
   const visibleEdge = { ...subpixelEdge, x: -2 };
   assert.ok(webtoonFlowLayout({ ...source, elements: [visibleEdge] }).overflow?.includes("subpixel"), "warning identifies the actual overflowing element");
-  await assert.rejects(renderWebtoonBlock({ storyboard: tailDoc }), /꼬리/);
+  await renderWebtoonBlock({ storyboard: tailDoc });
   const authored = { ...source, elements: [{ ...longTail, y: 1100, rotation: 8 }] };
   let reopened = authored;
   for (let i = 0; i < 10; i++) reopened = editableWebtoonDocument(reopened);
@@ -116,7 +116,7 @@ async function main() {
   assets.set("finished", { blob: blob(900, 1200) });
   await assert.rejects(renderWebtoonBlock({ storyboard: doc }, { finishedOnly: true }), /완성 그림/);
   const overflowPreview = await renderWebtoonBlock({ storyboard: tailDoc, sceneImageAssetId: "finished" }, { finishedOnly: true, preview: true });
-  assert.ok(overflowPreview.warning, "out-of-bounds lettering warns without hiding finished art");
+  assert.equal(overflowPreview.warning, undefined, "bounded tail no longer creates false overflow");
   assert.equal(overlays.at(-1).elements[0].y, 1300);
   await renderWebtoonBlock({ sceneImageAssetId: "finished" }, { finishedOnly: true, preview: true });
   await assert.rejects(exportWebtoonStrip([{ storyboard: doc }], 900, 4096, { finishedOnly: true }), /완성 그림/);
