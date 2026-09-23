@@ -903,8 +903,16 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
               </div>
             </div>
 
-            <div className="p-5 space-y-3">
-              <p className="text-xs text-[#ADA8A0]">컷별로 앵글, 장면 묘사, 대사, 효과음을 설계해봐요</p>
+            <div className="px-5 pb-5 pt-3 space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
+                <p className="text-xs leading-5 text-[#ADA8A0]">컷별로 앵글, 장면 묘사, 대사, 효과음을 설계해봐요</p>
+                {!!ep?.cuts?.length && (
+                  <div className="ml-auto flex shrink-0 items-center justify-end gap-1.5" aria-label="컷 접기 옵션">
+                    <button type="button" onClick={() => setCollapsedCutIds(current => new Set([...current, ...ep.cuts.map(cut => cut.id)]))} className="editor-tool">전체 접기</button>
+                    <button type="button" onClick={() => setCollapsedCutIds(current => { const next = new Set(current); ep.cuts.forEach(cut => next.delete(cut.id)); return next; })} className="editor-tool">전체 펼치기</button>
+                  </div>
+                )}
+              </div>
 
               {aiCutProgress && <AiCutProgressPanel progress={aiCutProgress} />}
 
@@ -931,10 +939,6 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
                 </div>
               ) : (
                 <div className="space-y-3">
-                  <div className="flex flex-wrap items-center justify-end gap-2" aria-label="컷 접기 옵션">
-                    <button type="button" onClick={() => setCollapsedCutIds(current => new Set([...current, ...ep.cuts.map(cut => cut.id)]))} className="editor-tool">전체 접기</button>
-                    <button type="button" onClick={() => setCollapsedCutIds(current => { const next = new Set(current); ep.cuts.forEach(cut => next.delete(cut.id)); return next; })} className="editor-tool">전체 펼치기</button>
-                  </div>
                   {ep.cuts.map((cut, cutIdx) => (
                     <div key={cut.id} ref={node => { if (node) cutCards.current.set(cut.id, node); else cutCards.current.delete(cut.id); }}
                       tabIndex={-1} aria-label={`${cutIdx + 1}컷 편집`} className="relative scroll-mt-40 rounded-xl border border-[#EBE7E0] bg-white focus:outline-none focus:ring-2 focus:ring-[#A78BFA]">
