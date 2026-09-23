@@ -693,7 +693,7 @@ export default function StoryboardEditor({ document: savedDocument, characters, 
           </div>
         <div ref={editViewport} aria-label="콘티 미리보기 스크롤" className="relative overflow-x-auto rounded-xl bg-[#E9E4DC] p-3"
           style={{ containerType: "inline-size", overflowAnchor: "none" }}>
-          <div className="relative mx-auto shadow-xl bg-white" style={{ aspectRatio: `${canvas.width}/${canvas.height}`, width: previewWidth, maxWidth: previewWidth }}>
+          <div className="relative isolate mx-auto shadow-xl bg-white" style={{ aspectRatio: `${canvas.width}/${canvas.height}`, width: previewWidth, maxWidth: previewWidth }}>
             <div className="absolute overflow-hidden" style={artStyle}>
             {sceneAssetId && finalView && <StoredImage assetId={sceneAssetId} alt="생성된 웹툰 장면" className="absolute inset-0 w-full h-full object-contain" />}
             {!finalView && document.sceneSketchAssetId && <StoredImage assetId={document.sceneSketchAssetId} alt="장면 전체 스케치" className="absolute inset-0 w-full h-full object-contain" />}
@@ -803,7 +803,7 @@ export default function StoryboardEditor({ document: savedDocument, characters, 
               <span className="text-[10px] text-[#82798B]">{generatingScene ? "생성 중" : sceneCandidate ? "새 생성 결과 · 적용 전" : sceneStale ? "재생성 필요" : sceneAssetId ? "적용된 그림" : "아직 생성 전"}</span>
             </div>
             <div ref={compareViewport} aria-label="실제 그림 미리보기 스크롤" className="overflow-x-auto rounded-xl bg-[#E9E4DC] p-3" style={{ containerType: "inline-size", overflowAnchor: "none" }}>
-              <div className="relative mx-auto bg-white shadow-xl" style={{ aspectRatio: `${canvas.width}/${canvas.height}`, width: previewWidth, maxWidth: previewWidth }}>
+              <div className="relative isolate mx-auto bg-white shadow-xl" style={{ aspectRatio: `${canvas.width}/${canvas.height}`, width: previewWidth, maxWidth: previewWidth }}>
                 <div className="absolute overflow-hidden" style={artStyle}>
                 {sceneCandidate ? <BlobImage blob={sceneCandidate} alt="새로 생성한 장면 후보" className="absolute inset-0 h-full w-full object-contain" /> : sceneAssetId ? <StoredImage assetId={sceneAssetId} alt="콘티와 비교할 실제 그림" className="absolute inset-0 h-full w-full object-contain" /> : (
                   <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 p-4 text-center">

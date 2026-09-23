@@ -67,6 +67,7 @@ async function main() {
   assert.ok(button(tree, "AI 구도 SVG"));
   const inlinePreview = find(tree, n => n.props?.["aria-label"] === "콘티 편집 화면");
   assert.ok(!inlinePreview.props.className.includes("h-full"));
+  assert.ok(find(inlinePreview, n => n.props?.style?.aspectRatio && n.props.className?.split(" ").includes("isolate")), "canvas overlays must stay below sticky page navigation");
   const inspector = find(tree, n => n.props?.["aria-label"] === "레이어 및 대사 설정");
   assert.equal(inspector.props.role, "region");
   assert.equal(inspector.props.tabIndex, 0);
@@ -89,6 +90,7 @@ async function main() {
   assert.ok(find(tree, n => n.props?.["aria-label"] === "콘티 편집 화면"));
   assert.ok(find(tree, n => n.props?.["aria-label"] === "실제 그림 비교 화면"));
   const compareSection = () => find(render(), n => n.props?.["aria-label"] === "실제 그림 비교 화면");
+  assert.ok(find(compareSection(), n => n.props?.style?.aspectRatio && n.props.className?.split(" ").includes("isolate")), "comparison overlays also stay inside their canvas stacking context");
   const compareChildren = React.Children.toArray(compareSection().props.children);
   assert.equal(compareChildren[1].props.style.height, undefined, "comparison preview grows to its full natural height");
   assert.equal(compareChildren[1].props.style.containerType, "inline-size");

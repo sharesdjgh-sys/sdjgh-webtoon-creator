@@ -843,8 +843,6 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
             </div>
           )}
 
-          <CutNavigator cuts={ep?.cuts ?? []} onNavigate={navigateToCut} />
-
           {project && (
             <ArtDirectionEditor
               compact
@@ -876,6 +874,8 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
               />
             </div>
           </div>
+
+          <CutNavigator cuts={ep?.cuts ?? []} onNavigate={navigateToCut} />
 
           {/* 콘티 */}
           <div className="bg-white rounded-2xl border border-[#EBE7E0] shadow-[0_2px_12px_rgba(0,0,0,0.04)] overflow-hidden">
