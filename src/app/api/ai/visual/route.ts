@@ -11,6 +11,7 @@ import {
   generateCharacterSheet,
   projectVisualContextSchema,
 } from "@/lib/gemini";
+import { generateCharacterSheet as generateOpenAICharacterSheet } from "@/lib/openaiImage";
 
 export const maxDuration = 300;
 
@@ -186,7 +187,11 @@ export async function POST(request: Request) {
 
     const body = parsed.data;
     if (body.action === "character-sheet") {
-      return NextResponse.json(await generateCharacterSheet(body.context, body.character));
+      // GEMINI_API_KEY가 없고 OPENAI_API_KEY만 있으면 OpenAI로 캐릭터 시트를 생성합니다.
+      const generate = !process.env.GEMINI_API_KEY && process.env.OPENAI_API_KEY
+        ? generateOpenAICharacterSheet
+        : generateCharacterSheet;
+      return NextResponse.json(await generate(body.context, body.character));
     }
     if (body.action === "storyboard-layout") {
       return NextResponse.json({ storyboard: await generateStoryboardLayout(body) });
