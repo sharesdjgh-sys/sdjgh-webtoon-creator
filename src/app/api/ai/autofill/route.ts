@@ -1,11 +1,11 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { generateGeminiJson } from "@/lib/geminiText";
+import { generateClaudeJson } from "@/lib/claudeText";
 import { PLAYBOOK_RULES } from "@/lib/prompts/playbook";
 
 import { visualProfileSchema, visualProfileJsonSchema, worldDraftSchema, episodePlanSchema, episodePlanJsonSchema, authorNoteSchema, stringObjectSchema } from "@/lib/autofillFields";
 
-export const maxDuration = 60;
+export const maxDuration = 300;
 
 const requestSchema = z.object({
   ideaChat: z.array(z.object({
@@ -103,9 +103,9 @@ function transcript(messages: z.infer<typeof requestSchema>["ideaChat"]): string
 
 function errorMessage(error: unknown): string {
   const raw = error instanceof Error ? error.message : String(error);
-  if (/quota|resource.exhausted|rate.?limit|429/i.test(raw)) return "Gemini 사용량이 많습니다. 잠시 후 다시 시도해 주세요.";
-  if (/GEMINI_API_KEY/i.test(raw)) return "Gemini API 키를 확인해 주세요.";
-  return "Gemini 자동 채우기에 실패했습니다. 아이디어를 한두 문장 더 적어 주세요.";
+  if (/quota|resource.exhausted|rate.?limit|overloaded|429|529/i.test(raw)) return "Claude 사용량이 많습니다. 잠시 후 다시 시도해 주세요.";
+  if (/ANTHROPIC_API_KEY|authentication|401/i.test(raw)) return "Claude API 키를 확인해 주세요.";
+  return "Claude 자동 채우기에 실패했습니다. 아이디어를 한두 문장 더 적어 주세요.";
 }
 
 export async function POST(request: Request) {
@@ -123,7 +123,7 @@ export async function POST(request: Request) {
 이 서비스는 아이디어와 기획만 있어도 AI가 후속 설정의 초안을 모두 작성합니다. 추가 질문으로 멈추거나 사용자에게 직접 작성하라고 하지 마세요. 비어 있는 창작 설정은 맥락에 맞게 제안하고, 기존 명시 설정은 존중하세요. 결과는 사용자가 수정·검토할 초안이지 검수 완료나 사용자 승인을 의미하지 않습니다.`;
 
     if (input.step === "world") {
-      const raw = await generateGeminiJson({
+      const raw = await generateClaudeJson({
         system: common,
         prompt: conversation + "\n기획과 인물에서 세계관 전체 초안을 만드세요. 시대, 주요 무대, 가능한 일, 금지와 한계, 대가, 반복 장소의 구조와 색, 소품의 모양·소유자, 복선 계획을 구체적으로 채우세요. 현실물의 능력이나 특수 규칙은 해당 없음과 현실적 제약으로 적으세요. undecided에는 추가 검토할 제안만 적고 이미 사용자가 확정한 사실과 모순되지 않게 하세요. confirmed 항목이나 승인 사실을 만들어내지 마세요.",
         schema: stringObjectSchema(Object.keys(worldDraftSchema.shape)),
@@ -131,7 +131,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ world: worldDraftSchema.parse(raw) });
     }
     if (input.step === "visualProfile") {
-      const raw = await generateGeminiJson({
+      const raw = await generateClaudeJson({
         system: common,
         prompt: conversation + "\n이번에 외형 고정 정보를 작성할 캐릭터(미저장 편집 포함):\n" + JSON.stringify(input.character)
           + "\n이 캐릭터의 이름·역할·나이·외모·성격·배경과 추가 이미지 지시를 근거로 외형 12항목을 모두 채우세요. 현재 명시된 외형은 유지하며 빠진 시각 요소를 구체화하세요. 정면·측면·후면에서 반복 가능한 얼굴·머리·의상·신발·소품·색상 정보를 쓰세요. 없는 액세서리는 없음이라고 쓰고 다른 캐릭터의 외형을 섞지 마세요.",
@@ -144,7 +144,7 @@ export async function POST(request: Request) {
       const schema = withScript
         ? { ...episodePlanJsonSchema, properties: { ...episodePlanJsonSchema.properties, script: { type: "string" } }, required: [...episodePlanJsonSchema.required, "script"] }
         : episodePlanJsonSchema;
-      const raw = await generateGeminiJson({
+      const raw = await generateClaudeJson({
         system: common,
         prompt: conversation + "\n선택한 " + (input.episode?.number ?? 1) + "화의 제목·시놉시스·목표·장애물·새 정보·마지막 장면을 모두 작성하세요. 기존 회차 설정과 작품 형태를 따르고 단편은 결말을 완성하세요."
           + (withScript ? "\n" + (input.episode?.number ?? 1) + "화 대본 초안도 script에 작성하세요. [장면: 장소 / 시간], 화면에 보이는 행동·표정, 인물명: 대사, 효과음 형식으로 씁니다. 기획의 목표 컷 수에 맞추고 설정이 비어 있어도 아이디어에서 구체화하세요." : ""),
@@ -155,7 +155,7 @@ export async function POST(request: Request) {
         : NextResponse.json({ episodePlan: episodePlanSchema.parse(raw) });
     }
     if (input.step === "authorNote") {
-      const raw = await generateGeminiJson({
+      const raw = await generateClaudeJson({
         system: common,
         prompt: conversation + "\n기존 작가 노트: " + (input.authorNote ?? "") + "\n작품 소개·기획 의도·독자에게 전할 감정을 담은 작가 노트 초안을 쓰세요. 사용자의 실제 경험, 수상, 제작 시간, 사용 도구·기여 비율은 추측하지 말고 직접 검수나 승인했다고 주장하지 마세요.",
         schema: stringObjectSchema(["authorNote"]),
@@ -168,7 +168,7 @@ export async function POST(request: Request) {
       character: "서로 외형 실루엣과 말투, 욕망, 약점이 구분되는 주요 인물 1~4명을 만드세요. 주인공을 반드시 포함하고 외형은 반복해서 그릴 수 있게 구체적으로 작성하세요. goal, fear, weakness, growth, speechStyle, relationships와 visualProfile의 외형 고정 12항목도 모두 작성하세요. 외형 설명과 고정 정보는 일치해야 합니다.",
       episodes: "저장된 작품 형태와 총 회차 수를 따라 최대 5개 회차의 제목과 줄거리를 만드세요. 각 회차의 goal, obstacle, turningPoint, endingHook도 빠짐없이 작성하세요. 단편이면 마지막 장면에서 결말을 완성하고 연재만 다음 궁금증을 남기세요.",
     }[input.step];
-    const raw = await generateGeminiJson({
+    const raw = await generateClaudeJson({
       system: common,
       prompt: `아이디어 대화:\n\n${conversation}\n\n작업: ${instructions}`,
       schema: schemas[input.step],
