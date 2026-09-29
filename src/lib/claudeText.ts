@@ -2,7 +2,7 @@ import "server-only";
 
 import Anthropic from "@anthropic-ai/sdk";
 
-const CLAUDE_TEXT_MODEL = process.env.CLAUDE_TEXT_MODEL ?? "claude-opus-5";
+const CLAUDE_TEXT_MODEL = process.env.CLAUDE_TEXT_MODEL ?? "claude-sonnet-5";
 
 function claudeClient(): Anthropic {
   const apiKey = process.env.ANTHROPIC_API_KEY;
