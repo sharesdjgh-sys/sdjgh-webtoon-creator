@@ -6,6 +6,7 @@ export function buildProjectContext(project: Project): string {
   const summary = {
     title: short(project.title), genre: short(project.genre),
     brief: Object.fromEntries(Object.entries(project.brief ?? {}).map(([k, v]) => [k, short(v, 1500)])),
+    planningDoc: project.planningDoc?.text.trim() ? short(project.planningDoc.text, 20000) : undefined,
     world: Object.fromEntries(Object.entries(project.world ?? {}).map(([k, v]) => [k, short(v, 2000)])),
     story: Object.fromEntries(Object.entries(project.story).map(([key, value]) => [key, short(value, 2500)])),
     artDirection: { preset: project.artDirection.preset, custom: short(project.artDirection.custom) },

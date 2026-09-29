@@ -1,7 +1,8 @@
 import type { Project, Episode, Character } from "@/lib/storage";
 import { buildProjectContext } from "@/lib/projectContext";
 export function autofillPayload(project: Project, step: string, episode?: Episode, character?: Character) {
-  const messages = project.ideaChat?.length ? project.ideaChat.slice(-60) : [{ role: "user", content: project.brief?.idea || project.story.logline || "저장된 작품 설정을 바탕으로 초안을 제안해 주세요." }];
+  const hasUserChat = project.ideaChat?.some(message => message.role === "user" && message.content.trim());
+  const messages = hasUserChat ? project.ideaChat.slice(-60) : [{ role: "user", content: project.planningDoc?.text.trim() ? "제가 직접 작성한 기획서(저장된 작품 설정의 planningDoc)를 바탕으로 초안을 작성해 주세요." : project.brief?.idea || project.story.logline || "저장된 작품 설정을 바탕으로 초안을 제안해 주세요." }];
   return {
     ideaChat: messages.map(message => ({ ...message, content: message.content.slice(0, 8000) })), step, context: buildProjectContext(project),
     authorNote: project.authorNote?.slice(0, 5000),

@@ -7,6 +7,7 @@ import Link from "next/link";
 import StageIntro from "@/components/creation/StageIntro";
 import { useRouter } from "next/navigation";
 import BriefEditor from "@/components/creation/BriefEditor";
+import PlanningDocUpload from "@/components/creation/PlanningDocUpload";
 import AiChat from "@/components/ai-assistant/AiChat";
 import StepIndicator from "@/components/progress-tracker/StepIndicator";
 import MobileStepBar from "@/components/MobileStepBar";
@@ -68,16 +69,19 @@ export default function IdeaPage({ params }: { params: Promise<{ id: string }> }
             <p className="text-[10px] font-medium text-[#7C3AED] uppercase tracking-widest mb-1">Step 01</p>
             <h1 className="text-xl font-bold text-[#1A1A1A] tracking-tight">아이디어 발굴</h1>
             <p className="text-xs text-[#ADA8A0] mt-1">
-              AI 멘토와 자유롭게 대화하며 웹툰 아이디어를 구체화해봐요. 막막해도 괜찮아요!
+              AI 멘토와 자유롭게 대화하며 웹툰 아이디어를 구체화해봐요. 미리 써 둔 기획서가 있다면 올려서 바로 시작할 수도 있어요!
             </p>
           </div>
 
+          {project && <PlanningDocUpload key={`${project.id}-doc`} project={project} />}
           {project && <BriefEditor key={project.id} project={project} />}
           <div className="h-[600px] max-h-[80vh]">
             {project && <AiChat
               key={project.id}
               step="idea"
-              initialMessage="안녕하세요! 웹툰 멘토 웹툰이예요 😊 어떤 이야기를 만들고 싶으신가요? 막막해도 괜찮아요. 좋아하는 장르나 떠오르는 주제가 있으면 편하게 말해봐요!"
+              initialMessage={project.planningDoc?.text.trim()
+                ? "안녕하세요! 웹툰 멘토 웹툰이예요 😊 올려 준 기획서를 읽었어요. 더 다듬고 싶은 부분이 있으면 편하게 말해봐요. 대화 없이 다음 단계로 가도 자동 채우기가 기획서를 바탕으로 초안을 만들어 줘요!"
+                : "안녕하세요! 웹툰 멘토 웹툰이예요 😊 어떤 이야기를 만들고 싶으신가요? 막막해도 괜찮아요. 좋아하는 장르나 떠오르는 주제가 있으면 편하게 말해봐요!"}
               initialMessages={project?.ideaChat}
               placeholder="아이디어에 대해 자유롭게 이야기해봐요..."
               onMessagesChange={(msgs) => updateProject(id, { ideaChat: msgs as ChatMessage[] })}

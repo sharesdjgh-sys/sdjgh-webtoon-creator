@@ -3,7 +3,7 @@ import type { Project } from "@/lib/storage";
 export function workflowCheckpoints(p: Project): boolean[] {
   const filled = (s?: string) => Boolean(s?.trim());
   return [
-    filled(p.brief?.idea) || p.ideaChat.some(m => m.role === "user" && filled(m.content)),
+    filled(p.brief?.idea) || filled(p.planningDoc?.text) || p.ideaChat.some(m => m.role === "user" && filled(m.content)),
     p.characters.some(c => filled(c.name) && filled(c.goal)),
     filled(p.world?.mainLocation) && (filled(p.world?.possible) || filled(p.world?.confirmed)),
     filled(p.story.logline) && (filled(p.story.plotOutline) || filled(p.story.ending)),
@@ -24,7 +24,7 @@ export function workflowStatuses(p: Project): WorkflowStatus[] {
   const any = (values: unknown[]) => values.some(filled);
   const checkpoints = workflowCheckpoints(p);
   const started = [
-    any([p.brief.idea, p.brief.tone, p.brief.feeling, p.brief.mustKeep]) || p.ideaChat.some(m => m.role === "user" && filled(m.content)),
+    any([p.brief.idea, p.brief.tone, p.brief.feeling, p.brief.mustKeep, p.planningDoc?.text]) || p.ideaChat.some(m => m.role === "user" && filled(m.content)),
     p.characters.some(c => any([c.name, c.goal, c.appearance, c.personality, c.backstory, c.imageAssetId, ...Object.values(c.visualProfile ?? {})])),
     any(Object.values(p.world)) || filled(p.story.setting),
     any(Object.entries(p.story).filter(([key]) => key !== "totalEpisodes" && key !== "setting").map(([, value]) => value)),

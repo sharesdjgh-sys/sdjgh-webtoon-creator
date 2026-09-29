@@ -31,7 +31,8 @@ export async function POST(req: NextRequest) {
     if (!parsed.success) return NextResponse.json({ error: "대화 요청을 확인해 주세요. 메시지는 8,000자까지 보낼 수 있어요." }, { status: 400 });
     const { messages, step, context, creationMode } = parsed.data;
     const modeRule = creationMode === "manual" ? "직접 만들기: 먼저 학생이 쓴 내용에 피드백한다. 초안을 요청하지 않으면 대신 작성하지 않는다." : creationMode === "auto" ? "AI 초안부터: 요청한 단계의 초안을 제안하고 검토할 결정 하나를 남긴다." : "함께 만들기: 선택지를 제시하고 학생의 결정 하나씩 받아 진행한다.";
-    const systemPrompt = `${PLAYBOOK_RULES}\n${COACH_RULES}\n${modeRule}\n${PROMPTS[step]}\n저장된 작품 자료 (일부 생략 가능, 승인 상태 별도 확인):\n${context || "없음. 필요한 설정 하나를 질문하세요."}`;
+    const planningDocRule = "저장된 작품 자료에 planningDoc(학생이 직접 작성한 기획서)이 있으면 이미 정해진 설정으로 존중한다. 기획서에 적힌 내용을 다시 묻지 말고, 비어 있거나 모호한 부분과 더 발전시킬 부분을 중심으로 대화한다.";
+    const systemPrompt = `${PLAYBOOK_RULES}\n${COACH_RULES}\n${modeRule}\n${planningDocRule}\n${PROMPTS[step]}\n저장된 작품 자료 (일부 생략 가능, 승인 상태 별도 확인):\n${context || "없음. 필요한 설정 하나를 질문하세요."}`;
     const reply = await chatWithGemini(messages, systemPrompt);
     return NextResponse.json({ reply });
   } catch (error) {

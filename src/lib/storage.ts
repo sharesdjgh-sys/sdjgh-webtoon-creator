@@ -217,11 +217,19 @@ export type Episode = {
   isCompleted: boolean;
 };
 
+export type PlanningDoc = {
+  name: string;
+  text: string;
+  updatedAt: string;
+};
+
 export type Project = {
   id: string;
   shortId?: string;
   workflowVersion?: number;
   brief: CreativeBrief;
+  /** 학생이 따로 작성해 올린 기획서 본문. AI 대화와 자동 채우기가 함께 참고합니다. */
+  planningDoc?: PlanningDoc;
   world: WorldBible;
   worldChat?: ChatMessage[];
   title: string;
@@ -400,7 +408,7 @@ export function updateProject(id: string, updates: Partial<Project>): void {
   const projects = getProjects();
   const idx = projects.findIndex((p) => p.id === id);
   if (idx !== -1) {
-    const creativeKeys = ["brief", "world", "story", "characters", "episodes", "artDirection"] as const;
+    const creativeKeys = ["brief", "planningDoc", "world", "story", "characters", "episodes", "artDirection"] as const;
     const changed = creativeKeys.some(key => key in updates && JSON.stringify(updates[key]) !== JSON.stringify(projects[idx][key]));
     projects[idx] = { ...projects[idx], ...updates, ...(changed ? { isCompleted: false, reviewChecks: {} } : {}) };
     saveProjects(projects);
