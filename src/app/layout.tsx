@@ -20,7 +20,7 @@ const blackHanSans = Black_Han_Sans({ weight: "400", variable: "--font-webtoon-i
 
 export const metadata: Metadata = {
   title: "웹툰 메이커 AI — AI와 함께 완성하는 나만의 웹툰",
-  description: "PC 전용 웹툰 창작 작업실. AI 멘토와 함께 웹툰 창작 대회를 준비하세요. 아이디어·캐릭터·세계관·스토리·대본·콘티·검수의 7단계로 완성합니다.",
+  description: "PC와 태블릿에서 쓰는 웹툰 창작 작업실. AI 멘토와 함께 웹툰 창작 대회를 준비하세요. 아이디어·캐릭터·세계관·스토리·대본·콘티·검수의 7단계로 완성합니다.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

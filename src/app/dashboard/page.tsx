@@ -11,7 +11,7 @@ import { STEPS, GENRES } from "@/lib/utils";
 import { Plus, ChevronRight, Sparkles, X, Trophy, Download, Upload, Trash2, User, Pencil, Search, Folder, FolderOpen } from "lucide-react";
 import { getProjects, createProject, deleteProject, updateProject, type Project } from "@/lib/storage";
 import { exportAllProjects, importProjects } from "@/lib/download";
-import { setSaveDirectory, getSaveDirectoryName } from "@/lib/fileSystemStorage";
+import { setSaveDirectory, getSaveDirectoryName, checkDirectoryPermission, requestDirectoryPermission, isCrossOriginEmbedded } from "@/lib/fileSystemStorage";
 
 const STEP_ROUTES = STEPS.map(step => step.route);
 
@@ -64,12 +64,18 @@ export default function DashboardPage() {
   const [search, setSearch] = useState("");
   const [sortBy, setSortBy] = useState<"recent" | "progress" | "deadline">("recent");
   const [saveDirName, setSaveDirName] = useState<string | null>(null);
+  const [folderPermission, setFolderPermission] = useState<"granted" | "prompt" | "denied" | "none">("none");
+  const [folderMode, setFolderMode] = useState<"embedded" | "supported" | "unsupported">("unsupported");
   const importRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
       setProjects(getProjects());
-      getSaveDirectoryName().then(setSaveDirName);
+      Promise.all([getSaveDirectoryName(), checkDirectoryPermission()]).then(([name, permission]) => {
+        setSaveDirName(name);
+        setFolderPermission(permission);
+      });
+      setFolderMode(isCrossOriginEmbedded() ? "embedded" : "showDirectoryPicker" in window ? "supported" : "unsupported");
     }, 0);
     return () => window.clearTimeout(timer);
   }, []);
@@ -77,10 +83,18 @@ export default function DashboardPage() {
   const handleSetFolder = async () => {
     try {
       const name = await setSaveDirectory();
-      if (name) setSaveDirName(name);
+      if (name) {
+        setSaveDirName(name);
+        setFolderPermission(await checkDirectoryPermission());
+      }
     } catch (err) {
       alert(err instanceof Error ? err.message : "폴더 설정 실패");
     }
+  };
+
+  const handleRestoreFolderPermission = async () => {
+    await requestDirectoryPermission();
+    setFolderPermission(await checkDirectoryPermission());
   };
 
   const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -226,7 +240,7 @@ export default function DashboardPage() {
         {/* Modal */}
         {showModal && (
           <div className="fixed inset-0 bg-black/25 backdrop-blur-sm z-50 flex items-center justify-center px-4">
-            <div className="bg-white rounded-3xl p-8 w-full max-w-lg shadow-[0_24px_80px_rgba(0,0,0,0.12)] border border-[#EBE7E0]">
+            <div className="max-h-[calc(100dvh-2rem)] w-full max-w-lg overflow-y-auto rounded-3xl border border-[#EBE7E0] bg-white p-6 shadow-[0_24px_80px_rgba(0,0,0,0.12)] sm:p-8">
               <div className="flex items-center justify-between mb-6">
                 <div>
                   <h2 className="text-lg font-bold text-[#1A1A1A] tracking-tight">
@@ -294,17 +308,22 @@ export default function DashboardPage() {
                 {!editingId && (
                   <div>
                     <label className="block text-xs font-semibold text-[#1A1A1A] mb-1.5">자동저장 폴더 (선택)</label>
-                    {saveDirName ? (
-                      <div className="flex items-center gap-2 h-11 px-4 rounded-xl border border-[#EBE7E0] bg-[#F4F1EC]">
-                        <FolderOpen className="w-4 h-4 text-green-500 flex-shrink-0" />
-                        <span className="text-sm text-[#1A1A1A] truncate flex-1">{saveDirName}</span>
-                        <button
-                          type="button"
-                          onClick={handleSetFolder}
-                          className="text-xs text-[#7C3AED] hover:text-[#6D28D9] font-medium flex-shrink-0 transition-colors"
-                        >
-                          변경
-                        </button>
+                    {folderMode === "embedded" ? (
+                      <div className="rounded-xl border border-[#DDD6FE] bg-[#F8F5FF] p-3 text-xs leading-5 text-[#514A65]">
+                        <p>스마트 캠퍼스 안에서는 브라우저가 폴더 선택을 막아요. 작품 내용은 이 화면의 브라우저 저장 공간에 저장돼요. 폴더 자동저장은 폴더 선택을 지원하는 브라우저에서 새 탭으로 작업실을 열어 설정해 주세요.</p>
+                        <a href="/dashboard" target="_blank" rel="noopener noreferrer" className="mt-2 inline-flex items-center gap-1 font-semibold text-[#6D28D9] underline underline-offset-2">새 탭에서 작업실 열기 <ChevronRight className="h-3.5 w-3.5" /></a>
+                        <p className="mt-2">이 화면에서 만든 작품은 상단 ‘내보내기’로 백업한 뒤 새 탭의 ‘가져오기’로 옮겨 주세요. 두 화면의 브라우저 저장 공간은 분리될 수 있어요.</p>
+                      </div>
+                    ) : folderMode === "unsupported" ? (
+                      <p className="rounded-xl border border-[#EBE7E0] bg-[#F4F1EC] p-3 text-xs leading-5 text-[#625B72]">이 브라우저는 폴더 자동저장을 지원하지 않아요. 작품을 저장하고 상단 ‘내보내기’로 백업할 수 있어요.</p>
+                    ) : saveDirName ? (
+                      <div className="rounded-xl border border-[#EBE7E0] bg-[#F4F1EC] px-4 py-3">
+                        <div className="flex items-center gap-2">
+                          <FolderOpen className="h-4 w-4 flex-shrink-0 text-green-600" />
+                          <span className="min-w-0 flex-1 truncate text-sm text-[#1A1A1A]">{saveDirName}</span>
+                          <button type="button" onClick={handleSetFolder} className="flex-shrink-0 text-xs font-medium text-[#7C3AED] hover:text-[#6D28D9]">변경</button>
+                        </div>
+                        {folderPermission !== "granted" && <button type="button" onClick={handleRestoreFolderPermission} className="mt-2 text-xs font-semibold text-[#6D28D9] underline underline-offset-2">폴더 쓰기 권한 다시 허용</button>}
                       </div>
                     ) : (
                       <button

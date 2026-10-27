@@ -81,4 +81,36 @@
 .storyPanel strong { color: #713de3; font-size: 19px; font-weight: 900; }
 @media (min-width: 1600px) { .cover { max-width: 1456px; margin-left: auto; margin-right: auto; } }
 @media (max-width: 1150px) { .header { padding: 0 32px; } .nav { gap: 18px; } .coverCopy { padding: 38px 28px 30px; } .coverGrid { min-height: 520px; } .workspace { gap: 48px; padding-left: 40px; padding-right: 40px; grid-template-columns: 1fr 400px; } .workspaceNotes h2 { font-size: 39px; } .stepStrip li { padding: 15px 10px; } .footer { gap: 18px; } .footerCopy { align-items: flex-start; flex-direction: column; gap: 4px; } }
+@media (max-width: 1023px) {
+  .header { height: auto; min-height: 72px; flex-wrap: wrap; padding: 14px 24px; gap: 12px; }
+  .nav { flex-wrap: wrap; gap: 8px 18px; }
+  .cover { margin: 8px 24px 0; }
+  .coverGrid { grid-template-columns: 1fr; }
+  .coverCopy { padding: 42px 36px; }
+  .coverCopy h1 { font-size: clamp(40px, 6vw, 60px); }
+  .coverArt { min-height: 340px; border-left: 0; border-top: 2px solid var(--ink); }
+  .stepStrip { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .stepStrip li { border-bottom: 1px solid #d9d1df; }
+  .workspace { grid-template-columns: 1fr; gap: 28px; padding: 48px 32px 72px; }
+  .closing { padding: 36px; }
+  .footer { grid-template-columns: 1fr auto; }
+  .footerCopyright { grid-column: 1 / -1; }
+}
+@media (max-width: 700px) {
+  .header { padding: 14px 16px; }
+  .brand { font-size: 17px; }
+  .nav { width: 100%; justify-content: space-between; font-size: 12px; }
+  .nav > a:first-child, .nav > a:nth-child(3) { display: none; }
+  .cover { margin: 8px 14px 0; }
+  .coverTop, .coverBottom { gap: 12px; padding: 10px 14px; }
+  .coverCopy { padding: 32px 22px; }
+  .coverCopy h1 { font-size: 40px; }
+  .coverArt { min-height: 280px; }
+  .process { padding: 56px 20px; }
+  .stepStrip { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .workspace { padding: 42px 20px 64px; }
+  .closing { width: calc(100% - 28px); flex-direction: column; align-items: flex-start; padding: 28px; }
+  .footer { grid-template-columns: 1fr; padding: 28px 20px; }
+  .footerCopyright { grid-column: auto; justify-self: start; }
+}
 @media (prefers-reduced-motion: reduce) { .startButton { transition: none; } }

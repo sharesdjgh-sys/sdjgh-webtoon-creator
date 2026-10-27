@@ -34,6 +34,11 @@ export default function GuidePage() {
         </ScrollReveal>
 
         <GuideCarousel />
+        <section className="mt-8 rounded-2xl border border-[#DDD6FE] bg-[#F8F5FF] p-6">
+          <h2 className="text-lg font-bold">작품 저장과 백업</h2>
+          <p className="mt-3 text-sm leading-6 text-[#514A65]">작품은 현재 브라우저에 저장돼요. 스마트 캠퍼스의 iframe 안에서는 브라우저 보안 제한으로 자동저장 폴더를 선택할 수 없습니다. 웹툰 메이커를 새 탭으로 직접 열면 폴더 선택을 지원하는 브라우저에서 설정할 수 있어요.</p>
+          <p className="mt-2 text-sm leading-6 text-[#514A65]">스마트 캠퍼스 화면과 새 탭의 저장 공간은 분리될 수 있어요. 이미 만든 작품은 대시보드의 ‘내보내기’로 백업한 뒤 새 탭의 ‘가져오기’로 옮겨 주세요. 폴더 선택을 지원하지 않는 태블릿 브라우저에서는 이 방법으로 백업할 수 있어요.</p>
+        </section>
         <section className="mt-8 rounded-2xl border border-[#EBE7E0] bg-white p-6">
           <h2 className="text-lg font-bold">장면을 그리고, 세로 흐름을 편집해요</h2>
           <p className="mt-3 text-sm leading-6 text-[#7A7067]">웹툰은 같은 네모 칸을 채우는 만화책이 아니에요. 그림의 폭과 높이, 긴 침묵의 여백, 그림 밖 대사의 순서로 한 화의 읽는 속도를 만드세요.</p>

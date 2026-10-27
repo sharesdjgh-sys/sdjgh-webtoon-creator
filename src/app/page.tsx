@@ -25,7 +25,7 @@ export default function HomePage() {
 
       <main>
         <section className={styles.cover} aria-labelledby="cover-title">
-          <div className={styles.coverTop}><span>상상이 작품이 되는 곳</span><span><Monitor size={13} /> PC 전용 창작 스튜디오</span></div>
+          <div className={styles.coverTop}><span>상상이 작품이 되는 곳</span><span><Monitor size={13} /> PC·태블릿 창작 스튜디오</span></div>
           <div className={styles.coverGrid}>
             <div className={styles.coverCopy}>
               <p className={styles.chapter}>프롤로그 / 나의 첫 웹툰</p>

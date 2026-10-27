@@ -1,6 +1,6 @@
 .desktop-app { min-height: 100vh; }
 .desktop-access-screen { display: none; }
-@media (max-width: 1023px), (hover: none) and (pointer: coarse) {
+@media (max-width: 639px) {
   .desktop-app { display: none !important; }
   .desktop-access-screen { display: flex; min-height: 100dvh; align-items: center; justify-content: center; padding: 36px 24px; background: #fffefc; color: #302342; word-break: keep-all; }
   .desktop-access-card { max-width: 420px; text-align: center; }

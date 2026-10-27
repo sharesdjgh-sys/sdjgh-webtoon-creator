@@ -102,14 +102,14 @@ export default function WebtoonPreviewModal({ open, title, cuts, onClose }: Prop
     } finally { if (current === generation.current) { exportingRef.current = false; setExporting(false); } }
   };
   if (!open) return null;
-  return <div className="fixed inset-0 z-[100] grid grid-cols-[minmax(0,1fr)_300px] grid-rows-[48px_minmax(0,1fr)] bg-[#17151C]/95" role="dialog" aria-modal="true" aria-label={`${title} 웹툰 미리보기`}>
-    <header className="col-span-2 flex min-w-0 items-center justify-between gap-4 border-b border-white/10 bg-[#211E29] px-5 text-white">
+  return <div className="fixed inset-0 z-[100] grid grid-cols-1 grid-rows-[48px_minmax(0,1fr)_minmax(180px,35dvh)] bg-[#17151C]/95 lg:grid-cols-[minmax(0,1fr)_300px] lg:grid-rows-[48px_minmax(0,1fr)]" role="dialog" aria-modal="true" aria-label={`${title} 웹툰 미리보기`}>
+    <header className="flex min-w-0 items-center justify-between gap-4 border-b border-white/10 bg-[#211E29] px-5 text-white lg:col-span-2">
       <h2 title={title || "세로 웹툰 원고"} className="truncate text-sm font-bold">{title || "세로 웹툰 원고"}</h2>
       <div className="shrink-0">
         <button type="button" onClick={onClose} aria-label="미리보기 닫기" className="rounded-full bg-white/10 px-4 py-2 text-xs">닫기</button>
       </div>
     </header>
-    <aside aria-label="이어보기 도구와 안내" className="col-start-2 row-start-2 min-h-0 min-w-0 space-y-5 overflow-y-auto overscroll-contain border-l border-white/10 bg-[#211E29] p-4 text-xs leading-relaxed text-white/80">
+    <aside aria-label="이어보기 도구와 안내" className="row-start-3 min-h-0 min-w-0 space-y-5 overflow-y-auto overscroll-contain border-t border-white/10 bg-[#211E29] p-4 text-xs leading-relaxed text-white/80 lg:col-start-2 lg:row-start-2 lg:border-l lg:border-t-0">
       <div className="space-y-2">
         <h3 className="text-sm font-semibold text-white">감상 설정</h3>
         <p>총 {cuts.length}컷 · 완성 그림 {finished}컷</p>
@@ -148,7 +148,7 @@ export default function WebtoonPreviewModal({ open, title, cuts, onClose }: Prop
       {file && <a href={file.url} download={`${filename}.${file.extension ?? "png"}`} className="rounded-full bg-[#7C3AED] px-4 py-2 font-semibold text-white">원고 다운로드</a>}
     </div>}
     </aside>
-    <div ref={reader} aria-label="한 화 세로 스크롤 원고" className="col-start-1 row-start-2 min-h-0 min-w-0 overflow-auto overscroll-contain" style={{ overflowAnchor: "none" }}>
+    <div ref={reader} aria-label="한 화 세로 스크롤 원고" className="row-start-2 min-h-0 min-w-0 overflow-auto overscroll-contain lg:col-start-1" style={{ overflowAnchor: "none" }}>
       <div ref={strip} aria-label="확대 가능한 원고" className="mx-auto min-h-full bg-white" style={{ width: 560 * zoom }}>
         {cuts.map((cut, index) => {
           const size = cut.storyboard ? webtoonFlowLayout(editableWebtoonDocument(cut.storyboard)).document : { width: 900, height: 1200 };

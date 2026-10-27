@@ -679,7 +679,7 @@ export default function StoryboardEditor({ document: savedDocument, characters, 
           : ["콘티의 위치와 포즈 지시를 확인하고 있어요.", "캐릭터 시트와 참고 포즈를 비교하고 있어요.", "Gemini가 새 레이어를 그리고 있어요.", "생성된 그림에서 실제 관절 위치를 분석하고 있어요."]}
       />
 
-      <div className={`grid min-h-0 items-start gap-3 ${expanded ? "grid-cols-[minmax(0,1fr)_minmax(0,1fr)_240px]" : "grid-cols-[minmax(0,1fr)_280px]"}`}>
+      <div className={`grid min-h-0 items-start gap-3 ${expanded ? "grid-cols-1 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_240px]" : "grid-cols-1 lg:grid-cols-[minmax(0,1fr)_280px]"}`}>
         <section className="min-w-0 space-y-2" aria-label="콘티 편집 화면">
           <div className="flex min-h-9 shrink-0 flex-wrap items-center justify-between gap-2">
             {expanded ? <h3 className="text-sm font-bold text-[#5B21B6]">콘티 · 직접 편집</h3> : (

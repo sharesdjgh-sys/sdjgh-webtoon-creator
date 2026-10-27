@@ -4,6 +4,16 @@ const DB_NAME = "webtoon_creator_fs";
 const STORE_NAME = "handles";
 const DIR_KEY = "save_directory";
 
+/** Browser file pickers cannot open from a cross-origin iframe. */
+export function isCrossOriginEmbedded(): boolean {
+  if (typeof window === "undefined" || window.top === window) return false;
+  try {
+    return window.top?.location.origin !== window.location.origin;
+  } catch {
+    return true;
+  }
+}
+
 // ── IndexedDB helpers ─────────────────────────────────────────────────────────
 
 function openDB(): Promise<IDBDatabase> {
@@ -55,9 +65,12 @@ async function deleteHandleFromDB(): Promise<void> {
 
 /** 폴더 선택 다이얼로그를 열고 핸들을 IndexedDB에 저장합니다. 취소 시 null 반환. */
 export async function setSaveDirectory(): Promise<string | null> {
+  if (isCrossOriginEmbedded()) {
+    throw new Error("스마트 캠퍼스 안에서는 폴더를 선택할 수 없어요. 웹툰 메이커를 새 탭에서 직접 열어 설정해 주세요.");
+  }
   if (!("showDirectoryPicker" in window)) {
     throw new Error(
-      "이 브라우저는 폴더 저장 기능을 지원하지 않아요. Chrome 또는 Edge를 사용해주세요."
+      "이 브라우저는 폴더 저장 기능을 지원하지 않아요. 작품을 내보내기로 백업하거나 폴더 선택을 지원하는 PC 브라우저를 사용해 주세요."
     );
   }
   try {
