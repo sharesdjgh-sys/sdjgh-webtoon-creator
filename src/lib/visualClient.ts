@@ -5,6 +5,10 @@ import type { SceneReview, Character, CharacterRig, Cut, Episode, Project, Story
 import { base64ToBlob, blobToBase64, cropImageBlob, getMediaAsset, sourceHash } from "@/lib/mediaStorage";
 import { svgToPngBlob } from "@/lib/storyboardSvg";
 import { composeStoryboardPng } from "@/lib/storyboardComposite";
+import {
+  MAX_CHARACTER_REFERENCES, MAX_CHARACTER_SHEET_BODY_BYTES, MAX_REFERENCE_EDGE,
+  MAX_REFERENCE_SEND_BYTES, MAX_REFERENCE_SOURCE_BYTES, REFERENCE_MIME_TYPES,
+} from "@/lib/characterReferenceLimits";
 
 type GeneratedImageResponse = { data: string; mimeType: string; prompt: string; characterRig?: CharacterRig; review?: SceneReview };
 export type CharacterSheetProgressStage = "generating" | "receiving";
@@ -50,11 +54,15 @@ function episodeContext(episode: Episode, cut: Cut) {
       JSON.stringify({ description: item.description, emotion: item.emotion, continuity: item.continuityNotes, aspectRatio: item.aspectRatio, direction: item.storyboard?.direction })).join("\n").slice(0, 8000) };
 }
 
-async function postVisual<T>(body: unknown): Promise<T> {
+async function postVisual<T>(body: unknown, maxBodyBytes?: number): Promise<T> {
+  const json = JSON.stringify(body);
+  if (maxBodyBytes && new TextEncoder().encode(json).byteLength > maxBodyBytes) {
+    throw new Error("참고 이미지를 포함한 요청이 4 MB를 넘었어요. 이미지를 줄이거나 일부를 삭제해 주세요.");
+  }
   const response = await fetch("/api/ai/visual", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
+    body: json,
   });
   const data = await response.json().catch(() => ({})) as { error?: string };
   if (!response.ok) throw new Error(data.error ?? "시각 자료 생성에 실패했습니다.");
@@ -62,7 +70,53 @@ async function postVisual<T>(body: unknown): Promise<T> {
 }
 
 export function characterSheetHash(project: Project, character: Character): string {
-  return sourceHash({ renderer: "gemini-character-sheet-v1-3x2", context: context(project), character: characterData(character) });
+  const references = character.referenceAssetIds ?? [];
+  // 참조가 없으면 기존 시트 해시를 유지해 이미 승인된 시트를 불필요하게 낡게 표시하지 않는다.
+  return sourceHash({ renderer: "gemini-character-sheet-v1-3x2", context: context(project), character: characterData(character), ...(references.length ? { references } : {}) });
+}
+
+async function shrinkReference(blob: Blob): Promise<Blob> {
+  if (blob.size <= MAX_REFERENCE_SEND_BYTES) return blob;
+  const url = URL.createObjectURL(blob);
+  try {
+    const image = new Image();
+    image.src = url;
+    await image.decode();
+    for (const edge of [MAX_REFERENCE_EDGE, 1600, 1280, 1024]) {
+      const scale = Math.min(1, edge / Math.max(image.naturalWidth, image.naturalHeight));
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+      canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+      const drawing = canvas.getContext("2d");
+      if (!drawing) throw new Error("참고 이미지를 변환할 수 없어요. 다른 이미지를 선택해 주세요.");
+      drawing.drawImage(image, 0, 0, canvas.width, canvas.height);
+      for (const quality of [0.85, 0.7, 0.55]) {
+        const converted = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/webp", quality));
+        if (converted && converted.type === "image/webp" && converted.size <= MAX_REFERENCE_SEND_BYTES) return converted;
+      }
+    }
+    throw new Error("참고 이미지를 전송 제한인 900 kB 이하로 줄일 수 없어요. 더 작은 이미지를 선택해 주세요.");
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+async function characterReferencePayload(project: Project, character: Character) {
+  const ids = character.referenceAssetIds ?? [];
+  if (ids.length > MAX_CHARACTER_REFERENCES || new Set(ids).size !== ids.length) {
+    throw new Error("캐릭터 참고 이미지는 중복 없이 최대 3장까지 선택해 주세요.");
+  }
+  return Promise.all(ids.map(async (assetId, index) => {
+    const asset = await getMediaAsset(assetId);
+    if (!asset || asset.projectId !== project.id || asset.ownerId !== character.id || asset.ownerType !== "character-reference") {
+      throw new Error(`참고 이미지 ${index + 1}의 원본을 찾지 못했어요. 캐릭터 화면에서 다시 첨부해 주세요.`);
+    }
+    if (!REFERENCE_MIME_TYPES.some((type) => type === asset.mimeType) || asset.blob.type !== asset.mimeType || !asset.blob.size || asset.blob.size > MAX_REFERENCE_SOURCE_BYTES) {
+      throw new Error(`참고 이미지 ${index + 1}의 형식 또는 크기가 올바르지 않아요. 다시 첨부해 주세요.`);
+    }
+    const sent = await shrinkReference(asset.blob);
+    return { data: await blobToBase64(sent), mimeType: sent.type };
+  }));
 }
 
 export async function requestCharacterSheet(
@@ -71,16 +125,19 @@ export async function requestCharacterSheet(
   onProgress?: (stage: CharacterSheetProgressStage) => void,
 ): Promise<{ blob: Blob; prompt: string; sourceHash: string }> {
   onProgress?.("generating");
+  const requestHash = characterSheetHash(project, character);
+  const references = await characterReferencePayload(project, character);
   const response = await postVisual<GeneratedImageResponse>({
     action: "character-sheet",
     context: context(project),
     character: characterData(character),
-  });
+    references,
+  }, MAX_CHARACTER_SHEET_BODY_BYTES);
   onProgress?.("receiving");
   return {
     blob: base64ToBlob(response.data, response.mimeType),
     prompt: response.prompt,
-    sourceHash: characterSheetHash(project, character),
+    sourceHash: requestHash,
   };
 }
 

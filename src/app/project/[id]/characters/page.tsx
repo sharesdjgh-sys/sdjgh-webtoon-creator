@@ -22,6 +22,7 @@ import { createCharacter, getProject, updateProject, type Character, type Charac
 import { downloadCharacters } from "@/lib/download";
 import ArtDirectionEditor from "@/components/visual/ArtDirectionEditor";
 import StoredImage, { BlobImage } from "@/components/visual/StoredImage";
+import CharacterReferences from "@/components/visual/CharacterReferences";
 import ImageLightbox, { type LightboxImage } from "@/components/visual/ImageLightbox";
 import { characterSheetHash, requestCharacterSheet, type CharacterSheetProgressStage } from "@/lib/visualClient";
 import { deleteMediaAsset, deleteMediaByOwner, downloadBlob, getMediaAsset, saveMediaAsset } from "@/lib/mediaStorage";
@@ -133,6 +134,7 @@ export default function CharactersPage({ params }: { params: Promise<{ id: strin
   const router = useRouter();
   const [project, setProject] = useState<Project | null>(null);
   const [characters, setCharacters] = useState<Character[]>([]);
+  const charactersRef = useRef(characters);
   const [editIdx, setEditIdx] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -149,6 +151,8 @@ export default function CharactersPage({ params }: { params: Promise<{ id: strin
   const [lightboxImage, setLightboxImage] = useState<LightboxImage | null>(null);
   const mobileChatRef = useRef<MobileChatSheetHandle>(null);
   const autofillStartedAt = autofillProgress?.startedAt;
+
+  useEffect(() => { charactersRef.current = characters; }, [characters]);
 
   useEffect(() => {
     const p = getProject(id);
@@ -202,6 +206,16 @@ export default function CharactersPage({ params }: { params: Promise<{ id: strin
       ? { ...character, visualProfile: { ...character.visualProfile, [field]: value } }
       : character));
     setIsDirty(true);
+  };
+
+  const saveCharacterReferences = (characterId: string, referenceAssetIds: string[]) => {
+    if (!getProject(id)) throw new Error("작품을 찾지 못했어요. 대시보드에서 다시 열어 주세요.");
+    const current = charactersRef.current;
+    if (!current.some((character) => character.id === characterId)) throw new Error("캐릭터를 찾지 못했어요. 화면을 다시 확인해 주세요.");
+    const next = current.map((character) => character.id === characterId ? { ...character, referenceAssetIds } : character);
+    updateProject(id, { characters: next });
+    charactersRef.current = next;
+    setCharacters(next);
   };
 
   const removeChar = (idx: number) => {
@@ -294,6 +308,13 @@ export default function CharactersPage({ params }: { params: Promise<{ id: strin
       const currentProject = { ...project, characters };
       const result = await requestCharacterSheet(currentProject, character, (stage) => setGenerationStage(character.id, stage));
       setGenerationStage(character.id, "saving");
+      const latestProject = getProject(id);
+      const latestCharacter = charactersRef.current.find((item) => item.id === character.id);
+      if (!latestProject || !latestCharacter || characterSheetHash({ ...latestProject, characters: charactersRef.current }, latestCharacter) !== result.sourceHash) {
+        setCandidateSheets((current) => ({ ...current, [character.id]: { blob: result.blob, sourceHash: result.sourceHash } }));
+        setVisualError("생성 중 캐릭터 설정이나 참고 이미지가 바뀌었어요. 이전 입력의 후보는 보관했지만 적용할 수 없어요. 다시 생성해 주세요.");
+        return false;
+      }
       if (acceptImmediately) {
         const asset = await saveMediaAsset({ projectId: id, ownerId: character.id, ownerType: "character", mimeType: result.blob.type || "image/jpeg", blob: result.blob });
         await deleteMediaAsset(character.imageAssetId);
@@ -317,6 +338,11 @@ export default function CharactersPage({ params }: { params: Promise<{ id: strin
   const acceptSheet = async (character: Character) => {
     const candidate = candidateSheets[character.id];
     if (!candidate) return;
+    const latestProject = getProject(id);
+    if (!latestProject || candidate.sourceHash !== characterSheetHash({ ...latestProject, characters }, character)) {
+      setVisualError("후보를 만든 뒤 캐릭터 설정이나 참고 이미지가 바뀌었어요. 현재 입력으로 다시 생성해 주세요.");
+      return;
+    }
     try {
       const asset = await saveMediaAsset({ projectId: id, ownerId: character.id, ownerType: "character", mimeType: candidate.blob.type || "image/jpeg", blob: candidate.blob });
       await deleteMediaAsset(character.imageAssetId);
@@ -486,7 +512,7 @@ export default function CharactersPage({ params }: { params: Promise<{ id: strin
             <div className="space-y-3">
               {characters.map((ch, idx) => (
                 <div
-                  key={idx}
+                  key={ch.id}
                   className={`bg-white rounded-2xl border transition-all duration-200 shadow-[0_2px_12px_rgba(0,0,0,0.04)] ${
                     editIdx === idx ? "border-[#7C3AED]/30" : "border-[#EBE7E0]"
                   }`}
@@ -632,6 +658,13 @@ export default function CharactersPage({ params }: { params: Promise<{ id: strin
                           className="text-xs mb-3"
                         />
 
+                        <CharacterReferences
+                          projectId={id}
+                          characterId={ch.id}
+                          referenceAssetIds={ch.referenceAssetIds ?? []}
+                          onChange={(ids) => saveCharacterReferences(ch.id, ids)}
+                        />
+
                         {generationProgress[ch.id] && <CharacterSheetGenerationStatus progress={generationProgress[ch.id]} />}
 
                         {(candidateSheets[ch.id] || ch.imageAssetId) ? (
@@ -653,9 +686,10 @@ export default function CharactersPage({ params }: { params: Promise<{ id: strin
                               {candidateSheets[ch.id] && (
                                 <div className="rounded-lg bg-white border border-[#EBE7E0] p-3">
                                   <p className="text-[11px] font-bold text-[#1A1A1A] mb-1">새 결과를 적용할까요?</p>
-                                  <p className="text-[10px] text-[#7A7067] mb-3">취소하면 기존 시트가 그대로 유지됩니다.</p>
+                                  <p className="text-[10px] text-[#7A7067] mb-3">참고 이미지와 텍스트 설정을 비교해 확인하세요. 취소하면 기존 시트가 그대로 유지됩니다.</p>
+                                  {candidateSheets[ch.id].sourceHash !== characterSheetHash({ ...project!, characters } as Project, ch) && <p className="mb-2 text-[10px] text-orange-700">후보를 만든 뒤 입력이 바뀌었어요. 현재 입력으로 다시 생성해 주세요.</p>}
                                   <div className="flex gap-2">
-                                    <button type="button" onClick={() => acceptSheet(ch)} className={`${INTERACTIVE_BUTTON} inline-flex items-center gap-1 rounded-full bg-[#7C3AED] text-white px-3 py-1.5 text-[11px] font-semibold hover:bg-[#6D28D9]`}><Check className="w-3 h-3" /> 적용</button>
+                                    <button type="button" disabled={candidateSheets[ch.id].sourceHash !== characterSheetHash({ ...project!, characters } as Project, ch)} onClick={() => acceptSheet(ch)} className={`${INTERACTIVE_BUTTON} inline-flex items-center gap-1 rounded-full bg-[#7C3AED] text-white px-3 py-1.5 text-[11px] font-semibold hover:bg-[#6D28D9] disabled:opacity-50`}><Check className="w-3 h-3" /> 적용</button>
                                     <button type="button" onClick={() => setCandidateSheets((current) => { const next = { ...current }; delete next[ch.id]; return next; })} className={`${INTERACTIVE_BUTTON} inline-flex items-center gap-1 rounded-full border border-[#EBE7E0] bg-white px-3 py-1.5 text-[11px] hover:bg-[#F4F1EC]`}><X className="w-3 h-3" /> 취소</button>
                                   </div>
                                 </div>

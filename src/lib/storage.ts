@@ -182,6 +182,7 @@ export type Character = {
   imageInstructions?: string;
   imageAssetId?: string;
   imageSourceHash?: string;
+  referenceAssetIds?: string[];
 };
 
 export type Cut = {
