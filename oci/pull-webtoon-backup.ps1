@@ -23,6 +23,7 @@ $result = @(& ssh -i $KeyPath -o BatchMode=yes -o ConnectTimeout=15 $SshTarget "
 if ($LASTEXITCODE -ne 0) { throw 'Remote backup creation failed' }
 $archive = [string]($result | Select-Object -Last 1)
 if ($archive -notmatch '^/[A-Za-z0-9_./-]+\.tar$' -or $archive.Contains('..')) { throw 'Invalid remote archive path' }
+if (-not $archive.StartsWith($RemoteBackupDir.TrimEnd('/') + '/webtoon-', [StringComparison]::Ordinal)) { throw 'Archive outside expected staging directory' }
 $filename = [IO.Path]::GetFileName($archive)
 $localArchive = Join-Path $destinationRoot $filename
 $localChecksum = "$localArchive.sha256"
@@ -37,4 +38,7 @@ $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath "$localArchive.partial").
 if ($expected -notmatch '^[0-9a-f]{64}$' -or $actual -ne $expected) { throw 'Backup checksum mismatch; partial files retained for inspection' }
 Move-Item -LiteralPath "$localArchive.partial" -Destination $localArchive
 Move-Item -LiteralPath "$localChecksum.partial" -Destination $localChecksum
+# 검증된 PC 사본만 남기고 이번 실행에서 만든 서버 측 임시 압축본을 치운다.
+& ssh -i $KeyPath -o BatchMode=yes -o ConnectTimeout=15 $SshTarget "rm -f -- $archive $archive.sha256"
+if ($LASTEXITCODE -ne 0) { throw 'Off-server backup verified, but remote staging cleanup failed' }
 Write-Output "Verified off-server backup: $localArchive"
