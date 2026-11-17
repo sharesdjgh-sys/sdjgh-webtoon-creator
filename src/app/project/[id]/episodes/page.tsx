@@ -32,6 +32,7 @@ import CutNavigator from "@/components/visual/CutNavigator";
 import AiActivityBanner from "@/components/AiActivityBanner";
 import { BlobImage } from "@/components/visual/StoredImage";
 import { requestCharacterRig, requestSceneCharacterRigs, requestSceneImage, requestStoryboardLayer, requestStoryboardLayout, sceneHash, storyboardLayerHash } from "@/lib/visualClient";
+import { sceneImageIssue, storyboardLayerIssue, visualFailureMessage, type VisualIssue } from "@/lib/visualGuidance";
 import { deleteMediaAsset, deleteMediaByOwner, getMediaAsset, saveMediaAsset, whiteToTransparentPng } from "@/lib/mediaStorage";
 import { resizeStoryboard } from "@/lib/storyboardSvg";
 import { hasGeneratedStoryboardLayers } from "@/lib/storyboardComposite";
@@ -127,6 +128,7 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
   const [poseDetectingIds, setPoseDetectingIds] = useState<Set<string>>(new Set());
   const [sceneCandidates, setSceneCandidates] = useState<Record<string, { blob: Blob; sourceHash: string; reviewed?: boolean; review?: SceneReview }>>({});
   const [visualError, setVisualError] = useState("");
+  const [visualIssue, setVisualIssue] = useState<VisualIssue | null>(null);
   const [bulkLayoutGenerating, setBulkLayoutGenerating] = useState(false);
   const [aiCutProgress, setAiCutProgress] = useState<AiCutProgress | null>(null);
   const mobileChatRef = useRef<MobileChatSheetHandle>(null);
@@ -378,6 +380,11 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
     });
   };
 
+  const showVisualIssue = (issue: VisualIssue) => {
+    setVisualIssue(issue);
+    setVisualError(issue.message);
+  };
+
   const generateLayout = async (cutIdx: number, keepLayout = false) => {
     if (!project) return;
     const episode = episodes[activeEp], cut = episode?.cuts[cutIdx];
@@ -387,6 +394,7 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
     const inputHash = sceneHash(currentProject, episode, cut);
     const editorSnapshot = JSON.stringify({ storyboard: cut.storyboard, dialogue: cut.dialogue, soundEffect: cut.soundEffect });
     layoutRequests.current.add(cut.id);
+    setVisualIssue(null);
     setVisualError("");
     setLoadingId(setLayoutGeneratingIds, cut.id, true);
     try {
@@ -415,7 +423,7 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
       setVisualError("장면 전체 스케치를 생성하고 실제 인물 자세에 포즈 좌표를 맞췄습니다. 생성 중 변경한 콘티는 덮어쓰지 않습니다. 콘티 미리보기에서 대사와 여백을 확인해주세요.");
       return true;
     } catch (error) {
-      setVisualError(error instanceof Error ? error.message : "장면 스케치 생성에 실패했습니다. 기존 콘티는 유지됩니다.");
+      setVisualError(visualFailureMessage(error, "장면 콘티 생성"));
       return false;
     } finally {
       layoutRequests.current.delete(cut.id);
@@ -430,9 +438,14 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
     const layer = cut?.storyboard?.elements.find((element) => element.id === layerId);
     if (!episode || !cut?.storyboard || !layer || !["background", "character", "prop"].includes(layer.type)) return false;
     if (sceneRequests.current.has(cut.id) || layerRequests.current.has(layer.id) || (!batch && layerBatches.current.has(cut.id))) return false;
+    const issue = storyboardLayerIssue({ ...project, episodes }, cut, layerId);
+    if (issue) {
+      if (!batch) showVisualIssue(issue);
+      return false;
+    }
     layerRequests.current.add(layer.id);
     const inputHash = storyboardLayerHash({ ...project, episodes }, episode, cut, layer.id);
-    if (!batch) setVisualError("");
+    if (!batch) { setVisualIssue(null); setVisualError(""); }
     setLoadingId(setLayerGeneratingIds, layer.id, true);
     try {
       const result = await requestStoryboardLayer({ ...project, episodes }, episode, cut, layer.id);
@@ -459,7 +472,7 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
       if (!batch) setVisualError(`${layer.text || "선택 레이어"} 생성이 완료되었습니다. 생성 중 수정된 레이어는 덮어쓰지 않습니다.`);
       return true;
     } catch (error) {
-      if (!batch) setVisualError(error instanceof Error ? error.message : "선택한 콘티 레이어를 다시 그리지 못했습니다.");
+      if (!batch) setVisualError(visualFailureMessage(error, "콘티 레이어 생성"));
       return false;
     } finally {
       setLoadingId(setLayerGeneratingIds, layer.id, false);
@@ -474,8 +487,11 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
     const stale = new Set(cut.storyboard.elements.filter(layer => layer.assetSourceHash !== storyboardLayerHash({ ...project, episodes }, episode, cut, layer.id)).map(layer => layer.id));
     const targets = pendingLayerIds(cut.storyboard, stale).filter(layerId => requestedIds.includes(layerId));
     if (!targets.length) return;
+    const issue = targets.map((layerId) => storyboardLayerIssue({ ...project, episodes }, cut, layerId)).find((item): item is VisualIssue => Boolean(item));
+    if (issue) { showVisualIssue(issue); return; }
     const control = { cancelled: false };
     layerBatches.current.set(cut.id, control);
+    setVisualIssue(null);
     setVisualError("");
     try {
       const result = await runLayerBatch(targets, layerId => regenerateStoryboardLayer(cutIdx, layerId, true),
@@ -583,23 +599,26 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
     const cut = episode?.cuts[cutIdx];
     if (!episode || !cut) return;
     if (!cut.storyboard) {
-      setVisualError("먼저 콘티를 만든 뒤 장면을 생성해 주세요.");
+      showVisualIssue(sceneImageIssue({ ...project, episodes }, cut)!);
       return;
     }
     const currentProject = { ...project, episodes };
+    const issue = sceneImageIssue(currentProject, cut);
+    if (issue) { showVisualIssue(issue); return; }
     if (sceneRequests.current.has(cut.id)) return;
     if (layerBatches.current.has(cut.id) || layoutGeneratingIds.has(cut.id) || poseDetectingIds.has(cut.id) || cut.storyboard.elements.some(layer => layerRequests.current.has(layer.id))) {
       setVisualError("진행 중인 레이어 작업을 완료하거나 중지한 뒤 장면에 한 번에 반영해주세요.");
       return;
     }
     sceneRequests.current.add(cut.id);
+    setVisualIssue(null);
     setVisualError("");
     setLoadingId(setSceneGeneratingIds, cut.id, true);
     try {
       const result = await requestSceneImage(currentProject, episode, cut, "direct", "finish", revision, sceneCandidates[cut.id]?.sourceHash === sceneHash(currentProject, episode, cut) ? sceneCandidates[cut.id]?.blob : undefined);
       setSceneCandidates((current) => ({ ...current, [cut.id]: { blob: result.blob, sourceHash: result.sourceHash, review: result.review, reviewed: false } }));
     } catch (error) {
-      setVisualError(error instanceof Error ? error.message : "장면 이미지 생성에 실패했습니다.");
+      setVisualError(visualFailureMessage(error, "장면 이미지 생성"));
     } finally {
       setLoadingId(setSceneGeneratingIds, cut.id, false);
       sceneRequests.current.delete(cut.id);
@@ -838,8 +857,12 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
           )}
 
           {visualError && (
-              <div className={`rounded-xl px-4 py-2.5 text-xs ${visualError.includes("생성했습니다") || visualError.includes("그렸습니다") || visualError.includes("반영했습니다") || visualError.includes("추가했습니다") || visualError.includes("모든 컷") ? "bg-green-50 border border-green-200 text-green-700" : "bg-red-50 border border-red-200 text-red-600"}`}>
-              {visualError}
+              <div role="status" className={`rounded-xl px-4 py-2.5 text-xs ${visualError.includes("생성했습니다") || visualError.includes("그렸습니다") || visualError.includes("반영했습니다") || visualError.includes("추가했습니다") || visualError.includes("모든 컷") ? "bg-green-50 border border-green-200 text-green-700" : "bg-red-50 border border-red-200 text-red-600"}`}>
+              <p>{visualError}</p>
+              {visualIssue && visualError === visualIssue.message && <div className="mt-2 flex flex-wrap items-center gap-2">
+                <span>{visualIssue.action}</span>
+                {visualIssue.stage === "characters" && <button type="button" onClick={() => { save(); router.push(projectHref(id, "characters")); }} className="rounded-full border border-current px-3 py-1 font-semibold">저장하고 캐릭터 단계로 이동</button>}
+              </div>}
             </div>
           )}
 
@@ -1067,6 +1090,18 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
                                 : hasGeneratedStoryboardLayers(cut.storyboard) ? "장면 콘티 새로 제안" : "AI 장면 콘티 만들기"}
                             </button>
                           </div>
+
+                          {project && cut.storyboard && (() => {
+                            const issue = sceneImageIssue({ ...project, episodes }, cut)
+                              ?? cut.storyboard.elements.filter((element) => element.type === "character" && element.visible !== false)
+                                .map((element) => storyboardLayerIssue({ ...project, episodes }, cut, element.id))
+                                .find((item): item is VisualIssue => Boolean(item));
+                            return issue ? <div className="rounded-lg border border-amber-200 bg-amber-50 p-2 text-[11px] leading-5 text-amber-900">
+                              <p>장면 완성·인물 레이어 생성 전 확인: {issue.message} {issue.action}</p>
+                              <p>장면 콘티 설계는 캐릭터 시트 없이도 시작할 수 있어요.</p>
+                              {issue.stage === "characters" && <button type="button" onClick={() => { save(); router.push(projectHref(id, "characters")); }} className="mt-1 rounded-full border border-current px-3 py-0.5 font-semibold">저장하고 캐릭터 단계로 이동</button>}
+                            </div> : null;
+                          })()}
 
                           {sceneCandidates[cut.id] && (
                             <div className="rounded-xl border border-[#C4B5FD] bg-white p-3 grid gap-3 sm:grid-cols-[180px_1fr]">

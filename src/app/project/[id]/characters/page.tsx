@@ -25,6 +25,7 @@ import StoredImage, { BlobImage } from "@/components/visual/StoredImage";
 import CharacterReferences from "@/components/visual/CharacterReferences";
 import ImageLightbox, { type LightboxImage } from "@/components/visual/ImageLightbox";
 import { characterSheetHash, requestCharacterSheet, type CharacterSheetProgressStage } from "@/lib/visualClient";
+import { characterSheetIssue, visualFailureMessage } from "@/lib/visualGuidance";
 import { deleteMediaAsset, deleteMediaByOwner, downloadBlob, getMediaAsset, saveMediaAsset } from "@/lib/mediaStorage";
 
 const ROLES = ["주인공", "조력자", "악당(빌런)", "조연", "기타"];
@@ -298,8 +299,10 @@ export default function CharactersPage({ params }: { params: Promise<{ id: strin
   };
 
   const generateSheet = async (character: Character, acceptImmediately = false) => {
-    if (!project || !character.name.trim()) {
-      setVisualError("캐릭터 이름을 먼저 입력해주세요.");
+    if (!project) return false;
+    const issue = characterSheetIssue(character);
+    if (issue) {
+      setVisualError(`${issue.message} ${issue.action}`);
       return false;
     }
     setVisualError("");
@@ -328,7 +331,7 @@ export default function CharactersPage({ params }: { params: Promise<{ id: strin
       }
       return true;
     } catch (error) {
-      setVisualError(error instanceof Error ? error.message : "캐릭터 시트 생성에 실패했습니다.");
+      setVisualError(visualFailureMessage(error, "캐릭터 시트 생성"));
       return false;
     } finally {
       setGenerating(character.id, false);
@@ -478,7 +481,7 @@ export default function CharactersPage({ params }: { params: Promise<{ id: strin
           {autofillProgress && <AutofillStatus progress={autofillProgress} />}
 
           {visualError && (
-            <div className={`rounded-xl px-4 py-2.5 text-xs ${visualError.includes("생성했습니다") ? "bg-green-50 border border-green-200 text-green-700" : "bg-red-50 border border-red-200 text-red-600"}`}>
+            <div role="status" className={`rounded-xl px-4 py-2.5 text-xs ${visualError.includes("생성했습니다") ? "bg-green-50 border border-green-200 text-green-700" : "bg-red-50 border border-red-200 text-red-600"}`}>
               {visualError}
             </div>
           )}
@@ -664,6 +667,8 @@ export default function CharactersPage({ params }: { params: Promise<{ id: strin
                           referenceAssetIds={ch.referenceAssetIds ?? []}
                           onChange={(ids) => saveCharacterReferences(ch.id, ids)}
                         />
+
+                        {characterSheetIssue(ch) && <p className="mb-3 rounded-lg border border-amber-200 bg-amber-50 p-2 text-[11px] text-amber-900">시트를 만들려면 캐릭터 이름을 먼저 입력해 주세요. 참고 이미지는 선택 사항이에요.</p>}
 
                         {generationProgress[ch.id] && <CharacterSheetGenerationStatus progress={generationProgress[ch.id]} />}
 

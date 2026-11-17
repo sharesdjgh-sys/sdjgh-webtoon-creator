@@ -65,7 +65,14 @@ async function postVisual<T>(body: unknown, maxBodyBytes?: number): Promise<T> {
     body: json,
   });
   const data = await response.json().catch(() => ({})) as { error?: string };
-  if (!response.ok) throw new Error(data.error ?? "시각 자료 생성에 실패했습니다.");
+  if (!response.ok) {
+    const fallback = response.status === 413 ? "요청 크기가 서버 제한을 넘었어요. 참고 이미지를 줄여 주세요."
+      : response.status === 429 ? "AI 이미지 사용량 한도에 도달했습니다. 잠시 후 다시 시도해주세요."
+      : response.status === 504 || response.status === 408 ? "이미지 생성 시간이 초과되었습니다. 다시 시도해주세요."
+      : response.status === 401 || response.status === 403 ? "AI 모델 사용 권한을 확인해주세요."
+      : "시각 자료 생성에 실패했습니다.";
+    throw new Error(data.error ?? fallback);
+  }
   return data as T;
 }
 
