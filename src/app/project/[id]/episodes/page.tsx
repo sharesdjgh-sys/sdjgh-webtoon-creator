@@ -18,8 +18,9 @@ import StepIndicator from "@/components/progress-tracker/StepIndicator";
 import EmptyContentModal from "@/components/EmptyContentModal";
 import MobileChatSheet, { type MobileChatSheetHandle } from "@/components/mobile/MobileChatSheet";
 import MobileStepBar from "@/components/MobileStepBar";
-import { Plus, Trash2, Save, ArrowRight, Sparkles, Check, Download, Film, Wand2, ImageIcon, RefreshCw, X, ChevronDown, ChevronRight } from "lucide-react";
-import { createCut, getProject, updateProject, type Episode, type Cut, type Project, type ChatMessage, type PanelAspectRatio, type StoryboardDocument, type SceneReview } from "@/lib/storage";
+import { Plus, Trash2, Save, ArrowRight, Sparkles, Check, Film, Wand2, ImageIcon, RefreshCw, X, ChevronDown, ChevronRight } from "lucide-react";
+import StageDocumentMenu from "@/components/creation/StageDocumentMenu";
+import { createCut, getProject, updateProject, flushServerWrites, type Episode, type Cut, type Project, type ChatMessage, type PanelAspectRatio, type StoryboardDocument, type SceneReview } from "@/lib/storage";
 import { downloadEpisode, downloadAllEpisodes } from "@/lib/download";
 import { canApplyScene, sceneReviewSummary } from "@/lib/sceneReview";
 import ArtDirectionEditor from "@/components/visual/ArtDirectionEditor";
@@ -668,16 +669,18 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
     setVisualError(`${success}/${targets.length}개의 장면 콘티를 생성했습니다.`);
   };
 
-  const save = () => {
+  const save = async () => {
     setSaving(true);
-    updateProject(id, {
-      episodes,
-      currentStep: Math.max(6, project?.currentStep ?? 1),
-    });
-    setSaving(false);
-    setSaved(true);
-    setIsDirty(false);
-    setTimeout(() => setSaved(false), 2000);
+    try {
+      updateProject(id, { episodes, currentStep: Math.max(6, project?.currentStep ?? 1) });
+      await flushServerWrites();
+      setSaved(true); setIsDirty(false);
+      setTimeout(() => setSaved(false), 2000);
+      return true;
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "저장하지 못했어요.");
+      return false;
+    } finally { setSaving(false); }
   };
 
   const autofill = async () => {
@@ -716,13 +719,12 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
     }
   };
 
-  const handleNext = () => {
+  const handleNext = async () => {
     const allEmpty = episodes.every((ep) => !ep.title);
     if (allEmpty) {
       setShowEmptyModal(true);
     } else {
-      save();
-      router.push(projectHref(id, "submit"));
+      if (await save()) router.push(projectHref(id, "submit"));
     }
   };
 
@@ -743,22 +745,10 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
             <span className="text-xs font-semibold text-[#1A1A1A] truncate">{project?.title ?? "..."}</span>
           </div>
           <div className="flex items-center gap-2 flex-shrink-0">
-            {project && (
-              <>
-                <button
-                  onClick={() => downloadEpisode({ ...project, episodes }, activeEp)}
-                  className="hidden sm:flex items-center gap-1.5 text-xs font-medium px-3 py-2 rounded-full border border-[#EBE7E0] text-[#7A7067] hover:bg-[#F4F1EC] transition-all duration-200"
-                >
-                  <Download className="w-3.5 h-3.5" /> 이 화 제작 문서
-                </button>
-                <button
-                  onClick={() => downloadAllEpisodes({ ...project, episodes })}
-                  className="hidden sm:flex items-center gap-1.5 text-xs font-medium px-3 py-2 rounded-full border border-[#EBE7E0] text-[#7A7067] hover:bg-[#F4F1EC] transition-all duration-200"
-                >
-                  <Download className="w-3.5 h-3.5" /> 전체 제작 문서
-                </button>
-              </>
-            )}
+            {project && <StageDocumentMenu actions={[
+              { label: "이 화 제작 문서 받기 (TXT)", onSelect: () => downloadEpisode({ ...project, episodes }, activeEp) },
+              { label: "전체 제작 문서 받기 (TXT)", onSelect: () => downloadAllEpisodes({ ...project, episodes }) },
+            ]} />}
             <button
               onClick={generateMissingLayouts}
               disabled={bulkLayoutGenerating || !ep?.cuts?.length}
@@ -861,7 +851,7 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
               <p>{visualError}</p>
               {visualIssue && visualError === visualIssue.message && <div className="mt-2 flex flex-wrap items-center gap-2">
                 <span>{visualIssue.action}</span>
-                {visualIssue.stage === "characters" && <button type="button" onClick={() => { save(); router.push(projectHref(id, "characters")); }} className="rounded-full border border-current px-3 py-1 font-semibold">저장하고 캐릭터 단계로 이동</button>}
+                {visualIssue.stage === "characters" && <button type="button" onClick={async () => { if (await save()) router.push(projectHref(id, "characters")); }} className="rounded-full border border-current px-3 py-1 font-semibold">저장하고 캐릭터 단계로 이동</button>}
               </div>}
             </div>
           )}
@@ -1099,7 +1089,7 @@ export default function EpisodesPage({ params }: { params: Promise<{ id: string 
                             return issue ? <div className="rounded-lg border border-amber-200 bg-amber-50 p-2 text-[11px] leading-5 text-amber-900">
                               <p>장면 완성·인물 레이어 생성 전 확인: {issue.message} {issue.action}</p>
                               <p>장면 콘티 설계는 캐릭터 시트 없이도 시작할 수 있어요.</p>
-                              {issue.stage === "characters" && <button type="button" onClick={() => { save(); router.push(projectHref(id, "characters")); }} className="mt-1 rounded-full border border-current px-3 py-0.5 font-semibold">저장하고 캐릭터 단계로 이동</button>}
+                              {issue.stage === "characters" && <button type="button" onClick={async () => { if (await save()) router.push(projectHref(id, "characters")); }} className="mt-1 rounded-full border border-current px-3 py-0.5 font-semibold">저장하고 캐릭터 단계로 이동</button>}
                             </div> : null;
                           })()}
 

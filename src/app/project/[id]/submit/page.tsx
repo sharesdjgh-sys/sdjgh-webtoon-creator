@@ -11,7 +11,7 @@ import StageIntro from "@/components/creation/StageIntro";
 import { Textarea } from "@/components/ui/textarea";
 import StepIndicator from "@/components/progress-tracker/StepIndicator";
 import { Trophy, CheckCircle, Circle, ArrowLeft, Sparkles, Download } from "lucide-react";
-import { getProject, updateProject } from "@/lib/storage";
+import { getProject, updateProject, flushServerWrites } from "@/lib/storage";
 import { downloadFullSummary } from "@/lib/download";
 import MobileStepBar from "@/components/MobileStepBar";
 import MobileChatSheet from "@/components/mobile/MobileChatSheet";
@@ -64,10 +64,11 @@ export default function SubmitPage({ params }: { params: Promise<{ id: string }>
   const checkedCount = CHECKLIST.filter(item => checks[item.id]).length;
   const isReady = checkedCount === CHECKLIST.length;
 
-  const markComplete = () => {
+  const markComplete = async () => {
     if (!isReady || !project) return;
     updateProject(id, { isCompleted: true });
-    setCompleted(true);
+    try { await flushServerWrites(); setCompleted(true); }
+    catch (error) { alert(error instanceof Error ? error.message : "완료 상태를 저장하지 못했어요."); }
   };
 
   return (
@@ -216,7 +217,7 @@ export default function SubmitPage({ params }: { params: Promise<{ id: string }>
                 onClick={() => downloadFullSummary(project)}
                 className="flex items-center gap-2 text-xs font-semibold px-5 py-2.5 rounded-full border border-[#7C3AED]/30 text-[#7C3AED] hover:bg-[#7C3AED]/5 transition-all duration-200"
               >
-                <Download className="w-3.5 h-3.5" /> 최종 요약 다운로드
+                <Download className="w-3.5 h-3.5" /> 최종 요약 문서 받기
               </button>
             )}
           </div>

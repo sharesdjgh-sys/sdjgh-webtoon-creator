@@ -18,8 +18,9 @@ import EmptyContentModal from "@/components/EmptyContentModal";
 import MobileChatSheet, { type MobileChatSheetHandle } from "@/components/mobile/MobileChatSheet";
 import MobileStepBar from "@/components/MobileStepBar";
 import { Plus, Trash2, ArrowRight, Check, Save, Sparkles, User, Download, Wand2, ImageIcon, RefreshCw, X } from "lucide-react";
-import { createCharacter, getProject, updateProject, type Character, type CharacterVisualProfile, type Project, type ChatMessage } from "@/lib/storage";
+import { createCharacter, getProject, updateProject, flushServerWrites, type Character, type CharacterVisualProfile, type Project, type ChatMessage } from "@/lib/storage";
 import { downloadCharacters } from "@/lib/download";
+import StageDocumentMenu from "@/components/creation/StageDocumentMenu";
 import ArtDirectionEditor from "@/components/visual/ArtDirectionEditor";
 import StoredImage, { BlobImage } from "@/components/visual/StoredImage";
 import CharacterReferences from "@/components/visual/CharacterReferences";
@@ -231,17 +232,19 @@ export default function CharactersPage({ params }: { params: Promise<{ id: strin
     setIsDirty(true);
   };
 
-  const save = () => {
+  const save = async () => {
     setSaving(true);
-    updateProject(id, {
-      characters,
-      artDirection: project?.artDirection,
-      currentStep: Math.max(2, project?.currentStep ?? 1),
-    });
-    setSaving(false);
-    setSaved(true);
-    setIsDirty(false);
-    setTimeout(() => setSaved(false), 2000);
+    try {
+      updateProject(id, { characters, artDirection: project?.artDirection,
+        currentStep: Math.max(2, project?.currentStep ?? 1) });
+      await flushServerWrites();
+      setSaved(true); setIsDirty(false);
+      setTimeout(() => setSaved(false), 2000);
+      return true;
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "저장하지 못했어요.");
+      return false;
+    } finally { setSaving(false); }
   };
 
   const autofill = async () => {
@@ -385,12 +388,11 @@ export default function CharactersPage({ params }: { params: Promise<{ id: strin
     setVisualError(`${success}/${targets.length}개의 캐릭터 시트를 생성했습니다.`);
   };
 
-  const handleNext = () => {
+  const handleNext = async () => {
     if (characters.length === 0) {
       setShowEmptyModal(true);
     } else {
-      save();
-      router.push(projectHref(id, "world"));
+      if (await save()) router.push(projectHref(id, "world"));
     }
   };
 
@@ -412,14 +414,7 @@ export default function CharactersPage({ params }: { params: Promise<{ id: strin
             <span className="text-xs font-semibold text-[#1A1A1A] truncate">{project?.title ?? "..."}</span>
           </div>
           <div className="flex items-center gap-2 flex-shrink-0">
-            {project && (
-              <button
-                onClick={() => downloadCharacters({ ...project, characters })}
-                className={`${INTERACTIVE_BUTTON} hidden sm:flex items-center gap-1.5 text-xs font-medium px-4 py-2 rounded-full border border-[#EBE7E0] text-[#7A7067] hover:-translate-y-0.5 hover:bg-[#F4F1EC] hover:shadow-sm`}
-              >
-                <Download className="w-3.5 h-3.5" /> 다운로드
-              </button>
-            )}
+            {project && <StageDocumentMenu actions={[{ label: "캐릭터 문서 받기 (TXT)", onSelect: () => downloadCharacters({ ...project, characters }) }]} />}
             <button
               onClick={generateAllMissing}
               disabled={bulkGenerating || characters.length === 0}
@@ -703,7 +698,7 @@ export default function CharactersPage({ params }: { params: Promise<{ id: strin
                                 <button type="button" disabled={generatingIds.has(ch.id)} onClick={() => generateSheet(ch)} className={`${INTERACTIVE_BUTTON} inline-flex items-center gap-1.5 rounded-full bg-[#1A1A1A] text-white px-3 py-2 text-[11px] font-semibold hover:-translate-y-0.5 hover:bg-black hover:shadow-md disabled:bg-[#5B5560] disabled:opacity-100`}>
                                   {generatingIds.has(ch.id) ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />} {generatingIds.has(ch.id) ? "작업 진행 중" : ch.imageAssetId ? "새로 생성" : "시트 생성"}
                                 </button>
-                                <button type="button" onClick={() => downloadSheet(ch)} className={`${INTERACTIVE_BUTTON} inline-flex items-center gap-1.5 rounded-full border border-[#EBE7E0] bg-white px-3 py-2 text-[11px] text-[#7A7067] hover:-translate-y-0.5 hover:bg-[#F4F1EC]`}><Download className="w-3.5 h-3.5" /> 이미지 저장</button>
+                                <button type="button" onClick={() => downloadSheet(ch)} className={`${INTERACTIVE_BUTTON} inline-flex items-center gap-1.5 rounded-full border border-[#EBE7E0] bg-white px-3 py-2 text-[11px] text-[#7A7067] hover:-translate-y-0.5 hover:bg-[#F4F1EC]`}><Download className="w-3.5 h-3.5" /> 이미지 받기</button>
                               </div>
                             </div>
                           </div>

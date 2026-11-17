@@ -16,8 +16,9 @@ import StepIndicator from "@/components/progress-tracker/StepIndicator";
 import EmptyContentModal from "@/components/EmptyContentModal";
 import MobileChatSheet, { type MobileChatSheetHandle } from "@/components/mobile/MobileChatSheet";
 import MobileStepBar from "@/components/MobileStepBar";
-import { Save, ArrowRight, Sparkles, Check, Download, Wand2, RefreshCw } from "lucide-react";
-import { getProject, updateProject, type Project, type ChatMessage } from "@/lib/storage";
+import { Save, ArrowRight, Sparkles, Check, Wand2, RefreshCw } from "lucide-react";
+import StageDocumentMenu from "@/components/creation/StageDocumentMenu";
+import { getProject, updateProject, flushServerWrites, type Project, type ChatMessage } from "@/lib/storage";
 import { downloadStory } from "@/lib/download";
 import AiActivityBanner from "@/components/AiActivityBanner";
 
@@ -45,14 +46,18 @@ export default function StoryPage({ params }: { params: Promise<{ id: string }> 
     }
   }, [id]);
 
-  const save = () => {
+  const save = async () => {
     setSaving(true);
-    updateProject(id, {
-      story: { ...story },
-      currentStep: Math.max(4, project?.currentStep ?? 1),
-    });
-    setSaving(false); setSaved(true); setIsDirty(false);
-    setTimeout(() => setSaved(false), 2000);
+    try {
+      updateProject(id, { story: { ...story }, currentStep: Math.max(4, project?.currentStep ?? 1) });
+      await flushServerWrites();
+      setSaved(true); setIsDirty(false);
+      setTimeout(() => setSaved(false), 2000);
+      return true;
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "저장하지 못했어요.");
+      return false;
+    } finally { setSaving(false); }
   };
 
   const autofill = async () => {
@@ -86,13 +91,12 @@ export default function StoryPage({ params }: { params: Promise<{ id: string }> 
     }
   };
 
-  const handleNext = () => {
+  const handleNext = async () => {
     const isEmpty = !story.logline && !story.plotOutline;
     if (isEmpty) {
       setShowEmptyModal(true);
     } else {
-      save();
-      router.push(projectHref(id, "script"));
+      if (await save()) router.push(projectHref(id, "script"));
     }
   };
 
@@ -108,14 +112,7 @@ export default function StoryPage({ params }: { params: Promise<{ id: string }> 
             <span className="text-xs font-semibold text-[#1A1A1A] truncate">{project?.title ?? "..."}</span>
           </div>
           <div className="flex items-center gap-2 flex-shrink-0">
-            {project && (
-              <button
-                onClick={() => downloadStory({ ...project, story })}
-                className="hidden sm:flex items-center gap-1.5 text-xs font-medium px-4 py-2 rounded-full border border-[#EBE7E0] text-[#7A7067] hover:bg-[#F4F1EC] transition-all duration-200"
-              >
-                <Download className="w-3.5 h-3.5" /> 다운로드
-              </button>
-            )}
+            {project && <StageDocumentMenu actions={[{ label: "스토리 문서 받기 (TXT)", onSelect: () => downloadStory({ ...project, story }) }]} />}
             <button
               onClick={autofill}
               disabled={autofilling}

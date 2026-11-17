@@ -78,7 +78,17 @@ export async function setSaveDirectory(): Promise<string | null> {
     const handle: FileSystemDirectoryHandle = await (window as any).showDirectoryPicker({
       mode: "readwrite",
     });
+    // 이전 폴더의 예약 쓰기가 새 폴더 핸들을 잡지 않도록 먼저 비운다.
+    await flushLocalFileWrites().catch(() => {});
+    const previous = await getHandleFromDB();
     await saveHandleToDB(handle);
+    errors.clear();
+    try { await connectLocalFolder(); }
+    catch (error) {
+      if (previous) await saveHandleToDB(previous);
+      else await deleteHandleFromDB();
+      throw error;
+    }
     return handle.name;
   } catch (err) {
     if ((err as Error).name === "AbortError") return null;
@@ -128,41 +138,117 @@ export async function requestDirectoryPermission(): Promise<boolean> {
 
 // ── Debounced file write ──────────────────────────────────────────────────────
 
-const _pendingSaves = new Map<string, ReturnType<typeof setTimeout>>();
+const pending = new Map<string, { project: Project; timer: ReturnType<typeof setTimeout> }>();
+const errors = new Map<string, string>();
+let writes: Promise<void> = Promise.resolve();
 
-async function _writeToFile(project: Project): Promise<void> {
+function notifySaveState(): void {
+  window.dispatchEvent(new Event("webtoon-local-save-changed"));
+}
+
+// 폴더에는 작품 JSON과 이미지를 함께 담은 복원 가능한 ZIP을 저장한다.
+async function writeProject(project: Project): Promise<void> {
   const dir = await getHandleFromDB();
-  if (!dir) return;
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const perm: string = await (dir as any).queryPermission({ mode: "readwrite" });
-  if (perm !== "granted") return; // 권한 없으면 조용히 스킵
-
-  const safeName = (project.title || "untitled").replace(/[<>:"/\\|?*\n\r]/g, "_").trim();
-  const fileName = `${safeName}_${project.id.slice(0, 8)}.json`;
-
-  const fileHandle: FileSystemFileHandle = await dir.getFileHandle(fileName, { create: true });
-  const writable = await fileHandle.createWritable();
-  await writable.write(JSON.stringify(project, null, 2));
-  await writable.close();
-
-  // 마지막 저장 시각 기록 (step 페이지의 상태 표시용)
+  if (!dir) throw new Error("저장 폴더를 먼저 선택해 주세요.");
+  if (await checkDirectoryPermission() !== "granted") throw new Error("저장 폴더의 쓰기 권한을 다시 허용해 주세요.");
+  const { createProjectBackupBlob } = await import("./projectBackup");
+  const archive = await createProjectBackupBlob([project]);
+  const handle = await dir.getFileHandle(`webtoon_${project.id}.zip`, { create: true });
+  const writer = await handle.createWritable();
+  try {
+    await writer.write(archive);
+    await writer.close();
+  } catch (error) {
+    await writer.abort().catch(() => {});
+    throw error;
+  }
   localStorage.setItem("webtoon_last_autosave", new Date().toISOString());
   window.dispatchEvent(new CustomEvent("webtoon-autosaved", { detail: { projectId: project.id } }));
 }
 
-/**
- * 프로젝트를 선택된 폴더에 저장합니다 (1.5s 디바운스).
- * fire-and-forget — await 하지 않아도 됩니다.
- */
+function enqueue(project: Project): void {
+  writes = writes.catch(() => {}).then(async () => {
+    try { await writeProject(project); errors.delete(project.id); }
+    catch (error) {
+      errors.set(project.id, error instanceof Error ? error.message : "폴더 저장에 실패했어요.");
+      throw error;
+    } finally { notifySaveState(); }
+  });
+  void writes.catch(() => {});
+}
+
+export function getLocalSaveError(): string | null {
+  return errors.values().next().value ?? null;
+}
+
+/** 마지막 편집본만 예약한다. 명시적 저장은 flushLocalFileWrites를 기다린다. */
 export function saveProjectToFile(project: Project): void {
-  const existing = _pendingSaves.get(project.id);
-  if (existing) clearTimeout(existing);
+  const previous = pending.get(project.id);
+  if (previous) clearTimeout(previous.timer);
+  const timer = setTimeout(() => { pending.delete(project.id); enqueue(project); }, 1500);
+  pending.set(project.id, { project, timer });
+}
 
-  const timer = setTimeout(() => {
-    _pendingSaves.delete(project.id);
-    _writeToFile(project).catch(() => {}); // 오류는 조용히 무시
-  }, 1500);
+export async function flushLocalFileWrites(): Promise<void> {
+  for (const [id, item] of pending) {
+    clearTimeout(item.timer);
+    pending.delete(id);
+    enqueue(item.project);
+  }
+  await writes.catch(() => {});
+  const error = getLocalSaveError();
+  if (error) throw new Error(error);
+}
 
-  _pendingSaves.set(project.id, timer);
+/** 폴더를 다시 열 때 ZIP을 브라우저 작업 캐시로 복원하고, 캐시에만 있는 작품을 폴더로 복사한다. */
+export async function connectLocalFolder(): Promise<void> {
+  const dir = await getHandleFromDB();
+  if (!dir || await checkDirectoryPermission() !== "granted") throw new Error("저장 폴더의 쓰기 권한을 허용해 주세요.");
+  const JSZip = (await import("jszip")).default;
+  const { restoreProjectBackup } = await import("./projectBackup");
+  const { getBrowserProjects } = await import("./storage");
+  const folderIds = new Set<string>();
+  const archivedProjects: { file: File; project: Project }[] = [];
+  let archiveCount = 0;
+  const iterable = dir as FileSystemDirectoryHandle & { values(): AsyncIterable<FileSystemHandle> };
+  for await (const entry of iterable.values()) {
+    if (entry.kind !== "file" || !/^webtoon_[0-9a-f-]{36}\.zip$/i.test(entry.name)) continue;
+    if (++archiveCount > 1000) throw new Error("폴더에 웹툰 작품이 너무 많아요.");
+    const file = await (entry as FileSystemFileHandle).getFile();
+    const archive = await JSZip.loadAsync(file, { checkCRC32: true });
+    const projectFile = archive.file("projects.json");
+    if (!projectFile) throw new Error(`${entry.name}의 작품 정보를 읽지 못했어요.`);
+    const parsed = JSON.parse(await projectFile.async("string")) as unknown;
+    if (!Array.isArray(parsed) || parsed.length !== 1 || !parsed[0] || typeof parsed[0] !== "object" ||
+        (parsed[0] as { id?: unknown }).id !== entry.name.slice(8, -4)) {
+      throw new Error(`${entry.name}의 작품 ID가 파일명과 달라요.`);
+    }
+    const project = parsed[0] as Project;
+    if (folderIds.has(project.id)) throw new Error("폴더에 같은 작품 ID가 두 번 있어요.");
+    folderIds.add(project.id);
+    const browser = getBrowserProjects().find(item => item.id === project.id);
+    if (browser && JSON.stringify(browser) !== JSON.stringify(project)) {
+      throw new Error(`브라우저와 폴더의 「${project.title}」 내용이 달라요. 기존 자료를 보존했어요. 다른 폴더를 선택하거나 ZIP을 별도로 백업해 주세요.`);
+    }
+    if (!browser) archivedProjects.push({ file, project });
+  }
+  for (const { file } of archivedProjects) await restoreProjectBackup(file);
+  for (const project of getBrowserProjects()) {
+    if (!folderIds.has(project.id)) saveProjectToFile(project);
+  }
+  await flushLocalFileWrites();
+}
+
+export async function removeProjectFromFile(id: string): Promise<void> {
+  const item = pending.get(id);
+  if (item) { clearTimeout(item.timer); pending.delete(id); }
+  await writes.catch(() => {});
+  const dir = await getHandleFromDB();
+  if (!dir || await checkDirectoryPermission() !== "granted") throw new Error("저장 폴더의 쓰기 권한을 다시 허용해 주세요.");
+  await dir.removeEntry(`webtoon_${id}.zip`).catch((error: unknown) => {
+    if (error instanceof DOMException && error.name === "NotFoundError") return;
+    throw error;
+  });
+  errors.delete(id);
+  notifySaveState();
 }

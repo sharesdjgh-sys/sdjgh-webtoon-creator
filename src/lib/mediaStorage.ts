@@ -1,10 +1,19 @@
 "use client";
 
 import { removeExteriorWhite, removeGreenScreen } from "@/lib/backgroundRemoval";
+import { getOciAsset, getOciAssetProject, getOciSessionEpoch, hasOciToken, listOciAssets, putOciAsset } from "@/lib/ociClient";
 
 const DB_NAME = "webtoon_creator_media";
 const STORE_NAME = "assets";
 const DB_VERSION = 1;
+let cachedEpoch = -1;
+const serverAssetCache = new Map<string, MediaAsset>();
+
+function serverCache(): Map<string, MediaAsset> {
+  const epoch = getOciSessionEpoch();
+  if (cachedEpoch !== epoch) { serverAssetCache.clear(); cachedEpoch = epoch; }
+  return serverAssetCache;
+}
 
 export type MediaOwnerType = "character" | "character-reference" | "storyboard" | "storyboard-layer" | "pose-reference" | "scene";
 
@@ -38,21 +47,67 @@ export async function saveMediaAsset(input: Omit<MediaAsset, "id" | "createdAt">
     createdAt: new Date().toISOString(),
   };
   const database = await openDatabase();
-  return new Promise((resolve, reject) => {
+  const saved = await new Promise<MediaAsset>((resolve, reject) => {
     const transaction = database.transaction(STORE_NAME, "readwrite");
     transaction.objectStore(STORE_NAME).put(asset);
     transaction.oncomplete = () => resolve(asset);
     transaction.onerror = () => reject(transaction.error ?? new Error("이미지를 저장하지 못했습니다."));
   });
+  if (hasOciToken()) await putOciAsset(saved);
+  if (hasOciToken()) serverCache().set(saved.id, saved);
+  return saved;
+}
+
+export async function getLocalMediaAsset(id?: string): Promise<MediaAsset | null> {
+  if (!id) return null;
+  const database = await openDatabase();
+  return new Promise<MediaAsset | null>((resolve) => {
+    const request = database.transaction(STORE_NAME, "readonly").objectStore(STORE_NAME).get(id);
+    request.onsuccess = () => resolve((request.result as MediaAsset | undefined) ?? null);
+    request.onerror = () => resolve(null);
+  });
 }
 
 export async function getMediaAsset(id?: string): Promise<MediaAsset | null> {
   if (!id) return null;
+  if (!hasOciToken()) return getLocalMediaAsset(id);
+  const cached = serverCache().get(id);
+  if (cached) return cached;
+  const projectId = getOciAssetProject(id);
+  if (!projectId) return null;
+  try {
+    const metadata = (await listOciAssets(projectId)).find(asset => asset.id === id);
+    if (!metadata) return null;
+    const asset: MediaAsset = { ...metadata, blob: await getOciAsset(projectId, id) };
+    serverCache().set(id, asset);
+    return asset;
+  } catch { return null; }
+}
+
+/** Read every asset belonging to a project for a complete, restorable backup. */
+export async function getMediaByProject(projectId: string): Promise<MediaAsset[]> {
+  if (hasOciToken()) {
+    const metadata = await listOciAssets(projectId);
+    return Promise.all(metadata.map(async asset => ({ ...asset, blob: await getOciAsset(projectId, asset.id) })));
+  }
   const database = await openDatabase();
-  return new Promise((resolve) => {
-    const request = database.transaction(STORE_NAME, "readonly").objectStore(STORE_NAME).get(id);
-    request.onsuccess = () => resolve((request.result as MediaAsset | undefined) ?? null);
-    request.onerror = () => resolve(null);
+  return new Promise((resolve, reject) => {
+    const request = database.transaction(STORE_NAME, "readonly")
+      .objectStore(STORE_NAME).index("projectId").getAll(IDBKeyRange.only(projectId));
+    request.onsuccess = () => resolve(request.result as MediaAsset[]);
+    request.onerror = () => reject(request.error ?? new Error("작품 이미지를 읽지 못했어요."));
+  });
+}
+
+/** Keep archive IDs intact so project references still resolve after restore. */
+export async function restoreMediaAssets(assets: MediaAsset[]): Promise<void> {
+  if (!assets.length) return;
+  const database = await openDatabase();
+  await new Promise<void>((resolve, reject) => {
+    const transaction = database.transaction(STORE_NAME, "readwrite");
+    for (const asset of assets) transaction.objectStore(STORE_NAME).add(asset);
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => reject(transaction.error ?? new Error("작품 이미지를 복원하지 못했어요."));
   });
 }
 

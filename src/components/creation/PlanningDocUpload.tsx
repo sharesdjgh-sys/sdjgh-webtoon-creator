@@ -1,7 +1,7 @@
 "use client";
 import { useRef, useState } from "react";
 import { FileText, Trash2, Upload } from "lucide-react";
-import { updateProject, type PlanningDoc, type Project } from "@/lib/storage";
+import { updateProject, flushServerWrites, type PlanningDoc, type Project } from "@/lib/storage";
 
 const MAX_CHARS = 30_000;
 
@@ -11,11 +11,17 @@ export default function PlanningDocUpload({ project }: { project: Project }) {
   const [uploading, setUploading] = useState(false);
   const [status, setStatus] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
+  const saveVersion = useRef(0);
 
   const save = (next: PlanningDoc | undefined, message: string) => {
     setDoc(next);
-    try { updateProject(project.id, { planningDoc: next }); setStatus(message); }
-    catch { setStatus("저장하지 못했어요. 저장 공간을 확인해 주세요."); }
+    const version = ++saveVersion.current;
+    try {
+      updateProject(project.id, { planningDoc: next });
+      setStatus("저장 중...");
+      void flushServerWrites().then(() => { if (version === saveVersion.current) setStatus(message); })
+        .catch(error => { if (version === saveVersion.current) setStatus(error instanceof Error ? error.message : "저장하지 못했어요."); });
+    } catch { setStatus("저장하지 못했어요. 저장 공간을 확인해 주세요."); }
   };
 
   const upload = async (file: File) => {

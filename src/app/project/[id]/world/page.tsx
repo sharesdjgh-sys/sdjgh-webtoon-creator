@@ -3,10 +3,11 @@
 import { projectHref } from "@/lib/storage";
 import { use, useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { autofillPayload } from "@/lib/autofillContext";
 import AiFillButton from "@/components/creation/AiFillButton";
 import { mergeAiFields } from "@/lib/aiFill";
-import { getProject, updateProject, type Project } from "@/lib/storage";
+import { getProject, updateProject, flushServerWrites, type Project } from "@/lib/storage";
 import { DEFAULT_WORLD } from "@/lib/creation";
 import StepIndicator from "@/components/progress-tracker/StepIndicator";
 import MobileStepBar from "@/components/MobileStepBar";
@@ -15,6 +16,7 @@ import StageIntro from "@/components/creation/StageIntro";
 import SettingFields from "@/components/creation/SettingFields";
 export default function WorldPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
+  const router = useRouter();
   const [project, setProject] = useState<Project | null>(null);
   const [world, setWorld] = useState(DEFAULT_WORLD);
   const [dirty, setDirty] = useState(false);
@@ -26,10 +28,10 @@ export default function WorldPage({ params }: { params: Promise<{ id: string }> 
     }, 0);
     return () => window.clearTimeout(timer);
   }, [id]);
-  const save = () => {
+  const save = async () => {
     if (!project) return false;
-    try { updateProject(id, { world }); setDirty(false); setStatus("설정집을 저장했어요"); return true; }
-    catch { setStatus("저장하지 못했어요. 저장 공간을 확인해 주세요."); return false; }
+    try { updateProject(id, { world }); await flushServerWrites(); setDirty(false); setStatus("설정집을 저장했어요"); return true; }
+    catch (error) { setStatus(error instanceof Error ? error.message : "저장하지 못했어요."); return false; }
   };
   const change = (key: string, value: string) => { setWorld(current => ({ ...current, [key]: value })); setDirty(true); };
   return <div className="min-h-screen bg-[#FBF9F6]">
@@ -66,7 +68,7 @@ export default function WorldPage({ params }: { params: Promise<{ id: string }> 
           { key: "undecided", label: "미정 / AI 제안 후보", hint: "아직 고르지 않은 이름·관계·반전" },
           { key: "foreshadowing", label: "복선 기록", hint: "단서 / 심은 회차 / 회수할 회차 / 계획·등장·회수 상태" },
         ]} /></section>
-        <div className="flex items-center justify-between gap-4"><p role="status" className="text-xs text-[#82798B]">{status || (dirty ? "저장하지 않은 변경사항이 있어요." : "")}</p><Link href={projectHref(id, "story")} onClick={event => { if (!save()) event.preventDefault(); }} className="rounded-full bg-[#7C3AED] px-5 py-3 text-xs font-bold text-white">저장하고 스토리 구조로 →</Link></div>
+        <div className="flex items-center justify-between gap-4"><p role="status" className="text-xs text-[#82798B]">{status || (dirty ? "저장하지 않은 변경사항이 있어요." : "")}</p><Link href={projectHref(id, "story")} onClick={event => { event.preventDefault(); void save().then(ok => { if (ok) router.push(projectHref(id, "story")); }); }} className="rounded-full bg-[#7C3AED] px-5 py-3 text-xs font-bold text-white">저장하고 스토리 구조로 →</Link></div>
       </main>
     </div>
     {project && <MobileChatSheet step="story" initialMessage="세계관을 함께 정해요. 이 세계에서 가능한 특별한 일은 무엇인가요?" initialMessages={project.worldChat} onMessagesChange={worldChat => updateProject(id, { worldChat })} />}

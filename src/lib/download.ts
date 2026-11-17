@@ -1,4 +1,4 @@
-import { type Project, type Episode, type Cut, getProjects, saveProjects } from "./storage";
+import { type Project, type Episode, type Cut, flushServerWrites, getProjects, saveProjects } from "./storage";
 import { CHARACTER_STORY_FIELDS, STORY_FIELDS, EPISODE_FIELDS } from "./creation";
 
 function triggerDownload(filename: string, content: string, mimeType: string) {
@@ -19,21 +19,27 @@ export function exportAllProjects() {
   triggerDownload(`webtoon_backup_${date}.json`, data, "application/json");
 }
 
-export function importProjects(file: File): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      try {
-        const parsed = JSON.parse(e.target?.result as string);
-        if (!Array.isArray(parsed)) throw new Error();
-        saveProjects(parsed);
-        resolve();
-      } catch {
-        reject(new Error("올바른 백업 파일이 아니에요."));
-      }
-    };
-    reader.readAsText(file);
-  });
+/** Legacy JSON backups do not include images. Merge by ID without replacing existing work. */
+export async function importProjects(file: File): Promise<{ added: number; skipped: number }> {
+  let parsed: unknown;
+  try { parsed = JSON.parse(await file.text()); }
+  catch { throw new Error("올바른 백업 파일이 아니에요."); }
+  if (!Array.isArray(parsed) || !parsed.every((project) => project && typeof project.id === "string" && typeof project.title === "string")) {
+    throw new Error("올바른 백업 파일이 아니에요.");
+  }
+  const existing = getProjects();
+  const ids = new Set(existing.map((project) => project.id));
+  const additions: Project[] = [];
+  for (const project of parsed as Project[]) {
+    if (ids.has(project.id)) continue;
+    ids.add(project.id);
+    additions.push(project);
+  }
+  if (additions.length) {
+    saveProjects([...existing, ...additions]);
+    await flushServerWrites();
+  }
+  return { added: additions.length, skipped: parsed.length - additions.length };
 }
 
 // ─── 스텝별 텍스트 다운로드 ────────────────────────────────────

@@ -8,10 +8,10 @@ import { useRouter } from "next/navigation";
 import { Input } from "@/components/ui/input";
 import { workflowProgress } from "@/lib/workflowProgress";
 import { STEPS, GENRES } from "@/lib/utils";
-import { Plus, ChevronRight, Sparkles, X, Trophy, Download, Upload, Trash2, User, Pencil, Search, Folder, FolderOpen } from "lucide-react";
-import { getProjects, createProject, deleteProject, updateProject, type Project } from "@/lib/storage";
-import { exportAllProjects, importProjects } from "@/lib/download";
-import { setSaveDirectory, getSaveDirectoryName, checkDirectoryPermission, requestDirectoryPermission, isCrossOriginEmbedded } from "@/lib/fileSystemStorage";
+import { Plus, ChevronRight, Sparkles, X, Trophy, Download, Upload, Trash2, User, Pencil, Search } from "lucide-react";
+import { getProjects, createProject, deleteProject, updateProject, flushServerWrites, isServerStorageActive, type Project } from "@/lib/storage";
+import { importProjects } from "@/lib/download";
+import { downloadProjectBackup, restoreProjectBackup } from "@/lib/projectBackup";
 
 const STEP_ROUTES = STEPS.map(step => step.route);
 
@@ -63,50 +63,46 @@ export default function DashboardPage() {
   const [creating, setCreating] = useState(false);
   const [search, setSearch] = useState("");
   const [sortBy, setSortBy] = useState<"recent" | "progress" | "deadline">("recent");
-  const [saveDirName, setSaveDirName] = useState<string | null>(null);
-  const [folderPermission, setFolderPermission] = useState<"granted" | "prompt" | "denied" | "none">("none");
-  const [folderMode, setFolderMode] = useState<"embedded" | "supported" | "unsupported">("unsupported");
+  const [backupBusy, setBackupBusy] = useState<string | null>(null);
+  const [backupStatus, setBackupStatus] = useState("");
   const importRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
       setProjects(getProjects());
-      Promise.all([getSaveDirectoryName(), checkDirectoryPermission()]).then(([name, permission]) => {
-        setSaveDirName(name);
-        setFolderPermission(permission);
-      });
-      setFolderMode(isCrossOriginEmbedded() ? "embedded" : "showDirectoryPicker" in window ? "supported" : "unsupported");
     }, 0);
     return () => window.clearTimeout(timer);
   }, []);
-
-  const handleSetFolder = async () => {
-    try {
-      const name = await setSaveDirectory();
-      if (name) {
-        setSaveDirName(name);
-        setFolderPermission(await checkDirectoryPermission());
-      }
-    } catch (err) {
-      alert(err instanceof Error ? err.message : "폴더 설정 실패");
-    }
-  };
-
-  const handleRestoreFolderPermission = async () => {
-    await requestDirectoryPermission();
-    setFolderPermission(await checkDirectoryPermission());
-  };
 
   const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     try {
-      await importProjects(file);
+      const result = file.name.toLowerCase().endsWith(".zip")
+        ? await restoreProjectBackup(file) : await importProjects(file);
       setProjects(getProjects());
+      setBackupStatus(`${result.added}개 작품을 복원했어요.${result.skipped ? ` 같은 ID의 기존 작품 ${result.skipped}개는 보존했어요.` : ""}${file.name.toLowerCase().endsWith(".json") ? " 이전 JSON 백업에는 이미지가 포함되지 않습니다." : ""}`);
     } catch (err) {
       alert(err instanceof Error ? err.message : "가져오기 실패");
     }
     e.target.value = "";
+  };
+
+  const handleBackup = async (selected: Project[], key: string) => {
+    setBackupBusy(key);
+    setBackupStatus("");
+    try {
+      const date = new Date().toISOString().slice(0, 10);
+      const name = key === "all" ? `webtoon_all_${date}.zip`
+        : `webtoon_${selected[0].title.replace(/[<>:"/\\|?*\n\r]/g, "_").slice(0, 60)}_${date}.zip`;
+      await flushServerWrites();
+      await downloadProjectBackup(selected, name);
+      setBackupStatus("작품과 이미지를 담은 백업 파일 다운로드를 시작했어요.");
+    } catch (err) {
+      setBackupStatus(err instanceof Error ? err.message : "백업 파일을 만들지 못했어요.");
+    } finally {
+      setBackupBusy(null);
+    }
   };
 
   const openCreate = () => {
@@ -123,23 +119,27 @@ export default function DashboardPage() {
     setShowModal(true);
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!form.title) return;
     setCreating(true);
-    if (editingId) {
-      updateProject(editingId, form);
-      setProjects(getProjects());
-      setShowModal(false);
-      setCreating(false);
-    } else {
-      const p = createProject(form);
-      setProjects(getProjects());
-      setShowModal(false);
-      setForm(EMPTY_FORM);
-      setCreating(false);
-      router.push(projectHref(p.id, "idea"));
-    }
+    try {
+      if (editingId) {
+        updateProject(editingId, form);
+        await flushServerWrites();
+        setProjects(getProjects());
+        setShowModal(false);
+      } else {
+        const p = createProject(form);
+        await flushServerWrites();
+        setProjects(getProjects());
+        setShowModal(false);
+        setForm(EMPTY_FORM);
+        router.push(projectHref(p.id, "idea"));
+      }
+    } catch (error) {
+      setBackupStatus(error instanceof Error ? error.message : "서버에 저장하지 못했어요.");
+    } finally { setCreating(false); }
   };
 
   const selectClass =
@@ -177,18 +177,19 @@ export default function DashboardPage() {
             <span className="text-sm font-semibold text-[#1A1A1A] tracking-tight">웹툰 메이커 AI</span>
           </Link>
           <div className="flex items-center gap-2">
-            <input ref={importRef} type="file" accept=".json" className="hidden" onChange={handleImport} />
+            <input ref={importRef} type="file" accept=".zip,.json" className="hidden" onChange={handleImport} />
             <button
               onClick={() => importRef.current?.click()}
               className="flex items-center gap-1.5 text-xs text-[#7A7067] hover:text-[#1A1A1A] px-3 py-1.5 rounded-full border border-[#EBE7E0] hover:bg-[#F4F1EC] transition-all duration-200"
             >
-              <Upload className="w-3 h-3" /> 가져오기
+              <Upload className="w-3 h-3" /> 백업 복원
             </button>
             <button
-              onClick={exportAllProjects}
+              onClick={() => void handleBackup(projects, "all")}
+              disabled={backupBusy !== null || projects.length === 0}
               className="flex items-center gap-1.5 text-xs text-[#7A7067] hover:text-[#1A1A1A] px-3 py-1.5 rounded-full border border-[#EBE7E0] hover:bg-[#F4F1EC] transition-all duration-200"
             >
-              <Download className="w-3 h-3" /> 내보내기
+              <Download className="w-3 h-3" /> {backupBusy === "all" ? "백업 만드는 중" : "전체 작품 백업"}
             </button>
             <Link href="/guide" className="text-xs text-[#7A7067] hover:text-[#1A1A1A] transition-colors px-3 py-1.5">
               가이드
@@ -196,6 +197,8 @@ export default function DashboardPage() {
           </div>
         </div>
       </header>
+
+      {backupStatus && <p role="status" className="mx-auto max-w-5xl px-6 pt-3 text-xs text-[#514A65]">{backupStatus}</p>}
 
       <main className="max-w-5xl mx-auto px-6 py-10">
         {/* Welcome */}
@@ -305,39 +308,7 @@ export default function DashboardPage() {
                     onChange={(e) => setForm((f) => ({ ...f, targetCompetition: e.target.value }))}
                   />
                 </div>
-                {!editingId && (
-                  <div>
-                    <label className="block text-xs font-semibold text-[#1A1A1A] mb-1.5">자동저장 폴더 (선택)</label>
-                    {folderMode === "embedded" ? (
-                      <div className="rounded-xl border border-[#DDD6FE] bg-[#F8F5FF] p-3 text-xs leading-5 text-[#514A65]">
-                        <p>스마트 캠퍼스 안에서는 브라우저가 폴더 선택을 막아요. 작품 내용은 이 화면의 브라우저 저장 공간에 저장돼요. 폴더 자동저장은 폴더 선택을 지원하는 브라우저에서 새 탭으로 작업실을 열어 설정해 주세요.</p>
-                        <a href="/dashboard" target="_blank" rel="noopener noreferrer" className="mt-2 inline-flex items-center gap-1 font-semibold text-[#6D28D9] underline underline-offset-2">새 탭에서 작업실 열기 <ChevronRight className="h-3.5 w-3.5" /></a>
-                        <p className="mt-2">이 화면에서 만든 작품은 상단 ‘내보내기’로 백업한 뒤 새 탭의 ‘가져오기’로 옮겨 주세요. 두 화면의 브라우저 저장 공간은 분리될 수 있어요.</p>
-                      </div>
-                    ) : folderMode === "unsupported" ? (
-                      <p className="rounded-xl border border-[#EBE7E0] bg-[#F4F1EC] p-3 text-xs leading-5 text-[#625B72]">이 브라우저는 폴더 자동저장을 지원하지 않아요. 작품을 저장하고 상단 ‘내보내기’로 백업할 수 있어요.</p>
-                    ) : saveDirName ? (
-                      <div className="rounded-xl border border-[#EBE7E0] bg-[#F4F1EC] px-4 py-3">
-                        <div className="flex items-center gap-2">
-                          <FolderOpen className="h-4 w-4 flex-shrink-0 text-green-600" />
-                          <span className="min-w-0 flex-1 truncate text-sm text-[#1A1A1A]">{saveDirName}</span>
-                          <button type="button" onClick={handleSetFolder} className="flex-shrink-0 text-xs font-medium text-[#7C3AED] hover:text-[#6D28D9]">변경</button>
-                        </div>
-                        {folderPermission !== "granted" && <button type="button" onClick={handleRestoreFolderPermission} className="mt-2 text-xs font-semibold text-[#6D28D9] underline underline-offset-2">폴더 쓰기 권한 다시 허용</button>}
-                      </div>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={handleSetFolder}
-                        className="w-full flex items-center gap-2 h-11 px-4 rounded-xl border border-dashed border-[#EBE7E0] text-[#ADA8A0] hover:border-[#7C3AED]/40 hover:text-[#7C3AED] hover:bg-[#F3EEFF] transition-all duration-200"
-                      >
-                        <Folder className="w-4 h-4 flex-shrink-0" />
-                        <span className="text-sm">폴더 선택하기</span>
-                        <span className="text-xs text-[#D4CFC9] ml-auto">프로젝트를 파일로 자동저장해요</span>
-                      </button>
-                    )}
-                  </div>
-                )}
+                {!editingId && <p className="text-xs text-[#625B72]">{isServerStorageActive() ? "스마트 캠퍼스 계정의 서버에 저장됩니다." : "연결한 로컬 폴더에 작품과 이미지가 함께 저장됩니다."}</p>}
                 <div className="flex gap-3 pt-2">
                   <button
                     type="submit"
@@ -424,12 +395,12 @@ export default function DashboardPage() {
                         <div className="relative w-5 h-5">
                           <ChevronRight className="w-4 h-4 text-[#EBE7E0] group-hover:opacity-0 transition-all duration-200 absolute inset-0" />
                           <button
-                            onClick={(e) => {
+                            onClick={async (e) => {
                               e.preventDefault();
                               e.stopPropagation();
                               if (confirm(`"${p.title}" 프로젝트를 삭제할까요? 이 작업은 되돌릴 수 없어요.`)) {
-                                deleteProject(p.id);
-                                setProjects(getProjects());
+                                try { await deleteProject(p.id); setProjects(getProjects()); }
+                                catch (error) { setBackupStatus(error instanceof Error ? error.message : "작품을 삭제하지 못했어요."); }
                               }
                             }}
                             className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-all duration-200 flex items-center justify-center rounded hover:bg-red-50"
@@ -471,6 +442,13 @@ export default function DashboardPage() {
                     </div>
                   </div>
                   </Link>
+                  <div className="mt-1 flex justify-end">
+                    <button type="button" disabled={backupBusy !== null}
+                      onClick={() => void handleBackup([p], p.id)}
+                      className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium text-[#6D28D9] hover:bg-[#F3EEFF] disabled:opacity-50">
+                      <Download className="h-3.5 w-3.5" /> {backupBusy === p.id ? "백업 만드는 중" : "로컬 저장 (작품·이미지 ZIP)"}
+                    </button>
+                  </div>
                 </div>
               );
             })}

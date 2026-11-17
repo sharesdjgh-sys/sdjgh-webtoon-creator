@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Black_Han_Sans, Gaegu, Instrument_Serif, Jua, Nanum_Myeongjo, Nanum_Pen_Script, Noto_Sans_KR } from "next/font/google";
 import "./globals.css";
 import DesktopAccessGate from "@/components/DesktopAccessGate";
+import ServerStorageGate from "@/components/ServerStorageGate";
 
 const instrumentSerif = Instrument_Serif({
   weight: "400",
@@ -32,7 +33,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css"
         />
       </head>
-      <body className="min-h-full flex flex-col"><DesktopAccessGate>{children}</DesktopAccessGate></body>
+      <body className="min-h-full flex flex-col"><DesktopAccessGate><ServerStorageGate>{children}</ServerStorageGate></DesktopAccessGate></body>
     </html>
   );
 }

@@ -1,6 +1,7 @@
 import { normalizeWebtoonShot } from "@/lib/webtoonShots";
 import { ensureProjectAddresses } from "@/lib/projectAddress";
 import { DEFAULT_BRIEF, DEFAULT_WORLD, type CreativeBrief, type WorldBible } from "@/lib/creation";
+import { deleteOciProject, getOciAssetProject, getOciSessionEpoch, putOciAsset, putOciProject, type ServerProjectRecord } from "@/lib/ociClient";
 
 export type ChatMessage = {
   role: "user" | "assistant";
@@ -268,6 +269,110 @@ export type Project = {
 };
 
 const KEY = "webtoon_projects";
+let serverProjects: Project[] | null = null;
+const serverRevisions = new Map<string, number>();
+const uploadedAssets = new Set<string>();
+const serverErrors = new Map<string, string>();
+let serverQueue: Promise<void> = Promise.resolve();
+let localScheduling: Promise<void> = Promise.resolve();
+
+function notifyProjectsChanged(): void {
+  if (typeof window !== "undefined") window.dispatchEvent(new Event("webtoon-projects-changed"));
+}
+
+function referencedMediaIds(value: unknown, found = new Set<string>()): Set<string> {
+  if (!value || typeof value !== "object") return found;
+  if (Array.isArray(value)) {
+    for (const item of value) referencedMediaIds(item, found);
+  } else {
+    for (const [key, item] of Object.entries(value)) {
+      if (/AssetIds?$/.test(key) || key === "assetId") {
+        for (const id of Array.isArray(item) ? item : [item]) {
+          if (typeof id === "string" && id.startsWith("media-")) found.add(id);
+        }
+      } else referencedMediaIds(item, found);
+    }
+  }
+  return found;
+}
+
+function queueServerWrite(id: string, write: () => Promise<void>): void {
+  const epoch = getOciSessionEpoch();
+  serverQueue = serverQueue.catch(() => {}).then(async () => {
+    // 재로그인·계정 전환 후에는 이전 계정의 대기 중인 쓰기를 새 토큰으로 보내지 않는다.
+    if (epoch !== getOciSessionEpoch()) return;
+    try { await write(); serverErrors.delete(id); }
+    catch (error) {
+      serverErrors.set(id, error instanceof Error ? error.message : "서버 저장에 실패했어요.");
+      throw error;
+    } finally { notifyProjectsChanged(); }
+  });
+  // 자동 저장 실패도 전역 상태에 남겨 화면에 표시한다.
+  void serverQueue.catch(() => {});
+}
+
+async function syncProject(project: Project): Promise<void> {
+  const { getLocalMediaAsset } = await import("@/lib/mediaStorage");
+  for (const assetId of referencedMediaIds(project)) {
+    if (uploadedAssets.has(assetId) || getOciAssetProject(assetId) === project.id) continue;
+    const asset = await getLocalMediaAsset(assetId);
+    if (asset) { await putOciAsset(asset); uploadedAssets.add(assetId); }
+  }
+  const revision = await putOciProject(project, serverRevisions.get(project.id) ?? 0);
+  serverRevisions.set(project.id, revision);
+}
+
+export function isServerStorageActive(): boolean { return serverProjects !== null; }
+export function getServerSaveError(): string | null { return serverErrors.values().next().value ?? null; }
+export async function retryServerWrites(): Promise<void> {
+  if (serverProjects === null) return;
+  for (const id of serverErrors.keys()) {
+    const project = serverProjects.find(item => item.id === id);
+    if (project) queueServerWrite(id, () => syncProject(project));
+    else if (serverRevisions.has(id)) queueServerWrite(id, async () => {
+      const revision = serverRevisions.get(id);
+      if (revision === undefined) return;
+      await deleteOciProject(id, revision);
+      serverRevisions.delete(id);
+    });
+  }
+  await flushServerWrites();
+}
+export async function flushServerWrites(): Promise<void> {
+  if (serverProjects === null) {
+    await localScheduling;
+    const { flushLocalFileWrites } = await import("./fileSystemStorage");
+    await flushLocalFileWrites();
+    return;
+  }
+  let pending: Promise<void>;
+  do {
+    pending = serverQueue;
+    await pending.catch(() => {});
+  } while (pending !== serverQueue);
+  const error = getServerSaveError();
+  if (error) throw new Error(error);
+}
+
+export function activateServerProjects(records: ServerProjectRecord[]): void {
+  serverProjects = ensureProjectAddresses(records.map(({ project }) => normalizeProject(project)));
+  serverRevisions.clear();
+  uploadedAssets.clear();
+  serverErrors.clear();
+  for (const { project, revision } of records) {
+    serverRevisions.set(project.id, revision);
+    for (const id of referencedMediaIds(project)) uploadedAssets.add(id);
+  }
+  notifyProjectsChanged();
+}
+
+export function deactivateServerProjects(): void {
+  serverProjects = null;
+  serverRevisions.clear();
+  uploadedAssets.clear();
+  serverErrors.clear();
+  notifyProjectsChanged();
+}
 
 export const DEFAULT_ART_DIRECTION: ArtDirection = {
   preset: "clean-webtoon",
@@ -369,12 +474,13 @@ function normalizeProject(raw: Project): Project {
 /** 폴더가 설정되어 있으면 파일로도 저장 (fire-and-forget) */
 function autoSaveToFile(project: Project): void {
   if (typeof window === "undefined") return;
-  import("@/lib/fileSystemStorage")
-    .then(({ saveProjectToFile }) => saveProjectToFile(project))
-    .catch(() => {});
+  localScheduling = localScheduling.then(async () => {
+    const { saveProjectToFile } = await import("@/lib/fileSystemStorage");
+    saveProjectToFile(project);
+  });
 }
 
-export function getProjects(): Project[] {
+export function getBrowserProjects(): Project[] {
   if (typeof window === "undefined") return [];
   try {
     const stored = localStorage.getItem(KEY) ?? "[]";
@@ -389,9 +495,39 @@ export function getProjects(): Project[] {
   }
 }
 
+export function getProjects(): Project[] {
+  return serverProjects ?? getBrowserProjects();
+}
+
 export function saveProjects(projects: Project[]): void {
-  localStorage.setItem(KEY, JSON.stringify(ensureProjectAddresses(projects.map(normalizeProject))));
-  window.dispatchEvent?.(new Event("webtoon-projects-changed"));
+  const normalized = ensureProjectAddresses(projects.map(normalizeProject));
+  if (serverProjects !== null) {
+    const before = new Map(serverProjects.map(project => [project.id, project]));
+    const after = new Map(normalized.map(project => [project.id, project]));
+    serverProjects = normalized;
+    for (const project of normalized) {
+      if (JSON.stringify(before.get(project.id)) !== JSON.stringify(project)) {
+        queueServerWrite(project.id, () => syncProject(project));
+      }
+    }
+    for (const previous of before.values()) {
+      if (!after.has(previous.id)) {
+        if (serverRevisions.has(previous.id)) queueServerWrite(previous.id, async () => {
+          const revision = serverRevisions.get(previous.id);
+          if (revision === undefined) return;
+          await deleteOciProject(previous.id, revision);
+          serverRevisions.delete(previous.id);
+        });
+      }
+    }
+  } else {
+    const before = new Map(getBrowserProjects().map(project => [project.id, project]));
+    localStorage.setItem(KEY, JSON.stringify(normalized));
+    for (const project of normalized) {
+      if (JSON.stringify(before.get(project.id)) !== JSON.stringify(project)) autoSaveToFile(project);
+    }
+  }
+  notifyProjectsChanged();
 }
 
 export function getProject(id: string): Project | null {
@@ -406,14 +542,13 @@ export function projectHref(project: string | Project, stage: string): string {
 }
 
 export function updateProject(id: string, updates: Partial<Project>): void {
-  const projects = getProjects();
+  const projects = [...getProjects()];
   const idx = projects.findIndex((p) => p.id === id);
   if (idx !== -1) {
     const creativeKeys = ["brief", "planningDoc", "world", "story", "characters", "episodes", "artDirection"] as const;
     const changed = creativeKeys.some(key => key in updates && JSON.stringify(updates[key]) !== JSON.stringify(projects[idx][key]));
     projects[idx] = { ...projects[idx], ...updates, ...(changed ? { isCompleted: false, reviewChecks: {} } : {}) };
     saveProjects(projects);
-    autoSaveToFile(projects[idx]);
   }
 }
 
@@ -443,13 +578,18 @@ export function createProject(data: {
   const projects = getProjects();
   project.shortId = ensureProjectAddresses([...projects, project]).at(-1)!.shortId;
   saveProjects([project, ...projects]);
-  autoSaveToFile(project);
   return project;
 }
 
-export function deleteProject(id: string): void {
+export async function deleteProject(id: string): Promise<void> {
+  if (!isServerStorageActive()) {
+    const { removeProjectFromFile } = await import("./fileSystemStorage");
+    await removeProjectFromFile(id);
+  }
   saveProjects(getProjects().filter((p) => p.id !== id));
-  import("@/lib/mediaStorage")
-    .then(({ deleteMediaByProject }) => deleteMediaByProject(id))
-    .catch(() => {});
+  await flushServerWrites();
+  if (!isServerStorageActive()) {
+    const { deleteMediaByProject } = await import("@/lib/mediaStorage");
+    await deleteMediaByProject(id);
+  }
 }

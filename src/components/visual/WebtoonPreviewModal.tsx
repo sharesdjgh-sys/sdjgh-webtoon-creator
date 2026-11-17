@@ -138,14 +138,14 @@ export default function WebtoonPreviewModal({ open, title, cuts, onClose }: Prop
       {warnings.length > 0 && <p role="alert" className="text-amber-200">{warnings.join(", ")}컷의 말풍선·자막이 영역을 벗어났습니다. 실제 그림은 표시하며, 식자 위치를 조정한 뒤 다운로드할 수 있습니다.</p>}
       <p>{ready ? "아래로 스크롤하면 한 화 전체가 이어집니다." : "완성 그림이 있는 컷부터 표시합니다."}</p>
       <div className="space-y-3 border-t border-white/10 pt-4">
-        <button type="button" disabled={exporting || !ready} onClick={() => exportImages()} className="w-full rounded-xl bg-[#7C3AED] px-4 py-2.5 text-xs font-semibold text-white disabled:opacity-50">{exporting ? "원고 파일 만드는 중…" : "이 화 단일 PNG 만들기"}</button>
-        <button type="button" disabled={exporting || !ready} onClick={() => exportImages(true)} className="w-full rounded-xl bg-white/10 px-4 py-2.5 text-xs font-semibold disabled:opacity-50">긴 원고 분할 PNG · ZIP 다운로드</button>
+        <button type="button" disabled={exporting || !ready} onClick={() => exportImages()} className="w-full rounded-xl bg-[#7C3AED] px-4 py-2.5 text-xs font-semibold text-white disabled:opacity-50">{exporting ? "원고 파일 만드는 중…" : "최종 원고 PNG 만들기"}</button>
+        <button type="button" disabled={exporting || !ready} onClick={() => exportImages(true)} className="w-full rounded-xl bg-white/10 px-4 py-2.5 text-xs font-semibold disabled:opacity-50">긴 원고 PNG 묶음 만들기</button>
         {qualityNotes.slice(0,8).map((note, index) => <p key={index} className="text-amber-200">{note}</p>)}
         <p className="text-white/50">모든 컷과 여백·말풍선·자막을 현재 순서대로 이어 붙인 세로 PNG 한 장을 만듭니다. 프로젝트 저장은 별도입니다.</p>
       </div>
     {(error || file) && <div className="flex flex-wrap gap-3 rounded-xl bg-white p-3 text-xs text-[#373140]" role="status">
       {error || <span>{file?.extension === "zip" ? "원고를 끊김 없이 분할한 PNG 묶음입니다." : `한 화 전체를 합친 ${file?.width}px × ${file?.height.toLocaleString()}px PNG입니다.`}</span>}
-      {file && <a href={file.url} download={`${filename}.${file.extension ?? "png"}`} className="rounded-full bg-[#7C3AED] px-4 py-2 font-semibold text-white">원고 다운로드</a>}
+      {file && <a href={file.url} download={`${filename}.${file.extension ?? "png"}`} className="rounded-full bg-[#7C3AED] px-4 py-2 font-semibold text-white">최종 원고 받기</a>}
     </div>}
     </aside>
     <div ref={reader} aria-label="한 화 세로 스크롤 원고" className="row-start-2 min-h-0 min-w-0 overflow-auto overscroll-contain lg:col-start-1" style={{ overflowAnchor: "none" }}>

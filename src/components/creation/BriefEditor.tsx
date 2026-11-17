@@ -1,15 +1,21 @@
 "use client";
-import { useState } from "react";
-import { updateProject, type Project } from "@/lib/storage";
+import { useRef, useState } from "react";
+import { updateProject, flushServerWrites, type Project } from "@/lib/storage";
 import { DEFAULT_BRIEF } from "@/lib/creation";
 import SettingFields from "./SettingFields";
 export default function BriefEditor({ project }: { project: Project }) {
   const [brief, setBrief] = useState({ ...DEFAULT_BRIEF, ...project.brief });
   const [status, setStatus] = useState("");
+  const saveVersion = useRef(0);
   const change = (key: string, value: string) => {
     const next = { ...brief, [key]: value }; setBrief(next);
-    try { updateProject(project.id, { brief: next }); setStatus("기획이 저장되었어요"); }
-    catch { setStatus("저장하지 못했어요. 저장 공간을 확인해 주세요."); }
+    const version = ++saveVersion.current;
+    try {
+      updateProject(project.id, { brief: next });
+      setStatus("저장 중...");
+      void flushServerWrites().then(() => { if (version === saveVersion.current) setStatus("기획이 저장되었어요"); })
+        .catch(error => { if (version === saveVersion.current) setStatus(error instanceof Error ? error.message : "저장하지 못했어요."); });
+    } catch { setStatus("저장하지 못했어요. 저장 공간을 확인해 주세요."); }
   };
   return <section className="rounded-2xl border border-[#EBE7E0] bg-white p-5 space-y-5">
     <div><h2 className="text-sm font-bold">나의 작품 기획 카드</h2><p className="mt-1 text-xs text-[#82798B]">떠오르는 것부터 적어요. 자동 저장되고 AI가 참고해요.</p></div>

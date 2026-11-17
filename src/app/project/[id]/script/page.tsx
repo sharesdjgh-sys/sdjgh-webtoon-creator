@@ -4,6 +4,7 @@ import { projectHref } from "@/lib/storage";
 
 import { useState, useEffect, use, useRef } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import AiFillButton from "@/components/creation/AiFillButton";
 import { mergeAiFields } from "@/lib/aiFill";
 import SettingFields from "@/components/creation/SettingFields";
@@ -18,9 +19,10 @@ import EpisodeList from "@/components/progress-tracker/EpisodeList";
 import StepIndicator from "@/components/progress-tracker/StepIndicator";
 import MobileChatSheet, { type MobileChatSheetHandle } from "@/components/mobile/MobileChatSheet";
 import MobileStepBar from "@/components/MobileStepBar";
-import { Save, ArrowRight, ArrowLeft, Sparkles, Check, Download, FileText, ChevronDown, ChevronUp, Users, Wand2, Eye, PenLine, RefreshCw } from "lucide-react";
+import { Save, ArrowRight, ArrowLeft, Sparkles, Check, FileText, ChevronDown, ChevronUp, Users, Wand2, Eye, PenLine, RefreshCw } from "lucide-react";
+import StageDocumentMenu from "@/components/creation/StageDocumentMenu";
 import ReactMarkdown from "react-markdown";
-import { getProject, updateProject, type Episode, type Cut, type Project, type Character, type ChatMessage } from "@/lib/storage";
+import { getProject, updateProject, flushServerWrites, type Episode, type Cut, type Project, type Character, type ChatMessage } from "@/lib/storage";
 import { downloadEpisode, downloadAllEpisodes } from "@/lib/download";
 import AiActivityBanner from "@/components/AiActivityBanner";
 
@@ -61,6 +63,7 @@ function CharacterPanel({ characters }: { characters: Character[] }) {
 
 export default function ScriptPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
+  const router = useRouter();
   const [project, setProject] = useState<Project | null>(null);
   const [episodes, setEpisodes] = useState<Episode[]>([
     { episodeNumber: 1, title: "", synopsis: "", cuts: [], script: "", isCompleted: false },
@@ -128,16 +131,18 @@ export default function ScriptPage({ params }: { params: Promise<{ id: string }>
     setIsDirty(true);
   };
 
-  const save = () => {
+  const save = async () => {
     setSaving(true);
-    updateProject(id, {
-      episodes,
-      currentStep: Math.max(5, project?.currentStep ?? 1),
-    });
-    setSaving(false);
-    setSaved(true);
-    setIsDirty(false);
-    setTimeout(() => setSaved(false), 2000);
+    try {
+      updateProject(id, { episodes, currentStep: Math.max(5, project?.currentStep ?? 1) });
+      await flushServerWrites();
+      setSaved(true); setIsDirty(false);
+      setTimeout(() => setSaved(false), 2000);
+      return true;
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "저장하지 못했어요.");
+      return false;
+    } finally { setSaving(false); }
   };
 
   const autofill = async () => {
@@ -196,22 +201,10 @@ export default function ScriptPage({ params }: { params: Promise<{ id: string }>
             <span className="text-xs font-semibold text-[#1A1A1A] truncate">{project?.title ?? "..."}</span>
           </div>
           <div className="flex items-center gap-2 flex-shrink-0">
-            {project && (
-              <>
-                <button
-                  onClick={() => downloadEpisode({ ...project, episodes }, activeEp)}
-                  className="hidden sm:flex items-center gap-1.5 text-xs font-medium px-3 py-2 rounded-full border border-[#EBE7E0] text-[#7A7067] hover:bg-[#F4F1EC] transition-all duration-200"
-                >
-                  <Download className="w-3.5 h-3.5" /> 이 화
-                </button>
-                <button
-                  onClick={() => downloadAllEpisodes({ ...project, episodes })}
-                  className="hidden sm:flex items-center gap-1.5 text-xs font-medium px-3 py-2 rounded-full border border-[#EBE7E0] text-[#7A7067] hover:bg-[#F4F1EC] transition-all duration-200"
-                >
-                  <Download className="w-3.5 h-3.5" /> 전체
-                </button>
-              </>
-            )}
+            {project && <StageDocumentMenu actions={[
+              { label: "이 화 대본 받기 (TXT)", onSelect: () => downloadEpisode({ ...project, episodes }, activeEp) },
+              { label: "전체 대본 받기 (TXT)", onSelect: () => downloadAllEpisodes({ ...project, episodes }) },
+            ]} />}
             <button
               onClick={save}
               disabled={saving}
@@ -394,7 +387,7 @@ export default function ScriptPage({ params }: { params: Promise<{ id: string }>
               >
                 저장
               </button>
-              <Link href={projectHref(id, "episodes")} onClick={save}>
+              <Link href={projectHref(id, "episodes")} onClick={event => { event.preventDefault(); void save().then(ok => { if (ok) router.push(projectHref(id, "episodes")); }); }}>
                 <button className="flex items-center gap-2 text-xs font-semibold px-5 py-2.5 rounded-full bg-[#7C3AED] text-white hover:bg-[#6D28D9] transition-all duration-300">
                   다음: 콘티 · 작화 <ArrowRight className="w-3.5 h-3.5" />
                 </button>

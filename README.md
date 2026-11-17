@@ -1,36 +1,32 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# 웹툰 메이커 AI
 
-## Getting Started
+- 버전: `0.1.0` (`package.json` 기준)
+- 대상: PC·태블릿에서 웹툰을 만드는 학생과 교사
+- 목적: 아이디어, 캐릭터, 세계관, 스토리, 대본, 콘티, 검수를 한 작업실에서 이어 간다.
 
-First, run the development server:
+## 주요 기능과 사용
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+스마트 캠퍼스에서 열면 로그인 계정에 연결된 서버 저장소를 사용한다. 직접 주소로 열면 먼저 브라우저가 허용하는 로컬 폴더를 선택하고, 작품과 이미지를 담은 ZIP을 그 폴더에 자동 저장한다. 두 저장 공간은 서로 분리된다. 대시보드에서 작품 ZIP을 내려받거나 복원할 수 있다.
+
+```powershell
+npm.cmd ci
+npm.cmd run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+로컬 개발 주소는 `http://localhost:3000`이다. 프로덕션 빌드는 `npm.cmd run build`로 검사한다.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## 설계와 보안
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+- 프런트엔드: Next.js 16, React 19, TypeScript. 웹 배포는 Vercel이다.
+- 서버 저장: 스마트 캠퍼스의 고정 출처 SSO 메시지로 받은 토큰을 브라우저 메모리에만 두고, 스마트 캠퍼스 `/api/webtoon`이 매 요청 현재 세션·앱 권한·등록 식별값을 검사한다. 계정 보안 모드가 꺼져 있거나 저장 디렉터리가 없으면 API가 닫힌다.
+- 외부 폴더 저장: 폴더 핸들은 브라우저 IndexedDB에 보관하고 다시 열 때 권한을 확인한다. 작품 ZIP에는 JSON과 이미지 원본이 함께 들어가며, 충돌 시 기존 파일을 자동으로 덮어쓰지 않는다. 폴더 선택 API를 지원하지 않는 브라우저에서는 직접 작업을 시작할 수 없다.
+- 백업: 서버 자료는 서버 밖 보관 위치로 정기 복사하고 체크섬을 대조한다. 실제 운영 전환과 검증 상태는 [저장 방식 전환 기록](docs/server-save-plan.md)을 따른다.
 
-## Learn More
+## 배포와 문제 해결
 
-To learn more about Next.js, take a look at the following resources:
+웹 앱의 `main`은 Vercel 프로덕션 배포에 연결된다. 스마트 캠퍼스 서버는 별도 배포 대상이다. 서버 API, 외부 백업, 실제 계정 검증을 마친 뒤 웹 앱을 배포한다. 서버 연결 오류가 나면 스마트 캠퍼스 로그인과 API 상태를 확인하고, 폴더 저장 오류가 나면 폴더 쓰기 권한을 다시 허용한다. 저장 성공 표시 전에는 작업 화면을 닫지 않는다.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## 버전 기록
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- `0.1.0`: 7단계 웹툰 제작 작업실과 AI 보조 기능.
+- 저장 방식 전환 후보: 스마트 캠퍼스 서버 저장과 외부 로컬 폴더 ZIP 저장, 백업·복원 검증 절차.
