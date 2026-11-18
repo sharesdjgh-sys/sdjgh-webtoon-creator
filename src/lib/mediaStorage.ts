@@ -90,6 +90,11 @@ export async function getMediaByProject(projectId: string): Promise<MediaAsset[]
     const metadata = await listOciAssets(projectId);
     return Promise.all(metadata.map(async asset => ({ ...asset, blob: await getOciAsset(projectId, asset.id) })));
   }
+  return getLocalMediaByProject(projectId);
+}
+
+/** Read the browser copy even while a Smart Campus server session is active. */
+export async function getLocalMediaByProject(projectId: string): Promise<MediaAsset[]> {
   const database = await openDatabase();
   return new Promise((resolve, reject) => {
     const request = database.transaction(STORE_NAME, "readonly")

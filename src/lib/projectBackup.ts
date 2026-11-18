@@ -3,7 +3,7 @@
 import type { Project } from "./storage";
 import { flushServerWrites, getProjects, isServerStorageActive, saveProjects } from "./storage";
 import { putOciAsset } from "./ociClient";
-import { getMediaAsset, getMediaByProject, restoreMediaAssets, type MediaAsset, type MediaOwnerType } from "./mediaStorage";
+import { getLocalMediaByProject, getMediaAsset, getMediaByProject, restoreMediaAssets, type MediaAsset, type MediaOwnerType } from "./mediaStorage";
 
 const FORMAT = "webtoon-maker-backup";
 const VERSION = 1;
@@ -45,11 +45,12 @@ function download(blob: Blob, filename: string): void {
 }
 
 /** A ZIP is a full backup only when every referenced media asset is present. */
-export async function createProjectBackupBlob(projects: Project[]): Promise<Blob> {
+export async function createProjectBackupBlob(projects: Project[], source: "active" | "browser" = "active"): Promise<Blob> {
   if (!projects.length) throw new Error("백업할 작품이 없어요.");
   const JSZip = (await import("jszip")).default;
   const zip = new JSZip();
-  const assets = (await Promise.all(projects.map((project) => getMediaByProject(project.id)))).flat();
+  const readAssets = source === "browser" ? getLocalMediaByProject : getMediaByProject;
+  const assets = (await Promise.all(projects.map((project) => readAssets(project.id)))).flat();
   const assetIds = new Set(assets.map((asset) => asset.id));
   const missing = projects.flatMap((project) => [...referencedMediaIds(project)].filter((id) => !assetIds.has(id)));
   if (missing.length) throw new Error(`작품에서 참조하는 이미지 ${missing.length}개를 찾지 못해 완전 백업을 만들 수 없어요.`);
@@ -72,8 +73,8 @@ export async function createProjectBackupBlob(projects: Project[]): Promise<Blob
   return blob;
 }
 
-export async function downloadProjectBackup(projects: Project[], filename: string): Promise<void> {
-  download(await createProjectBackupBlob(projects), filename);
+export async function downloadProjectBackup(projects: Project[], filename: string, source: "active" | "browser" = "active"): Promise<void> {
+  download(await createProjectBackupBlob(projects, source), filename);
 }
 
 function isProject(value: unknown): value is Project {

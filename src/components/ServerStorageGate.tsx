@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { SMART_CAMPUS_ORIGIN, listOciProjects, setOciToken } from "@/lib/ociClient";
 import { activateServerProjects, deactivateServerProjects, flushServerWrites, getBrowserProjects, getProjects, getServerSaveError, retryServerWrites, saveProjects } from "@/lib/storage";
 import { checkDirectoryPermission, connectLocalFolder, flushLocalFileWrites, getLocalSaveError, getSaveDirectoryName, requestDirectoryPermission, saveProjectToFile, setSaveDirectory } from "@/lib/fileSystemStorage";
+import { downloadProjectBackup } from "@/lib/projectBackup";
 
 type Status = "connecting" | "ready" | "direct" | "local" | "error";
 
@@ -14,6 +15,8 @@ export default function ServerStorageGate({ children }: { children: ReactNode })
   const [message, setMessage] = useState("");
   const [legacyCount, setLegacyCount] = useState(0);
   const [collisionCount, setCollisionCount] = useState(0);
+  const [bannerDismissed, setBannerDismissed] = useState(false);
+  const [browserBackupBusy, setBrowserBackupBusy] = useState(false);
   const [migrating, setMigrating] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [folderName, setFolderName] = useState<string | null>(null);
@@ -137,6 +140,19 @@ export default function ServerStorageGate({ children }: { children: ReactNode })
     } finally { setMigrating(false); }
   };
 
+  const backupBrowserCollisions = async () => {
+    setBrowserBackupBusy(true);
+    setMessage("");
+    try {
+      const serverIds = new Set(getProjects().map(project => project.id));
+      const browserCopies = getBrowserProjects().filter(project => serverIds.has(project.id));
+      await downloadProjectBackup(browserCopies, `webtoon_browser_copies_${new Date().toISOString().slice(0, 10)}.zip`, "browser");
+      setMessage("브라우저 원본 ZIP 다운로드를 시작했어요. 다운로드된 파일을 확인해 주세요.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "브라우저 원본을 백업하지 못했어요.");
+    } finally { setBrowserBackupBusy(false); }
+  };
+
   if (["/", "/guide", "/login", "/signup"].includes(pathname)) return <>{children}</>;
   if (status === "connecting") return <main className="m-auto p-8 text-center">스마트 캠퍼스 계정과 서버 저장소를 연결하고 있어요.</main>;
   if (status === "error") return <main className="m-auto max-w-md p-8 text-center">
@@ -163,15 +179,23 @@ export default function ServerStorageGate({ children }: { children: ReactNode })
       {saveError && <button type="button" disabled={folderBusy} onClick={() => void connectFolder()} className="ml-3 font-semibold underline disabled:opacity-50">권한 다시 허용</button>}
       {saveError && <button type="button" disabled={folderBusy} onClick={() => void retrySave()} className="ml-3 font-semibold underline disabled:opacity-50">저장 다시 시도</button>}
     </div>}
-    {status === "ready" && <div role="status" className="bg-[#F5F3FF] px-4 py-2 text-center text-sm text-[#514A65]">
+    {status === "ready" && (!bannerDismissed || saveError) && <div role="status" className="relative bg-[#F5F3FF] px-10 py-2 text-center text-sm text-[#514A65]">
       서버 저장 연결됨{saveError ? ` · 저장 오류: ${saveError}` : ""}
       {saveError && <button type="button" onClick={() => void retrySave()} className="ml-3 font-semibold text-[#6D28D9] underline">저장 다시 시도</button>}
       {legacyCount > 0 && <button type="button" disabled={migrating} onClick={() => void migrate()}
         className="ml-3 font-semibold text-[#6D28D9] underline disabled:opacity-50">
         {migrating ? "이전 작품 복사 중" : `이 브라우저의 이전 작품 ${legacyCount}개 서버로 복사`}
       </button>}
-      {collisionCount > 0 && <span className="ml-3 text-amber-800">같은 ID의 브라우저 작품 {collisionCount}개는 자동 복사하지 않았어요. 먼저 백업을 확인해 주세요.</span>}
+      {collisionCount > 0 && <>
+        <span className="ml-3 text-amber-800">같은 ID의 작품이 서버와 이 브라우저에 각각 {collisionCount}개 있어요. 현재는 서버 작품을 보여 주며 브라우저 원본은 그대로 보존했어요.</span>
+        <button type="button" disabled={browserBackupBusy} onClick={() => void backupBrowserCollisions()}
+          className="ml-3 font-semibold text-[#6D28D9] underline disabled:opacity-50">
+          {browserBackupBusy ? "브라우저 원본 백업 중" : "브라우저 원본 ZIP 백업"}
+        </button>
+      </>}
       {message && <span className="ml-3">{message}</span>}
+      {!saveError && <button type="button" onClick={() => setBannerDismissed(true)} aria-label="저장 안내 닫기"
+        className="absolute right-3 top-1/2 -translate-y-1/2 rounded p-1 text-[#514A65] hover:bg-[#EDE9FE] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#6D28D9]">닫기</button>}
     </div>}
     {children}
   </>;
